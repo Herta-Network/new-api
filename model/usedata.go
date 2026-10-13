@@ -2,27 +2,29 @@ package model
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // QuotaData 柱状图数据
 type QuotaData struct {
 	Id        int    `json:"id"`
-	UserID    int    `json:"user_id" gorm:"index"`
-	Username  string `json:"username" gorm:"index:idx_qdt_model_user_name,priority:2;size:64;default:''"`
-	ModelName string `json:"model_name" gorm:"index:idx_qdt_model_user_name,priority:1;size:64;default:''"`
-	CreatedAt int64  `json:"created_at" gorm:"bigint;index:idx_qdt_created_at,priority:2"`
-	UseGroup  string `json:"use_group" gorm:"index;size:64;default:''"`
-	TokenID   int    `json:"token_id" gorm:"index;default:0"`
-	ChannelID int    `json:"channel_id" gorm:"index;default:0"`
-	NodeName  string `json:"node_name" gorm:"index;size:64;default:''"`
-	TokenUsed int    `json:"token_used" gorm:"default:0"`
-	Count     int    `json:"count" gorm:"default:0"`
-	Quota     int    `json:"quota" gorm:"default:0"`
+	UserID    int    `json:"user_id" gorm:"index;not null;uniqueIndex:idx_quota_data_dimensions,priority:1;default:0"`
+	Username  string `json:"username" gorm:"index:idx_qdt_model_user_name,priority:2;size:64;default:'';not null;uniqueIndex:idx_quota_data_dimensions,priority:2"`
+	ModelName string `json:"model_name" gorm:"index:idx_qdt_model_user_name,priority:1;size:64;default:'';not null;uniqueIndex:idx_quota_data_dimensions,priority:3"`
+	CreatedAt int64  `json:"created_at" gorm:"bigint;index:idx_qdt_created_at,priority:2;not null;uniqueIndex:idx_quota_data_dimensions,priority:4;default:0"`
+	UseGroup  string `json:"use_group" gorm:"index;size:64;default:'';not null;uniqueIndex:idx_quota_data_dimensions,priority:5"`
+	TokenID   int    `json:"token_id" gorm:"index;default:0;not null;uniqueIndex:idx_quota_data_dimensions,priority:6"`
+	ChannelID int    `json:"channel_id" gorm:"index;default:0;not null;uniqueIndex:idx_quota_data_dimensions,priority:7"`
+	NodeName  string `json:"node_name" gorm:"index;size:64;default:'';not null;uniqueIndex:idx_quota_data_dimensions,priority:8"`
+	TokenUsed int    `json:"token_used" gorm:"not null;default:0"`
+	Count     int    `json:"count" gorm:"not null;default:0"`
+	Quota     int    `json:"quota" gorm:"not null;default:0"`
 }
 
 type QuotaDataLogParams struct {
@@ -97,44 +99,50 @@ func LogQuotaData(params QuotaDataLogParams) {
 	logQuotaDataCache(quotaData)
 }
 
-func SaveQuotaDataCache() {
-	CacheQuotaDataLock.Lock()
-	defer CacheQuotaDataLock.Unlock()
-	size := len(CacheQuotaData)
-	// 如果缓存中有数据，就保存到数据库中
-	// 1. 先查询数据库中是否有数据
-	// 2. 如果有数据，就更新数据
-	// 3. 如果没有数据，就插入数据
-	for _, quotaData := range CacheQuotaData {
-		quotaDataDB := &QuotaData{}
-		DB.Table("quota_data").
-			Where("user_id = ? and username = ? and model_name = ? and created_at = ? and use_group = ? and token_id = ? and channel_id = ? and node_name = ?",
-				quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.UseGroup, quotaData.TokenID, quotaData.ChannelID, quotaData.NodeName).
-			First(quotaDataDB)
-		if quotaDataDB.Id > 0 {
-			//quotaDataDB.Count += quotaData.Count
-			//quotaDataDB.Quota += quotaData.Quota
-			//DB.Table("quota_data").Save(quotaDataDB)
-			increaseQuotaData(quotaData)
-		} else {
-			DB.Table("quota_data").Create(quotaData)
-		}
-	}
-	CacheQuotaData = make(map[string]*QuotaData)
-	common.SysLog(common.LogText("saved dashboard data, %d records", size))
-}
+var quotaDataFlushMutex sync.Mutex
+var quotaDataWriter = StatisticsBatch{WriterID: common.GetUUID()}
+var pendingQuotaData []QuotaData
 
-func increaseQuotaData(quotaData *QuotaData) {
-	err := DB.Table("quota_data").
-		Where("user_id = ? and username = ? and model_name = ? and created_at = ? and use_group = ? and token_id = ? and channel_id = ? and node_name = ?",
-			quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.UseGroup, quotaData.TokenID, quotaData.ChannelID, quotaData.NodeName).
-		Updates(map[string]any{
-			"count":      gorm.Expr("count + ?", quotaData.Count),
-			"quota":      gorm.Expr("quota + ?", quotaData.Quota),
-			"token_used": gorm.Expr("token_used + ?", quotaData.TokenUsed),
-		}).Error
-	if err != nil {
-		common.SysLog(common.LogText("increaseQuotaData error: %s", err))
+func SaveQuotaDataCache() {
+	quotaDataFlushMutex.Lock()
+	defer quotaDataFlushMutex.Unlock()
+	// A retry is acknowledged first; then one current snapshot is flushed.
+	for range 2 {
+		if len(pendingQuotaData) == 0 {
+			CacheQuotaDataLock.Lock()
+			snapshot := CacheQuotaData
+			CacheQuotaData = make(map[string]*QuotaData)
+			CacheQuotaDataLock.Unlock()
+			if len(snapshot) == 0 {
+				return
+			}
+			keys := make([]string, 0, len(snapshot))
+			for key := range snapshot {
+				keys = append(keys, key)
+			}
+			slices.Sort(keys) // Consistent row-lock order across writers.
+			pendingQuotaData = make([]QuotaData, 0, len(keys))
+			for _, key := range keys {
+				pendingQuotaData = append(pendingQuotaData, *snapshot[key])
+			}
+			quotaDataWriter.Sequence++
+		}
+		err := quotaDataWriter.Apply(func(tx *gorm.DB) error {
+			return tx.Omit("id").Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "user_id"}, {Name: "username"}, {Name: "model_name"}, {Name: "created_at"}, {Name: "use_group"}, {Name: "token_id"}, {Name: "channel_id"}, {Name: "node_name"}},
+				DoUpdates: clause.Assignments(map[string]any{
+					"count":      gorm.Expr("quota_data.count + EXCLUDED.count"),
+					"quota":      gorm.Expr("quota_data.quota + EXCLUDED.quota"),
+					"token_used": gorm.Expr("quota_data.token_used + EXCLUDED.token_used"),
+				}),
+			}).CreateInBatches(&pendingQuotaData, statisticsBatchSize).Error
+		})
+		if err != nil {
+			common.SysError(common.LogText("failed to save dashboard data: %s", err.Error()))
+			return // Retain exactly this batch and sequence, including ambiguous commits.
+		}
+		common.SysLog(common.LogText("saved dashboard data, %d records", len(pendingQuotaData)))
+		pendingQuotaData = nil
 	}
 }
 

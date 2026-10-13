@@ -207,7 +207,7 @@ curl --fail-with-body http://localhost:3000/v1/responses \
 
 ### Docker Compose
 
-The repository's [Compose configuration](./docker-compose.yml) starts **New API + PostgreSQL + Redis** by default. It also contains an example for a separate ClickHouse log database.
+The repository's [Compose configuration](./docker-compose.yml) starts **New API + PostgreSQL + Redis** by default. The optional separate log database also requires PostgreSQL 18+.
 
 ```bash
 git clone https://github.com/QuantumNous/new-api.git
@@ -225,8 +225,8 @@ docker compose logs -f new-api
 
 | Component | Options |
 | --- | --- |
-| Main database | PostgreSQL ≥ 9.6 |
-| Separate log database | Configure with `LOG_SQL_DSN`; also supports ClickHouse |
+| Main database | PostgreSQL ≥ 18 |
+| Separate log database | PostgreSQL ≥ 18, configured with `LOG_SQL_DSN` |
 | Cache | Optional Redis plus in-memory caching; use shared Redis when application nodes need shared rate limits |
 | Container platforms | Linux amd64 / arm64 |
 
@@ -285,7 +285,7 @@ Open [http://localhost:5173](http://localhost:5173); the development server prox
 
 Read [AGENTS.md](./AGENTS.md) before contributing. Run checks appropriate to your change, including `make test` for the Go modules and `bun run typecheck`, `bun run lint`, `bun run test`, and `bun run build` in `web/` for frontend changes. Changes to RelayKit must also pass `GOWORK=off go build ./...` from `relaykit/`.
 
-Database tests require `TEST_POSTGRES_DSN` pointing to a local PostgreSQL server; each fixture creates and cleans up its own schema. Set `AUDIT_CLICKHOUSE_DSN` to a local ClickHouse test instance to include separate log database tests.
+Database tests require `TEST_POSTGRES_DSN` pointing to a local PostgreSQL server; each fixture creates and cleans up its own schema. The same PostgreSQL instance is used with isolated schemas for separate log database tests. Optionally set `TEST_POSTGRES_OLD_DSN` to a local PostgreSQL 17 instance to test version rejection.
 
 <a id="documentation"></a>
 

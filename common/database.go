@@ -4,7 +4,6 @@ type DatabaseType string
 
 const (
 	DatabaseTypePostgreSQL DatabaseType = "postgres"
-	DatabaseTypeClickHouse DatabaseType = "clickhouse"
 )
 
 var mainDatabaseType = DatabaseTypePostgreSQL

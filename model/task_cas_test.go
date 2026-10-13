@@ -57,6 +57,7 @@ func TestMain(m *testing.M) {
 		&UserSubscription{},
 		&UserOAuthBinding{},
 		&PerfMetric{},
+		&StatisticsWriteCheckpoint{},
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},

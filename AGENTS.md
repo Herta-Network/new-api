@@ -10,7 +10,7 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 
 - **Backend**: Go 1.26 for the root module and `tokenkit/`, Go 1.25.1 for `relaykit/` (see each module’s `go.mod`), Gin web framework, GORM v2 ORM
 - **Frontend**: React 19, TypeScript, Rsbuild 2, TanStack Router/Query/Table, Zustand, Base UI, Tailwind CSS 4
-- **Databases**: PostgreSQL >= 9.6 for the primary database; a separately configured log database also supports ClickHouse
+- **Databases**: PostgreSQL >= 18 for both the primary database and the optional separate log database
 - **Cache**: Redis (go-redis) + in-memory cache
 - **Auth**: Browser sessions, API tokens and personal access tokens, JWT, WebAuthn/Passkeys, TOTP, OAuth/OIDC; Casbin authorization in `service/authz/`
 - **Extensions**: JavaScript task plugins executed by moejs; Electron desktop wrapper
@@ -94,25 +94,24 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 
 Inside `relaykit/`, use `kitutil.*` from `relaykit/relayconvert/kitutil/json.go`, never host `common`. Direct encoder calls belong only in codec implementations.
 
-**Database compatibility:** Primary database code MUST work with PostgreSQL >= 9.6. The separately configured log database also supports ClickHouse. SQL_DSN is required; SQLite and MySQL are unsupported.
+**Database compatibility:** Both the primary and separately configured log databases MUST use PostgreSQL >= 18. SQL_DSN is required; other database engines are unsupported.
 
 - Any change that can affect database behavior MUST be verified before the work is considered complete. This includes ORM/database-driver dependency changes, connection/DSN/protocol or prepared-statement configuration, models and GORM tags, migrations and `AutoMigrate`, constraints and indexes, `Scanner`/`Valuer`/serializer behavior, raw SQL, transactions, and row locking.
 - Database tests use `TEST_POSTGRES_DSN` and allocate private schemas on a local PostgreSQL server; the model/service TestMain fixtures require it.
-- Required database verification MUST exercise a real PostgreSQL instance and a real ClickHouse instance when its log database behavior is affected. Unit tests, mocks, a successful build, code inspection, are not substitutes. Use at least one supported version of each engine; changes that depend on version-specific behavior must also cover the minimum supported version.
-- Treat GORM core and its database dialect/driver packages as a compatible version set. Any change to one of them requires checking upstream compatibility and running the complete PostgreSQL verification and affected ClickHouse log database checks; do not upgrade only the core package and infer that existing drivers remain compatible.
-- Schema or migration changes MUST be tested both on a fresh database and by upgrading a representative database created by the latest released version. Run startup/migration at least twice to prove idempotency, and verify that existing data, indexes, constraints, and uniqueness guarantees are preserved. Cover the separately configured log database when the affected path is shared with or used by it.
+- Required database verification MUST exercise real PostgreSQL 18 instances, including a separate log database when its behavior is affected. Unit tests, mocks, a successful build, and code inspection are not substitutes. Use at least one supported version of each engine; changes that depend on version-specific behavior must also cover the minimum supported version.
+- Treat GORM core and its database dialect/driver packages as a compatible version set. Any change to one of them requires checking upstream compatibility and running the complete PostgreSQL verification, including affected separate log database checks; do not upgrade only the core package and infer that existing drivers remain compatible.
+- Schema changes target fresh PostgreSQL 18 databases; historical schema or data compatibility is not required. Run startup/schema initialization at least twice to prove idempotency, and verify that data, indexes, constraints, and uniqueness guarantees survive repeated startup. Cover the separately configured PostgreSQL log database when the affected path is shared with or used by it.
 - Record the exact database versions, commands, and results in the final handoff or pull request. If any required database verification cannot be run, report the blocker explicitly and do not claim the change is database-compatible or complete.
 - Prefer GORM methods (`Create`, `Find`, `Where`, `Updates`, etc.) over raw SQL.
 - Let GORM handle primary key generation; do not use `AUTO_INCREMENT` or `SERIAL` directly.
 - Standard `SELECT ... FOR UPDATE` row locks built with GORM query methods in `model/` MUST use `lockForUpdate(tx)`. Do not use the legacy GORM v1 pattern `tx.Set("gorm:query_option", "FOR UPDATE")`, because GORM v2 silently ignores it and no lock is acquired. Do not duplicate `clause.Locking{Strength: "UPDATE"}` at call sites; the shared helper emits `FOR UPDATE` for PostgreSQL. Advisory locks may use PostgreSQL SQL directly.
 - When raw SQL is unavoidable, account for dialect differences:
-  - PostgreSQL uses `"column"` quoting; ClickHouse log queries use the log column helpers.
+  - PostgreSQL uses `"column"` quoting.
   - Use `commonGroupCol`, `commonKeyCol` from `model/main.go` for reserved-word columns like `group` and `key`.
   - Use `commonTrueVal`/`commonFalseVal` for boolean values.
-  - Use `common.UsingLogDatabase(...)` for PostgreSQL/ClickHouse log database branches.
-- PostgreSQL-specific features are allowed for the primary database. Shared log paths must support both PostgreSQL and ClickHouse.
-- Migrations must work on PostgreSQL and preserve separately configured ClickHouse log stores.
-- Avoid GORM boolean default tags such as `gorm:"default:true"` when the default is a business rule already enforced by code. Database drivers can normalize boolean defaults differently, causing GORM `AutoMigrate` to repeatedly issue `ALTER TABLE` on restart. Prefer setting these defaults in request/model normalization, hooks, constructors, or service logic; do not replace `default:true` with `default:1` unless the behavior is verified on PostgreSQL and affected ClickHouse paths.
+- PostgreSQL 18 features are allowed in both primary and log database code.
+- Migrations must work on PostgreSQL 18 and cover separately configured PostgreSQL log stores.
+- Avoid GORM boolean default tags such as `gorm:"default:true"` when the default is a business rule already enforced by code. Database drivers can normalize boolean defaults differently, causing GORM `AutoMigrate` to repeatedly issue `ALTER TABLE` on restart. Prefer setting these defaults in request/model normalization, hooks, constructors, or service logic; do not replace `default:true` with `default:1` unless the behavior is verified on PostgreSQL 18.
 
 **Relay and provider behavior:**
 

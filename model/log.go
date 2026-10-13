@@ -29,29 +29,11 @@ func applyExplicitLogTextFilter(tx *gorm.DB, column string, value string) (*gorm
 }
 
 func buildLogLikeCondition(column string, value string) (string, string, error) {
-	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		pattern, err := sanitizeClickHouseLikePattern(value)
-		if err != nil {
-			return "", "", err
-		}
-		return column + " LIKE ?", pattern, nil
-	}
-
 	pattern, err := sanitizeLikePattern(value)
 	if err != nil {
 		return "", "", err
 	}
 	return column + " LIKE ? ESCAPE '!'", pattern, nil
-}
-
-func sanitizeClickHouseLikePattern(input string) (string, error) {
-	input = strings.ReplaceAll(input, `\`, `\\`)
-	input = strings.ReplaceAll(input, `_`, `\_`)
-
-	if err := validateLikePattern(input); err != nil {
-		return "", err
-	}
-	return input, nil
 }
 
 type Log struct {
@@ -101,10 +83,6 @@ func createLog(log *Log) error {
 	return LOG_DB.Create(log).Error
 }
 
-func clickHouseLogOrder(prefix string) string {
-	return prefix + "created_at desc, " + prefix + "request_id desc"
-}
-
 func assignDisplayLogIds(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].Id = startIdx + i + 1
@@ -137,9 +115,6 @@ func FormatRootLogs(logs []*Log) {
 
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
 	order := "id desc"
-	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		order = clickHouseLogOrder("")
-	}
 	err = LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId).Order(order).Limit(common.MaxRecentItems).Find(&logs).Error
 	formatUserLogs(logs, 0)
 	return logs, err
@@ -524,15 +499,9 @@ func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int
 		return nil, 0, err
 	}
 	order := "logs.created_at desc, logs.id desc"
-	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		order = clickHouseLogOrder("logs.")
-	}
 	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
 		return nil, 0, err
-	}
-	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		assignDisplayLogIds(logs, startIdx)
 	}
 
 	channelIds := types.NewSet[int]()
@@ -585,15 +554,13 @@ func GetUserLogs(userId int, filter LogFilter, startIdx int, num int) (logs []*L
 	if err != nil {
 		return nil, 0, err
 	}
-	err = tx.Model(&Log{}).Limit(logSearchCountLimit).Count(&total).Error
+	countQuery := tx.Session(&gorm.Session{}).Model(&Log{}).Select("1").Limit(logSearchCountLimit)
+	err = LOG_DB.Table("(?) AS matched_logs", countQuery).Count(&total).Error
 	if err != nil {
 		common.SysError(common.LogText("failed to count user logs: %s", err.Error()))
 		return nil, 0, common.NewMessage("Failed to query logs")
 	}
 	order := "logs.id desc"
-	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		order = clickHouseLogOrder("logs.")
-	}
 	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
 		common.SysError(common.LogText("failed to search user logs: %s", err.Error()))
@@ -651,9 +618,6 @@ func StreamUserLogs(ctx context.Context, userId int, filter LogFilter, fn func(*
 }
 
 func streamLogs(tx *gorm.DB, order string, fn func(*Log) error) error {
-	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		order = clickHouseLogOrder("logs.")
-	}
 	rows, err := tx.Model(&Log{}).Order(order).Rows()
 	if err != nil {
 		return err
@@ -776,28 +740,9 @@ func DeleteOldLogBatch(ctx context.Context, targetTimestamp int64, limit int) (i
 		return 0, ctx.Err()
 	}
 
-	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		// ClickHouse DELETE is a heavy mutation that rewrites data parts, so
-		// per-batch mutations would be pathologically slow. Remove all matching
-		// rows in a single synchronous mutation regardless of limit; the reported
-		// count lets the caller's progress loop complete in one pass.
-		total, err := CountOldLog(ctx, targetTimestamp)
-		if err != nil {
-			return 0, err
-		}
-		if total == 0 {
-			return 0, nil
-		}
-		if err := LOG_DB.WithContext(ctx).Exec(
-			"ALTER TABLE logs DELETE WHERE created_at < ? SETTINGS mutations_sync = 1",
-			targetTimestamp,
-		).Error; err != nil {
-			return 0, err
-		}
-		return total, nil
-	}
-
-	result := LOG_DB.WithContext(ctx).Where("created_at < ?", targetTimestamp).Limit(limit).Delete(&Log{})
+	candidates := LOG_DB.WithContext(ctx).Model(&Log{}).Select("id").
+		Where("created_at < ?", targetTimestamp).Order("created_at, id").Limit(limit)
+	result := LOG_DB.WithContext(ctx).Where("id IN (?)", candidates).Delete(&Log{})
 	if nil != result.Error {
 		return 0, result.Error
 	}

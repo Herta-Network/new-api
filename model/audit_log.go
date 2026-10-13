@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/gin-gonic/gin"
@@ -116,36 +115,13 @@ func RecordAuditLog(c *gin.Context, entry AuditLog) {
 		logger.LogError(ctx, common.LogText("audit log write failed (request_id=%s): log database unavailable", entry.RequestId))
 		return
 	}
-	var row any = &entry
-	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		encoded, err := common.Marshal(entry.Other)
-		if err != nil {
-			logger.LogError(ctx, common.LogText("audit log write failed (request_id=%s): %v", entry.RequestId, err))
-			return
-		}
-		// The ClickHouse GORM insert callback passes structs to the native
-		// driver without resolving their Valuer. Bind this column's JSON
-		// encoding while retaining AuditOther in the domain and API models.
-		row = &struct {
-			AuditLog     `gorm:"embedded"`
-			EncodedOther string `gorm:"column:other;type:json"`
-		}{AuditLog: entry, EncodedOther: string(encoded)}
-	}
-	if err := LOG_DB.Table("audit_logs").Create(row).Error; err != nil {
+	if err := LOG_DB.Table("audit_logs").Create(&entry).Error; err != nil {
 		logger.LogError(ctx, common.LogText("audit log write failed (request_id=%s): %v", entry.RequestId, err))
 	}
 }
 
 func GetAuditLogs(filter AuditLogFilter, start, limit, viewerRole int) ([]*AuditLog, int64, error) {
 	query := LOG_DB.Model(&AuditLog{})
-	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		// Decode native JSON through database/sql as text for AuditOther.Scan.
-		// Preserve numeric metadata instead of returning quoted Int64 values.
-		query = query.WithContext(clickhouse.Context(query.Statement.Context, clickhouse.WithSettings(clickhouse.Settings{
-			"output_format_native_write_json_as_string": 1,
-			"output_format_json_quote_64bit_integers":   0,
-		})))
-	}
 	if viewerRole < common.RoleRootUser {
 		query = query.Where("actor_role IN ?", []int{common.RoleCommonUser, common.RoleAdminUser})
 	}
@@ -246,20 +222,9 @@ func GetUserAccessTokenStatus(userId int) (*UserAccessTokenStatus, error) {
 	return status, nil
 }
 
-// MigrateAuditLogs also supports independently configured ClickHouse log stores.
-// No TTL clause or usage-log cleanup integration is intentional.
+// Audit retention is independent of usage-log cleanup.
 func MigrateAuditLogs() error {
-	if !common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		return LOG_DB.AutoMigrate(&AuditLog{})
-	}
-	return LOG_DB.Exec(`CREATE TABLE IF NOT EXISTS audit_logs (
-		id Int64 DEFAULT 0, event_id String, user_id Int64, username String, actor_role Int32,
-		created_at Int64, category String, action String, token_ref String,
-		auth_method String, ip String, user_agent String, method String, route String,
-		status Int32, success UInt8, request_id String, content String, other JSON
-	) ENGINE = MergeTree()
-	PARTITION BY toYYYYMM(toDateTime(created_at))
-	ORDER BY (created_at, event_id)`).Error
+	return LOG_DB.AutoMigrate(&AuditLog{})
 }
 
 func ValidAuditCategory(category string) bool {

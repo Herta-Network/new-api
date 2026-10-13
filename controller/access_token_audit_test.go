@@ -4,18 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/internal/testutil"
-
-	"gorm.io/driver/clickhouse"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
@@ -825,52 +821,17 @@ type releasedAuditLog struct {
 
 func (releasedAuditLog) TableName() string { return "logs" }
 
-// External tests create a new database per case on a loopback-only disposable
-// instance. They never drop databases or tables supplied through an environment variable.
-func newAuditTestDatabase(t *testing.T, kind, dsn string) (*gorm.DB, string) {
+// Each PostgreSQL fixture uses a private schema and removes only that schema.
+func newAuditTestDatabase(t *testing.T, kind, _ string) (*gorm.DB, string) {
 	t.Helper()
-	if kind == "postgres" {
-		dsn = testutil.PostgresDSN(t)
-		db, err := gorm.Open(postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true}), &gorm.Config{})
-		require.NoError(t, err)
-		connection, err := db.DB()
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = connection.Close() })
-		return db, dsn
-	}
-	require.Equal(t, "clickhouse", kind)
-	require.NotEmpty(t, dsn)
-	name := fmt.Sprintf("newapi_audit_%d", time.Now().UnixNano())
-	var original, isolated gorm.Dialector
-	var newDSN string
-	{
-		parsed, err := url.Parse(dsn)
-		require.NoError(t, err)
-		require.True(t, net.ParseIP(parsed.Hostname()).IsLoopback(), "database tests only permit loopback instances")
-		parsed.Path = "/" + name
-		newDSN = parsed.String()
-		original = clickhouse.Open(dsn)
-		isolated = clickhouse.Open(newDSN)
-	}
-	admin, err := gorm.Open(original, &gorm.Config{})
+	require.Equal(t, "postgres", kind)
+	dsn := testutil.PostgresDSN(t)
+	db, err := gorm.Open(postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true}), &gorm.Config{})
 	require.NoError(t, err)
-	// No IF NOT EXISTS: a collision fails before any test data can be written.
-	createSQL := "CREATE DATABASE " + name
-
-	require.NoError(t, admin.Exec(createSQL).Error)
-	sqlDB, err := admin.DB()
+	connection, err := db.DB()
 	require.NoError(t, err)
-	require.NoError(t, sqlDB.Close())
-	db, err := gorm.Open(isolated, &gorm.Config{})
-	require.NoError(t, err)
-	t.Logf("isolated database: %s (%s)", name, kind)
-	t.Cleanup(func() {
-		connection, err := db.DB()
-		if err == nil {
-			_ = connection.Close()
-		}
-	})
-	return db, newDSN
+	t.Cleanup(func() { _ = connection.Close() })
+	return db, dsn
 }
 
 func verifyAuditRoleStorage(t *testing.T) {
@@ -1148,7 +1109,7 @@ func TestIndependentAuditLogStores(t *testing.T) {
 	previousMaster := common.IsMasterNode
 	common.IsMasterNode = true
 	t.Cleanup(func() { common.IsMasterNode = previousMaster })
-	for _, tc := range []struct{ kind, env string }{{"postgres", "TEST_POSTGRES_DSN"}, {"clickhouse", "AUDIT_CLICKHOUSE_DSN"}} {
+	for _, tc := range []struct{ kind, env string }{{"postgres", "TEST_POSTGRES_DSN"}} {
 		for _, upgrade := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/upgrade=%v", tc.kind, upgrade), func(t *testing.T) {
 				dsn := os.Getenv(tc.env)
@@ -1157,15 +1118,10 @@ func TestIndependentAuditLogStores(t *testing.T) {
 				}
 				logDB, isolatedDSN := newAuditTestDatabase(t, tc.kind, dsn)
 				if upgrade {
-					if tc.kind == "clickhouse" {
-						require.NoError(t, logDB.Exec(releasedClickHouseLogSchema).Error)
-					} else {
-						require.NoError(t, logDB.AutoMigrate(&releasedAuditLog{}))
-					}
+					require.NoError(t, logDB.AutoMigrate(&releasedAuditLog{}))
 					require.NoError(t, logDB.Create(&releasedAuditLog{UserId: 1, Username: "legacy", CreatedAt: time.Now().Unix(), Type: model.LogTypeLogin, Content: "retained historical login", RequestId: "legacy-split-request"}).Error)
 				}
 				t.Setenv("LOG_SQL_DSN", isolatedDSN)
-				t.Setenv("LOG_SQL_CLICKHOUSE_TTL_DAYS", "7")
 				require.NoError(t, model.InitLogDB())
 				require.NoError(t, model.InitLogDB())
 				if upgrade {
@@ -1195,42 +1151,7 @@ func TestIndependentAuditLogStores(t *testing.T) {
 				assert.Zero(t, mainCount)
 				verifyAuditRoleStorage(t)
 				verifyAuditJSONStorage(t)
-				if tc.kind == "clickhouse" {
-					var create string
-					require.NoError(t, model.LOG_DB.Raw("SHOW CREATE TABLE audit_logs").Scan(&create).Error)
-					assert.NotContains(t, strings.ToUpper(create), "TTL")
-					require.NoError(t, model.LOG_DB.Raw("SHOW CREATE TABLE logs").Scan(&create).Error)
-					assert.Contains(t, strings.ToUpper(create), "TTL")
-				}
 			})
 		}
 	}
 }
-
-// ClickHouse logs schema from v1.0.0-rc.33.
-const releasedClickHouseLogSchema = `
-CREATE TABLE IF NOT EXISTS logs (
-	id Int64 DEFAULT 0,
-	user_id Int32 DEFAULT 0,
-	created_at Int64 DEFAULT 0,
-	type Int32 DEFAULT 0,
-	content String DEFAULT '',
-	username String DEFAULT '',
-	token_name String DEFAULT '',
-	model_name String DEFAULT '',
-	quota Int32 DEFAULT 0,
-	prompt_tokens Int32 DEFAULT 0,
-	completion_tokens Int32 DEFAULT 0,
-	use_time Int32 DEFAULT 0,
-	is_stream UInt8 DEFAULT 0,
-	channel_id Int32 DEFAULT 0,
-	token_id Int32 DEFAULT 0,
-	` + "`group`" + ` String DEFAULT '',
-	ip String DEFAULT '',
-	request_id String DEFAULT '',
-	upstream_request_id String DEFAULT '',
-	other String DEFAULT ''
-)
-ENGINE = MergeTree()
-PARTITION BY toYYYYMM(toDateTime(created_at))
-ORDER BY (created_at, request_id)`

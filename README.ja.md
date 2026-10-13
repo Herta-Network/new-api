@@ -192,7 +192,7 @@ curl --fail-with-body http://localhost:3000/v1/responses \
 
 ### Docker Compose
 
-リポジトリの [Compose 設定](./docker-compose.yml) は、既定で **New API + PostgreSQL + Redis** を起動します。独立した ClickHouse ログデータベースの設定例も含まれます。
+リポジトリの [Compose 設定](./docker-compose.yml) は、既定で **New API + PostgreSQL + Redis** を起動します。独立ログデータベースにも PostgreSQL 18+ が必要です。
 
 ```bash
 git clone https://github.com/QuantumNous/new-api.git
@@ -210,8 +210,8 @@ docker compose logs -f new-api
 
 | コンポーネント | 選択肢 |
 | --- | --- |
-| メインデータベース | PostgreSQL ≥ 9.6 |
-| 独立したログデータベース | `LOG_SQL_DSN` で設定。ClickHouse にも対応 |
+| メインデータベース | PostgreSQL ≥ 18 |
+| 独立したログデータベース | `LOG_SQL_DSN` で PostgreSQL ≥ 18 を設定 |
 | キャッシュ | 任意の Redis とメモリキャッシュ。ノード間でレート制限を共有する場合は Redis を共有 |
 | コンテナのプラットフォーム | Linux amd64 / arm64 |
 
@@ -270,7 +270,7 @@ bun run dev -- --port 5173
 
 貢献前に [AGENTS.md](./AGENTS.md) を確認してください。変更に応じて、Go モジュールは `make test`、フロントエンドは `web/` で `bun run typecheck`、`bun run lint`、`bun run test`、`bun run build` を実行します。RelayKit を変更した場合は、`relaykit/` で `GOWORK=off go build ./...` も実行してください。
 
-データベースのテストには、ローカル PostgreSQL に接続する `TEST_POSTGRES_DSN` が必要です。各テストは独立したスキーマを作成し、終了時に削除します。独立ログデータベースのテストには、ローカル ClickHouse の `AUDIT_CLICKHOUSE_DSN` を設定してください。
+データベースのテストには、ローカル PostgreSQL に接続する `TEST_POSTGRES_DSN` が必要です。各テストは独立したスキーマを作成し、終了時に削除します。独立ログデータベースも分離した PostgreSQL スキーマでテストします。旧バージョンの拒否を検証する場合は、`TEST_POSTGRES_OLD_DSN` にローカル PostgreSQL 17 を指定してください。
 
 <a id="documentation"></a>
 

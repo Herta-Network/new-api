@@ -1,10 +1,16 @@
 package model
 
 import (
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/internal/testutil"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func seedFlowQuotaData(t *testing.T, quotaData QuotaData) {
@@ -190,4 +196,94 @@ func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 	require.Equal(t, 60, rows[0].TokenUsed)
 	require.Equal(t, "default", rows[1].UseGroup)
 	require.Equal(t, 25, rows[1].Quota)
+}
+
+func TestQuotaDataBatchRetryPreservesPendingAndNewSamples(t *testing.T) {
+	db, err := testutil.OpenDB(t, &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&QuotaData{}, &StatisticsWriteCheckpoint{}))
+	previousDB, previousCache, previousPending, previousWriter := DB, CacheQuotaData, pendingQuotaData, quotaDataWriter
+	DB = db
+	CacheQuotaData = map[string]*QuotaData{}
+	pendingQuotaData = nil
+	quotaDataWriter = StatisticsBatch{WriterID: common.GetUUID()}
+	t.Cleanup(func() {
+		DB, CacheQuotaData, pendingQuotaData, quotaDataWriter = previousDB, previousCache, previousPending, previousWriter
+	})
+	sample := QuotaDataLogParams{UserID: 1, Username: "alice", ModelName: "gpt", CreatedAt: 3600, Quota: 10, TokenUsed: 5}
+	LogQuotaData(sample)
+	require.NoError(t, db.Callback().Create().Before("gorm:create").Register("test:quota_flush_failure", func(tx *gorm.DB) {
+		if tx.Statement.Table == "quota_data" {
+			LogQuotaData(sample) // Collection remains available while the database write runs.
+			tx.AddError(errors.New("write failed"))
+		}
+	}))
+	SaveQuotaDataCache()
+	require.NoError(t, db.Callback().Create().Remove("test:quota_flush_failure"))
+	var count int64
+	require.NoError(t, db.Model(&QuotaData{}).Count(&count).Error)
+	assert.Zero(t, count, "a failed flush must not partially commit")
+	require.NoError(t, db.Model(&StatisticsWriteCheckpoint{}).Count(&count).Error)
+	assert.Zero(t, count, "a rolled-back flush must not acknowledge the batch")
+	SaveQuotaDataCache()
+	SaveQuotaDataCache()
+	var rows []QuotaData
+	require.NoError(t, db.Find(&rows).Error)
+	require.Len(t, rows, 1)
+	assert.Equal(t, 2, rows[0].Count)
+	assert.Equal(t, 20, rows[0].Quota)
+	assert.Equal(t, 10, rows[0].TokenUsed)
+}
+
+func TestStatisticsBatchReplayIsAppliedOnce(t *testing.T) {
+	db, err := testutil.OpenDB(t, &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&PerfMetric{}, &StatisticsWriteCheckpoint{}))
+	previous := DB
+	DB = db
+	t.Cleanup(func() { DB = previous })
+	batch := StatisticsBatch{WriterID: common.GetUUID(), Sequence: 1}
+	rows := []PerfMetric{{ModelName: "gpt", Group: "a", BucketTs: 3600, RequestCount: 3, SuccessCount: 2, TotalLatencyMs: 120}}
+	for range 2 {
+		require.NoError(t, SavePerfMetricBatch(batch, rows))
+	}
+	batch.Sequence++
+	require.NoError(t, SavePerfMetricBatch(batch, rows))
+	batch.Sequence--
+	require.NoError(t, SavePerfMetricBatch(batch, rows), "a delayed retry cannot overwrite a later checkpoint")
+	var stored PerfMetric
+	require.NoError(t, db.First(&stored).Error)
+	assert.EqualValues(t, 6, stored.RequestCount)
+	assert.EqualValues(t, 4, stored.SuccessCount)
+	assert.EqualValues(t, 240, stored.TotalLatencyMs)
+}
+
+func TestStatisticsBatchRollsBackEveryChunk(t *testing.T) {
+	db, err := testutil.OpenDB(t, &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&PerfMetric{}, &StatisticsWriteCheckpoint{}))
+	previous := DB
+	DB = db
+	t.Cleanup(func() { DB = previous })
+	// 501 distinct aggregates cross the SQL chunk boundary; the final row fails.
+	rows := make([]PerfMetric, 501)
+	for i := range rows {
+		rows[i] = PerfMetric{ModelName: fmt.Sprintf("model-%d", i), Group: "a", BucketTs: 3600, RequestCount: 1}
+	}
+	rows[500].ModelName = strings.Repeat("x", 129)
+	batch := StatisticsBatch{WriterID: common.GetUUID(), Sequence: 1}
+	require.Error(t, SavePerfMetricBatch(batch, rows))
+	var count int64
+	require.NoError(t, db.Model(&PerfMetric{}).Count(&count).Error)
+	assert.Zero(t, count)
+	require.NoError(t, db.Model(&StatisticsWriteCheckpoint{}).Count(&count).Error)
+	assert.Zero(t, count)
+	rows[500].ModelName = "model-500"
+	require.NoError(t, SavePerfMetricBatch(batch, rows))
+	require.NoError(t, SavePerfMetricBatch(batch, rows))
+	require.NoError(t, db.Model(&PerfMetric{}).Count(&count).Error)
+	assert.EqualValues(t, 501, count)
+	var total int64
+	require.NoError(t, db.Model(&PerfMetric{}).Select("SUM(request_count)").Scan(&total).Error)
+	assert.EqualValues(t, 501, total)
 }

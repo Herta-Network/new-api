@@ -52,7 +52,7 @@ services:
       - dev-network
 
   postgres:
-    image: postgres:15-alpine
+    image: postgres:18-alpine
     container_name: new-api-dev-pg
     restart: unless-stopped
     environment:
@@ -60,7 +60,7 @@ services:
       POSTGRES_PASSWORD: 123456
       POSTGRES_DB: new-api
     volumes:
-      - dev_pg_data:/var/lib/postgresql/data
+      - dev_pg_data:/var/lib/postgresql
     networks:
       - dev-network
     healthcheck:

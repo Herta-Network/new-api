@@ -192,7 +192,7 @@ curl --fail-with-body http://localhost:3000/v1/responses \
 
 ### Docker Compose
 
-La [configuration Compose](./docker-compose.yml) du dépôt démarre **New API + PostgreSQL + Redis** par défaut. Elle contient aussi un exemple pour une base de journaux ClickHouse distincte.
+La [configuration Compose](./docker-compose.yml) du dépôt démarre **New API + PostgreSQL + Redis** par défaut. La base de journaux distincte nécessite également PostgreSQL 18+.
 
 ```bash
 git clone https://github.com/QuantumNous/new-api.git
@@ -210,8 +210,8 @@ docker compose logs -f new-api
 
 | Composant | Options |
 | --- | --- |
-| Base principale | PostgreSQL ≥ 9.6 |
-| Base de journaux distincte | Configurée avec `LOG_SQL_DSN` ; prend aussi en charge ClickHouse |
+| Base principale | PostgreSQL ≥ 18 |
+| Base de journaux distincte | PostgreSQL ≥ 18, configurée avec `LOG_SQL_DSN` |
 | Cache | Redis facultatif et cache mémoire ; partagez Redis si les nœuds doivent partager les limites de débit |
 | Plateformes des conteneurs | Linux amd64 / arm64 |
 
@@ -270,7 +270,7 @@ Ouvrez [http://localhost:5173](http://localhost:5173) ; les requêtes API sont r
 
 Lisez [AGENTS.md](./AGENTS.md) avant de contribuer. Exécutez les vérifications adaptées : `make test` pour les modules Go ; `bun run typecheck`, `bun run lint`, `bun run test` et `bun run build` dans `web/` pour le frontend. Une modification de RelayKit nécessite aussi `GOWORK=off go build ./...` depuis `relaykit/`.
 
-Les tests de base de données nécessitent `TEST_POSTGRES_DSN` vers un serveur PostgreSQL local ; chaque test crée et supprime son propre schéma. Définissez `AUDIT_CLICKHOUSE_DSN` vers une instance ClickHouse locale pour tester la base de journaux distincte.
+Les tests de base de données nécessitent `TEST_POSTGRES_DSN` vers un serveur PostgreSQL local ; chaque test crée et supprime son propre schéma. La base de journaux est aussi testée dans un schéma PostgreSQL isolé. `TEST_POSTGRES_OLD_DSN` peut pointer vers PostgreSQL 17 local pour tester le refus des anciennes versions.
 
 <a id="documentation"></a>
 

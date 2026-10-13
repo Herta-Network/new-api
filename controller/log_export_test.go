@@ -92,27 +92,17 @@ func TestLogExportDatabaseMatrix(t *testing.T) {
 	}{
 
 		{"postgres", "TEST_POSTGRES_DSN", common.DatabaseTypePostgreSQL},
-		{"clickhouse", "AUDIT_CLICKHOUSE_DSN", common.DatabaseTypeClickHouse},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			dsn := os.Getenv(tc.env)
 			if tc.env != "" && dsn == "" {
 				t.Skip(tc.env + " is not configured")
 			}
-			db, isolatedDSN := newAuditTestDatabase(t, tc.kind, dsn)
+			db, _ := newAuditTestDatabase(t, tc.kind, dsn)
 			mainDB, mainType := db, tc.typ
-			if tc.kind == "clickhouse" {
-				mainDB, _ = newAuditTestDatabase(t, "postgres", "")
-				mainType = common.DatabaseTypePostgreSQL
-			}
 			useLogExportDatabases(t, mainDB, db, mainType, tc.typ)
 			require.NoError(t, mainDB.AutoMigrate(&model.Channel{}))
-			if tc.kind == "clickhouse" {
-				t.Setenv("LOG_SQL_DSN", isolatedDSN)
-				require.NoError(t, model.InitLogDB())
-			} else {
-				require.NoError(t, db.AutoMigrate(&model.Log{}))
-			}
+			require.NoError(t, db.AutoMigrate(&model.Log{}))
 			versionSQL := "SELECT version()"
 
 			var version string

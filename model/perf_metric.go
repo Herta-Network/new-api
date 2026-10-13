@@ -13,13 +13,13 @@ type PerfMetric struct {
 	ModelName      string `json:"model_name" gorm:"size:128;uniqueIndex:idx_perf_model_group_bucket,priority:1"`
 	Group          string `json:"group" gorm:"column:group;size:64;uniqueIndex:idx_perf_model_group_bucket,priority:2"`
 	BucketTs       int64  `json:"bucket_ts" gorm:"uniqueIndex:idx_perf_model_group_bucket,priority:3;index:idx_perf_bucket_ts"`
-	RequestCount   int64  `json:"-" gorm:"default:0"`
-	SuccessCount   int64  `json:"-" gorm:"default:0"`
-	TotalLatencyMs int64  `json:"-" gorm:"default:0"`
-	TtftSumMs      int64  `json:"-" gorm:"default:0"`
-	TtftCount      int64  `json:"-" gorm:"default:0"`
-	OutputTokens   int64  `json:"-" gorm:"default:0"`
-	GenerationMs   int64  `json:"-" gorm:"default:0"`
+	RequestCount   int64  `json:"-" gorm:"not null;default:0"`
+	SuccessCount   int64  `json:"-" gorm:"not null;default:0"`
+	TotalLatencyMs int64  `json:"-" gorm:"not null;default:0"`
+	TtftSumMs      int64  `json:"-" gorm:"not null;default:0"`
+	TtftCount      int64  `json:"-" gorm:"not null;default:0"`
+	OutputTokens   int64  `json:"-" gorm:"not null;default:0"`
+	GenerationMs   int64  `json:"-" gorm:"not null;default:0"`
 }
 
 func (PerfMetric) TableName() string {
@@ -30,22 +30,29 @@ func UpsertPerfMetric(metric *PerfMetric) error {
 	if metric == nil || metric.RequestCount == 0 {
 		return nil
 	}
-	return DB.Clauses(clause.OnConflict{
-		Columns: []clause.Column{
-			{Name: "model_name"},
-			{Name: "group"},
-			{Name: "bucket_ts"},
-		},
+	return upsertPerfMetrics(DB, []PerfMetric{*metric})
+}
+
+func SavePerfMetricBatch(batch StatisticsBatch, metrics []PerfMetric) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+	return batch.Apply(func(tx *gorm.DB) error { return upsertPerfMetrics(tx, metrics) })
+}
+
+func upsertPerfMetrics(db *gorm.DB, metrics []PerfMetric) error {
+	return db.Omit("id").Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "model_name"}, {Name: "group"}, {Name: "bucket_ts"}},
 		DoUpdates: clause.Assignments(map[string]any{
-			"request_count":    gorm.Expr("perf_metrics.request_count + ?", metric.RequestCount),
-			"success_count":    gorm.Expr("perf_metrics.success_count + ?", metric.SuccessCount),
-			"total_latency_ms": gorm.Expr("perf_metrics.total_latency_ms + ?", metric.TotalLatencyMs),
-			"ttft_sum_ms":      gorm.Expr("perf_metrics.ttft_sum_ms + ?", metric.TtftSumMs),
-			"ttft_count":       gorm.Expr("perf_metrics.ttft_count + ?", metric.TtftCount),
-			"output_tokens":    gorm.Expr("perf_metrics.output_tokens + ?", metric.OutputTokens),
-			"generation_ms":    gorm.Expr("perf_metrics.generation_ms + ?", metric.GenerationMs),
+			"request_count":    gorm.Expr("perf_metrics.request_count + EXCLUDED.request_count"),
+			"success_count":    gorm.Expr("perf_metrics.success_count + EXCLUDED.success_count"),
+			"total_latency_ms": gorm.Expr("perf_metrics.total_latency_ms + EXCLUDED.total_latency_ms"),
+			"ttft_sum_ms":      gorm.Expr("perf_metrics.ttft_sum_ms + EXCLUDED.ttft_sum_ms"),
+			"ttft_count":       gorm.Expr("perf_metrics.ttft_count + EXCLUDED.ttft_count"),
+			"output_tokens":    gorm.Expr("perf_metrics.output_tokens + EXCLUDED.output_tokens"),
+			"generation_ms":    gorm.Expr("perf_metrics.generation_ms + EXCLUDED.generation_ms"),
 		}),
-	}).Create(metric).Error
+	}).CreateInBatches(&metrics, statisticsBatchSize).Error
 }
 
 func GetPerfMetrics(modelName string, group string, startTs int64, endTs int64) ([]PerfMetric, error) {

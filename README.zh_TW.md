@@ -191,7 +191,7 @@ curl --fail-with-body http://localhost:3000/v1/responses \
 
 ### Docker Compose
 
-儲存庫的 [Compose 設定](./docker-compose.yml) 預設啟動 **New API + PostgreSQL + Redis**，並提供 獨立 ClickHouse 日誌資料庫的設定範例。
+儲存庫的 [Compose 設定](./docker-compose.yml) 預設啟動 **New API + PostgreSQL + Redis**，選用的獨立日誌資料庫也要求 PostgreSQL 18+。
 
 ```bash
 git clone https://github.com/QuantumNous/new-api.git
@@ -209,8 +209,8 @@ docker compose logs -f new-api
 
 | 元件 | 可選方案 |
 | --- | --- |
-| 主資料庫 | PostgreSQL ≥ 9.6 |
-| 獨立日誌資料庫 | 透過 `LOG_SQL_DSN` 設定，額外支援 ClickHouse |
+| 主資料庫 | PostgreSQL ≥ 18 |
+| 獨立日誌資料庫 | 透過 `LOG_SQL_DSN` 設定 PostgreSQL ≥ 18 |
 | 快取 | 可選 Redis 與記憶體快取；多節點需要共享限流額度時使用共享 Redis |
 | 容器平台 | Linux amd64 / arm64 |
 
@@ -269,7 +269,7 @@ bun run dev -- --port 5173
 
 貢獻前請閱讀 [AGENTS.md](./AGENTS.md)。依改動範圍執行檢查：Go 模組使用 `make test`；前端在 `web/` 下執行 `bun run typecheck`、`bun run lint`、`bun run test` 和 `bun run build`。修改 RelayKit 後還必須在 `relaykit/` 下執行 `GOWORK=off go build ./...`。
 
-資料庫測試需要設定 `TEST_POSTGRES_DSN`，連線至本機 PostgreSQL；每個測試夾具會建立並清理獨立 schema。設定 `AUDIT_CLICKHOUSE_DSN` 可在本機 ClickHouse 測試執行個體上驗證獨立日誌資料庫。
+資料庫測試需要設定 `TEST_POSTGRES_DSN`，連線至本機 PostgreSQL；每個測試夾具會建立並清理獨立 schema。獨立日誌資料庫測試也使用隔離的 PostgreSQL schema。可選設定 `TEST_POSTGRES_OLD_DSN` 指向本機 PostgreSQL 17，以驗證舊版本拒絕邏輯。
 
 <a id="documentation"></a>
 

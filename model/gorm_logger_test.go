@@ -7,7 +7,6 @@ import (
 
 	"github.com/QuantumNous/new-api/internal/testutil"
 
-	"github.com/ClickHouse/clickhouse-go/v2/lib/proto"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
@@ -33,12 +32,6 @@ func TestSanitizeDBErrorStripsDriverMessage(t *testing.T) {
 			name:   "postgres pooler prepared statement conflict gets remediation hint",
 			err:    &pgconn.PgError{Severity: "FATAL", Code: "08P01", Message: "prepared statement name is already in use: stmt_secret-value"},
 			want:   "postgres error SQLSTATE 08P01: prepared statement conflict with a transaction-pooling proxy (PgBouncer/Neon/Supabase); other clients sharing this database must disable prepared statements, or upgrade PgBouncer to >=1.21 with max_prepared_statements enabled",
-			leaked: "secret-value",
-		},
-		{
-			name:   "clickhouse exception",
-			err:    &proto.Exception{Code: 241, Message: "Memory limit exceeded while processing 'secret-value'"},
-			want:   "clickhouse error 241",
 			leaked: "secret-value",
 		},
 		{

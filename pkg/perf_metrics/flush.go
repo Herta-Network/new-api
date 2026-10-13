@@ -1,7 +1,10 @@
 package perfmetrics
 
 import (
+	"cmp"
+	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -22,42 +25,70 @@ func flushLoop() {
 	}
 }
 
+type pendingMetric struct {
+	key    bucketKey
+	bucket *atomicBucket
+	counts counters
+}
+
+var flushMutex sync.Mutex
+var metricWriter = model.StatisticsBatch{WriterID: common.GetUUID()}
+var pendingMetrics []pendingMetric
+
 func flushCompletedBuckets() {
+	flushMutex.Lock()
+	defer flushMutex.Unlock()
 	currentBucket := bucketStart(time.Now().Unix())
-	hotBuckets.Range(func(key, value any) bool {
-		k := key.(bucketKey)
-		if k.bucketTs >= currentBucket {
-			return true
+	for range 2 {
+		if len(pendingMetrics) == 0 {
+			hotBuckets.Range(func(key, value any) bool {
+				k := key.(bucketKey)
+				if k.bucketTs >= currentBucket {
+					return true
+				}
+				bucket := value.(*atomicBucket)
+				counts := bucket.snapshot()
+				if counts.requestCount == 0 {
+					deleteOldEmptyBucket(k, key)
+					return true
+				}
+				pendingMetrics = append(pendingMetrics, pendingMetric{key: k, bucket: bucket, counts: counts})
+				return true
+			})
+			if len(pendingMetrics) == 0 {
+				return
+			}
+			slices.SortFunc(pendingMetrics, func(a, b pendingMetric) int {
+				return cmp.Or(cmp.Compare(a.key.model, b.key.model), cmp.Compare(a.key.group, b.key.group), cmp.Compare(a.key.bucketTs, b.key.bucketTs))
+			})
+			metricWriter.Sequence++
 		}
-
-		bucket := value.(*atomicBucket)
-		drained := bucket.drain()
-		if drained.requestCount == 0 {
-			deleteOldEmptyBucket(k, key)
-			return true
+		rows := make([]model.PerfMetric, 0, len(pendingMetrics))
+		for _, pending := range pendingMetrics {
+			c := pending.counts
+			rows = append(rows, model.PerfMetric{
+				ModelName: pending.key.model, Group: pending.key.group, BucketTs: pending.key.bucketTs,
+				RequestCount: c.requestCount, SuccessCount: c.successCount, TotalLatencyMs: c.totalLatencyMs,
+				TtftSumMs: c.ttftSumMs, TtftCount: c.ttftCount, OutputTokens: c.outputTokens, GenerationMs: c.generationMs,
+			})
 		}
-
-		err := model.UpsertPerfMetric(&model.PerfMetric{
-			ModelName:      k.model,
-			Group:          k.group,
-			BucketTs:       k.bucketTs,
-			RequestCount:   drained.requestCount,
-			SuccessCount:   drained.successCount,
-			TotalLatencyMs: drained.totalLatencyMs,
-			TtftSumMs:      drained.ttftSumMs,
-			TtftCount:      drained.ttftCount,
-			OutputTokens:   drained.outputTokens,
-			GenerationMs:   drained.generationMs,
-		})
-		if err != nil {
-			bucket.addCounters(drained)
-			common.SysError(common.LogText("failed to flush perf metric bucket model=%s group=%s bucket=%d: %s", k.model, k.group, k.bucketTs, err.Error()))
-			return true
+		if err := model.SavePerfMetricBatch(metricWriter, rows); err != nil {
+			common.SysError(common.LogText("failed to flush performance metrics: %s", err.Error()))
+			return
 		}
-
-		deleteOldEmptyBucket(k, key)
-		return true
-	})
+		for _, pending := range pendingMetrics {
+			c := pending.counts
+			// Subtract only the acknowledged snapshot; samples arriving during I/O remain.
+			pending.bucket.addCounters(counters{
+				requestCount: -c.requestCount, successCount: -c.successCount, totalLatencyMs: -c.totalLatencyMs,
+				ttftSumMs: -c.ttftSumMs, ttftCount: -c.ttftCount, outputTokens: -c.outputTokens, generationMs: -c.generationMs,
+			})
+			if pending.bucket.requestCount.Load() == 0 {
+				deleteOldEmptyBucket(pending.key, pending.key)
+			}
+		}
+		pendingMetrics = nil
+	}
 }
 
 func deleteOldEmptyBucket(k bucketKey, rawKey any) {

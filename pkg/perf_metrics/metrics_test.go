@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/internal/testutil"
+	"gorm.io/gorm"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -183,7 +184,7 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 			require.NoError(t, db.Migrator().DropTable(&model.PerfMetric{}))
-			require.NoError(t, db.AutoMigrate(&model.PerfMetric{}))
+			require.NoError(t, db.AutoMigrate(&model.PerfMetric{}, &model.StatisticsWriteCheckpoint{}))
 			versionQuery := "SELECT version()"
 
 			var version string
@@ -340,4 +341,47 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestPerformanceFlushRetryIncludesSamplesArrivingDuringFailure(t *testing.T) {
+	db, err := testutil.OpenDB(t, &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.PerfMetric{}, &model.StatisticsWriteCheckpoint{}))
+	previousDB, previousWriter, previousPending := model.DB, metricWriter, pendingMetrics
+	model.DB = db
+	metricWriter = model.StatisticsBatch{WriterID: common.GetUUID()}
+	pendingMetrics = nil
+	hotBuckets.Clear()
+	t.Cleanup(func() {
+		model.DB, metricWriter, pendingMetrics = previousDB, previousWriter, previousPending
+		hotBuckets.Clear()
+	})
+	hour := bucketStart(time.Now().Add(-time.Hour).Unix())
+	key := bucketKey{model: "retry-model", group: "a", bucketTs: hour}
+	bucket := &atomicBucket{}
+	bucket.add(Sample{Success: true, LatencyMs: 10})
+	hotBuckets.Store(key, bucket)
+	require.NoError(t, db.Callback().Create().Before("gorm:create").Register("test:perf_flush_failure", func(tx *gorm.DB) {
+		if tx.Statement.Table == "perf_metrics" {
+			bucket.add(Sample{Success: false, LatencyMs: 30})
+			tx.AddError(errors.New("write failed"))
+		}
+	}))
+	flushCompletedBuckets()
+	require.NoError(t, db.Callback().Create().Remove("test:perf_flush_failure"))
+	var count int64
+	require.NoError(t, db.Model(&model.PerfMetric{}).Count(&count).Error)
+	assert.Zero(t, count)
+	flushCompletedBuckets()
+	flushCompletedBuckets()
+	var rows []model.PerfMetric
+	require.NoError(t, db.Find(&rows).Error)
+	require.Len(t, rows, 1)
+	assert.EqualValues(t, 2, rows[0].RequestCount)
+	assert.EqualValues(t, 1, rows[0].SuccessCount)
+	assert.EqualValues(t, 40, rows[0].TotalLatencyMs)
+	visible, err := Query(QueryParams{Model: "retry-model", Hours: 24})
+	require.NoError(t, err)
+	require.NotNil(t, visible.Summary)
+	assert.Equal(t, Summary{SuccessRate: 50, AvgLatencyMs: 20}, *visible.Summary)
 }

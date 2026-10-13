@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -69,7 +70,7 @@ func TestMigrationSchemaStability(t *testing.T) {
 				t.Skip("test database DSN is not configured")
 			}
 			t.Setenv("MIGRATION_TEST_DSN", dsn)
-			db, _, err := chooseDB("MIGRATION_TEST_DSN", false)
+			db, _, err := chooseDB("MIGRATION_TEST_DSN")
 			require.NoError(t, err)
 			sqlDB, err := db.DB()
 			require.NoError(t, err)
@@ -194,14 +195,19 @@ func TestChooseDBRejectsUnsupportedConnections(t *testing.T) {
 		{name: "mysql primary", dsn: "user:private-password@tcp(localhost:3306)/new-api"},
 		{name: "mysql log", dsn: "user:private-password@tcp(localhost:3306)/logs", log: true},
 		{name: "clickhouse primary", dsn: "clickhouse://localhost:9000/logs"},
+		{name: "clickhouse log", dsn: "clickhouse://localhost:9000/logs", log: true},
 		{name: "invalid postgres", dsn: "postgres://user:private-password@localhost:bad/new-api"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("DB_CONFIG_TEST_DSN", tc.dsn)
-			db, _, err := chooseDB("DB_CONFIG_TEST_DSN", tc.log)
+			env := "SQL_DSN"
+			if tc.log {
+				env = "LOG_SQL_DSN"
+			}
+			t.Setenv(env, tc.dsn)
+			db, _, err := chooseDB(env)
 			require.Error(t, err)
 			assert.Nil(t, db)
-			assert.Contains(t, err.Error(), "DB_CONFIG_TEST_DSN")
+			assert.Contains(t, err.Error(), env)
 			assert.NotContains(t, err.Error(), "private-password")
 		})
 	}
@@ -220,7 +226,7 @@ func TestChooseDBAcceptsPostgreSQLConnectionForms(t *testing.T) {
 				dsn = strings.Replace(dsn, "postgresql://", form+"://", 1)
 			}
 			t.Setenv("DB_CONFIG_TEST_DSN", dsn)
-			db, kind, err := chooseDB("DB_CONFIG_TEST_DSN", false)
+			db, kind, err := chooseDB("DB_CONFIG_TEST_DSN")
 			require.NoError(t, err)
 			sqlDB, err := db.DB()
 			require.NoError(t, err)
@@ -230,4 +236,47 @@ func TestChooseDBAcceptsPostgreSQLConnectionForms(t *testing.T) {
 			assert.False(t, db.Config.PrepareStmt)
 		})
 	}
+}
+
+func TestChooseDBRejectsPostgreSQL17(t *testing.T) {
+	dsn := os.Getenv("TEST_POSTGRES_OLD_DSN")
+	if dsn == "" {
+		t.Skip("TEST_POSTGRES_OLD_DSN is not configured")
+	}
+	for _, env := range []string{"SQL_DSN", "LOG_SQL_DSN"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv(env, dsn)
+			db, _, err := chooseDB(env)
+			require.Error(t, err)
+			assert.Nil(t, db)
+			assert.Contains(t, err.Error(), env+" requires PostgreSQL 18 or later")
+		})
+	}
+}
+
+func TestPostgreSQL18FreshStartupIsIdempotent(t *testing.T) {
+	t.Setenv("MIGRATION_TEST_DSN", testutil.PostgresDSN(t))
+	db, _, err := chooseDB("MIGRATION_TEST_DSN")
+	require.NoError(t, err)
+	connection, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, connection.Close()) })
+	previousDB, previousLog := DB, LOG_DB
+	DB, LOG_DB = db, db
+	t.Cleanup(func() { DB, LOG_DB = previousDB, previousLog })
+	require.NoError(t, migrateDB())
+	require.NoError(t, migrateLOGDB())
+	recorder := &migrationSQLRecorder{}
+	DB, LOG_DB = db.Session(&gorm.Session{Logger: recorder}), db.Session(&gorm.Session{Logger: recorder})
+	require.NoError(t, migrateDB())
+	require.NoError(t, migrateLOGDB())
+	assert.Empty(t, recorder.schemaMutations(), "second startup must preserve the schema without repeated DDL")
+	for _, name := range []string{"idx_tasks_unfinished_id", "idx_tasks_unfinished_submit_id"} {
+		assert.True(t, db.Migrator().HasIndex(&Task{}, name))
+	}
+	assert.True(t, db.Migrator().HasIndex(&SystemTask{}, "idx_system_tasks_pending_type_id"))
+	row := QuotaData{UserID: 1, Username: "alice", ModelName: "gpt", CreatedAt: 3600, Count: 1, Quota: 10}
+	require.NoError(t, db.Create(&row).Error)
+	row.Id = 0
+	assert.Error(t, db.Create(&row).Error, "statistics dimensions must remain unique after restart")
 }

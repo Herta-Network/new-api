@@ -92,7 +92,7 @@ Search these yourself before filing. Do not send the user to "read the docs firs
 
 - new-api version / commit / image tag (not `latest` / `unknown`):
 - Deploy source (repo release / official image / main source / other):
-- Main database (PostgreSQL); log database (PostgreSQL / ClickHouse):
+- Main database (PostgreSQL 18+); log database (PostgreSQL 18+):
 
 ## Problem facts
 

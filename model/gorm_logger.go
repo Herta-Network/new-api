@@ -8,7 +8,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/ClickHouse/clickhouse-go/v2/lib/proto"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
@@ -72,10 +71,6 @@ func sanitizeDBError(err error) error {
 			return fmt.Errorf("postgres error SQLSTATE %s: prepared statement conflict with a transaction-pooling proxy (PgBouncer/Neon/Supabase); other clients sharing this database must disable prepared statements, or upgrade PgBouncer to >=1.21 with max_prepared_statements enabled", pgErr.Code)
 		}
 		return fmt.Errorf("postgres error SQLSTATE %s", pgErr.Code)
-	}
-	var chErr *proto.Exception
-	if errors.As(err, &chErr) {
-		return fmt.Errorf("clickhouse error %d", chErr.Code)
 	}
 	return err
 }
