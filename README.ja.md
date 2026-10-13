@@ -149,18 +149,19 @@ New API は、アプリケーション、Agent、チーム向けのセルフホ�
 
 ### Docker でローカル実行
 
-SQLite を使う単一インスタンスを、ローカルホスト限定で起動します。
+PostgreSQL を使う単一インスタンスを、ローカルホスト限定で起動します。SQL_DSN を、コンテナから接続できる PostgreSQL サーバーの接続文字列に変更してください。
 
 ```bash
 mkdir -p data
 docker run --name new-api -d --restart unless-stopped \
   -p 127.0.0.1:3000:3000 \
   -e TZ=Asia/Shanghai \
+  -e SQL_DSN="postgresql://new_api:change_me@postgres.example.com:5432/new-api" \
   -v "$(pwd)/data:/data" \
   calciumion/new-api:latest
 ```
 
-[http://localhost:3000](http://localhost:3000) を開き、初期設定ウィザードで管理者アカウントを作成します。SQLite データベースはマウントした `data` ディレクトリに保存され、コンテナを置き換えても残ります。
+[http://localhost:3000](http://localhost:3000) を開き、初期設定ウィザードで管理者アカウントを作成します。PostgreSQL は別途バックアップしてください。マウントした `data` ディレクトリにはローカルファイルが保存されます。
 
 ### 最初のリクエスト
 
@@ -191,7 +192,7 @@ curl --fail-with-body http://localhost:3000/v1/responses \
 
 ### Docker Compose
 
-リポジトリの [Compose 設定](./docker-compose.yml) は、既定で **New API + PostgreSQL + Redis** を起動します。MySQL と独立した ClickHouse ログデータベースの設定例も含まれます。
+リポジトリの [Compose 設定](./docker-compose.yml) は、既定で **New API + PostgreSQL + Redis** を起動します。独立した ClickHouse ログデータベースの設定例も含まれます。
 
 ```bash
 git clone https://github.com/QuantumNous/new-api.git
@@ -209,14 +210,14 @@ docker compose logs -f new-api
 
 | コンポーネント | 選択肢 |
 | --- | --- |
-| メインデータベース | SQLite、MySQL ≥ 5.7.8、PostgreSQL ≥ 9.6 |
+| メインデータベース | PostgreSQL ≥ 9.6 |
 | 独立したログデータベース | `LOG_SQL_DSN` で設定。ClickHouse にも対応 |
 | キャッシュ | 任意の Redis とメモリキャッシュ。ノード間でレート制限を共有する場合は Redis を共有 |
 | コンテナのプラットフォーム | Linux amd64 / arm64 |
 
 | 環境変数 | 用途 |
 | --- | --- |
-| `SQL_DSN` | メインデータベースへの接続。未設定なら SQLite |
+| `SQL_DSN` | PostgreSQL メインデータベースへの接続（必須） |
 | `LOG_SQL_DSN` | 任意の独立ログデータベースへの接続 |
 | `REDIS_CONN_STRING` | Redis 接続文字列 |
 | `SESSION_SECRET` | 永続的な認証用シークレット。全ノードで同じ値を使用 |
@@ -268,6 +269,8 @@ bun run dev -- --port 5173
 | [electron/](./electron/README.md) | デスクトップアプリのラッパーとパッケージング |
 
 貢献前に [AGENTS.md](./AGENTS.md) を確認してください。変更に応じて、Go モジュールは `make test`、フロントエンドは `web/` で `bun run typecheck`、`bun run lint`、`bun run test`、`bun run build` を実行します。RelayKit を変更した場合は、`relaykit/` で `GOWORK=off go build ./...` も実行してください。
+
+データベースのテストには、ローカル PostgreSQL に接続する `TEST_POSTGRES_DSN` が必要です。各テストは独立したスキーマを作成し、終了時に削除します。独立ログデータベースのテストには、ローカル ClickHouse の `AUDIT_CLICKHOUSE_DSN` を設定してください。
 
 <a id="documentation"></a>
 

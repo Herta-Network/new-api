@@ -164,18 +164,19 @@ New API 是面向应用、Agent 和团队的自托管 AI 网关。将不同厂�
 
 ### 使用 Docker 本地体验
 
-以下命令使用 SQLite 启动单实例，仅监听本机端口：
+以下命令使用 PostgreSQL 启动单实例，仅监听本机端口。请将 SQL_DSN 示例替换为容器可访问的 PostgreSQL 连接：
 
 ```bash
 mkdir -p data
 docker run --name new-api -d --restart unless-stopped \
   -p 127.0.0.1:3000:3000 \
   -e TZ=Asia/Shanghai \
+  -e SQL_DSN="postgresql://new_api:change_me@postgres.example.com:5432/new-api" \
   -v "$(pwd)/data:/data" \
   calciumion/new-api:latest
 ```
 
-打开 [http://localhost:3000](http://localhost:3000)，按初始化向导创建管理员账号。SQLite 数据库存放在挂载的 `data` 目录中，更换容器后仍会保留。
+打开 [http://localhost:3000](http://localhost:3000)，按初始化向导创建管理员账号。PostgreSQL 数据库需单独备份；挂载的 `data` 目录用于持久化本地文件。
 
 ### 发起第一次请求
 
@@ -206,7 +207,7 @@ curl --fail-with-body http://localhost:3000/v1/responses \
 
 ### Docker Compose
 
-仓库的 [Compose 配置](./docker-compose.yml) 默认启动 **New API + PostgreSQL + Redis**，并提供 MySQL 和独立 ClickHouse 日志库的配置示例。
+仓库的 [Compose 配置](./docker-compose.yml) 默认启动 **New API + PostgreSQL + Redis**，并提供 独立 ClickHouse 日志库的配置示例。
 
 ```bash
 git clone https://github.com/QuantumNous/new-api.git
@@ -224,14 +225,14 @@ docker compose logs -f new-api
 
 | 组件 | 可选方案 |
 | --- | --- |
-| 主数据库 | SQLite、MySQL ≥ 5.7.8、PostgreSQL ≥ 9.6 |
+| 主数据库 | PostgreSQL ≥ 9.6 |
 | 独立日志库 | 通过 `LOG_SQL_DSN` 配置，额外支持 ClickHouse |
 | 缓存 | 可选 Redis 与内存缓存；多节点需要共享限流额度时使用共享 Redis |
 | 容器平台 | Linux amd64 / arm64 |
 
 | 环境变量 | 用途 |
 | --- | --- |
-| `SQL_DSN` | 主数据库连接串；未设置时使用 SQLite |
+| `SQL_DSN` | 必填的 PostgreSQL 主数据库连接串 |
 | `LOG_SQL_DSN` | 可选的独立日志数据库连接串 |
 | `REDIS_CONN_STRING` | Redis 连接串 |
 | `SESSION_SECRET` | 持久保存的鉴权密钥，所有节点必须一致 |
@@ -283,6 +284,8 @@ bun run dev -- --port 5173
 | [electron/](./electron/README.md) | 桌面封装与打包 |
 
 贡献前请阅读 [AGENTS.md](./AGENTS.md)。按改动范围执行检查：Go 模块使用 `make test`；前端在 `web/` 下运行 `bun run typecheck`、`bun run lint`、`bun run test` 和 `bun run build`。修改 RelayKit 后还必须在 `relaykit/` 下执行 `GOWORK=off go build ./...`。
+
+数据库测试需要设置 `TEST_POSTGRES_DSN`，连接本地 PostgreSQL；每个测试夹具会创建并清理独立 schema。设置 `AUDIT_CLICKHOUSE_DSN` 可在本地 ClickHouse 测试实例上验证独立日志库。
 
 <a id="documentation"></a>
 

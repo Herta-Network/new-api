@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -86,7 +87,7 @@ func newTestUserSession(sid string, userID int, now int64) *UserSession {
 		Version:         1,
 		UserAuthVersion: 1,
 		Status:          UserSessionStatusActive,
-		RefreshHash:     fmt.Sprintf("current-%s", sid),
+		RefreshHash:     fmt.Sprintf("%x", sha256.Sum256([]byte("current-"+sid))),
 		LoginMethod:     "password",
 		IP:              "127.0.0.1",
 		UserAgent:       "model-test",
@@ -250,9 +251,9 @@ func TestRotateUserSessionRefreshRaceAndReuse(t *testing.T) {
 	session := newTestUserSession("rotate-session", 1002, now)
 	require.NoError(t, CreateUserSession(session))
 
-	rotated, err := RotateUserSessionRefresh(1002, session.SID, session.RefreshHash, "next-hash", now+10, 30*time.Second)
+	rotated, err := RotateUserSessionRefresh(1002, session.SID, session.RefreshHash, strings.Repeat("a", 64), now+10, 30*time.Second)
 	require.NoError(t, err)
-	assert.Equal(t, "next-hash", rotated.RefreshHash)
+	assert.Equal(t, strings.Repeat("a", 64), rotated.RefreshHash)
 	assert.Equal(t, session.RefreshHash, rotated.PreviousRefreshHash)
 	assert.Equal(t, now+40, rotated.PreviousValidUntil)
 

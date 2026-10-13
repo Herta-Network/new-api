@@ -149,18 +149,19 @@ Ce README décrit le code source actuel. Consultez les notes de la version que v
 
 ### Essai local avec Docker
 
-Cette commande démarre une instance SQLite accessible uniquement depuis la machine locale :
+Cette commande démarre une instance PostgreSQL accessible uniquement depuis la machine locale. Remplacez SQL_DSN par une connexion PostgreSQL accessible depuis le conteneur :
 
 ```bash
 mkdir -p data
 docker run --name new-api -d --restart unless-stopped \
   -p 127.0.0.1:3000:3000 \
   -e TZ=Asia/Shanghai \
+  -e SQL_DSN="postgresql://new_api:change_me@postgres.example.com:5432/new-api" \
   -v "$(pwd)/data:/data" \
   calciumion/new-api:latest
 ```
 
-Ouvrez [http://localhost:3000](http://localhost:3000) et suivez l'assistant pour créer le compte administrateur. Le répertoire `data` conserve la base SQLite lors du remplacement du conteneur.
+Ouvrez [http://localhost:3000](http://localhost:3000) et suivez l'assistant pour créer le compte administrateur. Sauvegardez PostgreSQL séparément ; le répertoire `data` conserve les fichiers locaux lors du remplacement du conteneur.
 
 ### Première requête
 
@@ -191,7 +192,7 @@ curl --fail-with-body http://localhost:3000/v1/responses \
 
 ### Docker Compose
 
-La [configuration Compose](./docker-compose.yml) du dépôt démarre **New API + PostgreSQL + Redis** par défaut. Elle contient aussi des exemples pour MySQL et une base de journaux ClickHouse distincte.
+La [configuration Compose](./docker-compose.yml) du dépôt démarre **New API + PostgreSQL + Redis** par défaut. Elle contient aussi un exemple pour une base de journaux ClickHouse distincte.
 
 ```bash
 git clone https://github.com/QuantumNous/new-api.git
@@ -209,14 +210,14 @@ docker compose logs -f new-api
 
 | Composant | Options |
 | --- | --- |
-| Base principale | SQLite, MySQL ≥ 5.7.8 ou PostgreSQL ≥ 9.6 |
+| Base principale | PostgreSQL ≥ 9.6 |
 | Base de journaux distincte | Configurée avec `LOG_SQL_DSN` ; prend aussi en charge ClickHouse |
 | Cache | Redis facultatif et cache mémoire ; partagez Redis si les nœuds doivent partager les limites de débit |
 | Plateformes des conteneurs | Linux amd64 / arm64 |
 
 | Variable | Rôle |
 | --- | --- |
-| `SQL_DSN` | Connexion à la base principale ; SQLite si non définie |
+| `SQL_DSN` | Connexion PostgreSQL à la base principale obligatoire |
 | `LOG_SQL_DSN` | Connexion facultative à une base de journaux distincte |
 | `REDIS_CONN_STRING` | Chaîne de connexion Redis |
 | `SESSION_SECRET` | Secret d'authentification persistant, identique sur tous les nœuds |
@@ -268,6 +269,8 @@ Ouvrez [http://localhost:5173](http://localhost:5173) ; les requêtes API sont r
 | [electron/](./electron/README.md) | Application de bureau et packaging |
 
 Lisez [AGENTS.md](./AGENTS.md) avant de contribuer. Exécutez les vérifications adaptées : `make test` pour les modules Go ; `bun run typecheck`, `bun run lint`, `bun run test` et `bun run build` dans `web/` pour le frontend. Une modification de RelayKit nécessite aussi `GOWORK=off go build ./...` depuis `relaykit/`.
+
+Les tests de base de données nécessitent `TEST_POSTGRES_DSN` vers un serveur PostgreSQL local ; chaque test crée et supprime son propre schéma. Définissez `AUDIT_CLICKHOUSE_DSN` vers une instance ClickHouse locale pour tester la base de journaux distincte.
 
 <a id="documentation"></a>
 

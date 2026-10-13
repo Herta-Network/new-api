@@ -112,7 +112,7 @@ func TestUpdateOptionRejectsUsageExpressionWithoutTaskPlugin(t *testing.T) {
 }
 
 func TestUpdateOptionAliasBillingExprUsesPluginSchema(t *testing.T) {
-	database := modelManagementDB(t, "sqlite", "")
+	database := modelManagementDB(t, "postgres", "")
 	require.NoError(t, database.AutoMigrate(&model.Log{}))
 	const pluginKey = "billing-alias-probe"
 	source := `
@@ -198,7 +198,7 @@ func TestPreConsumePolicyDatabaseMatrix(t *testing.T) {
 		require.NoError(t, config.GlobalConfig.LoadFromDB(previousConfig))
 		common.QuotaPerUnit, common.BatchUpdateEnabled = previousUnit, previousBatch
 	})
-	for _, dialect := range []struct{ kind, env string }{{"sqlite", ""}, {"mysql", "TEST_MYSQL_DSN"}, {"postgres", "TEST_POSTGRES_DSN"}} {
+	for _, dialect := range []struct{ kind, env string }{{"postgres", "TEST_POSTGRES_DSN"}} {
 		t.Run(dialect.kind, func(t *testing.T) {
 			if dialect.env != "" && os.Getenv(dialect.env) == "" {
 				t.Skip("set " + dialect.env + " to run this database")

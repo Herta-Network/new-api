@@ -8,19 +8,20 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/controller"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -39,7 +40,7 @@ export function buildContentRequest(ctx){const item=(ctx.data.artifacts||[]).fin
 func TestDocumentPluginRunsGenericBatchArtifactChain(t *testing.T) {
 	service.InitHttpClient()
 	originalDB := model.DB
-	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	database, err := testutil.OpenDB(t, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, database.AutoMigrate(&model.TaskPlugin{}, &model.Channel{}, &model.Task{}))
 	model.DB = database

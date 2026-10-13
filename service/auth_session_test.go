@@ -8,11 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,7 +28,7 @@ func setupAuthSessionTestDB(t *testing.T) *model.User {
 	previousIssuanceWindow := common.UserSessionIssuanceWindowSeconds
 	previousRevokedRetention := common.UserSessionRevokedRetentionDays
 	previousAlertThreshold := common.UserSessionHourlyAlertThreshold
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := testutil.OpenDB(t, &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
@@ -268,11 +269,11 @@ func TestCleanupAuthArtifactsRemovesOnlyExpiredRecords(t *testing.T) {
 		CreatedAt: oldExpiry.Unix(), LastActiveAt: oldExpiry.Unix(), ExpiresAt: oldExpiry.Unix(),
 	}).Error)
 	require.NoError(t, model.DB.Create(&model.AuthFlow{
-		TokenHash: "expired-flow", Purpose: model.AuthFlowPurposeTwoFALogin,
+		TokenHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Purpose: model.AuthFlowPurposeTwoFALogin,
 		ExpiresAt: oldExpiry,
 	}).Error)
 	require.NoError(t, model.DB.Create(&model.AuthFlow{
-		TokenHash: "recent-flow", Purpose: model.AuthFlowPurposeTwoFALogin,
+		TokenHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Purpose: model.AuthFlowPurposeTwoFALogin,
 		ExpiresAt: now.Add(time.Minute),
 	}).Error)
 
@@ -294,7 +295,7 @@ func TestCleanupAuthArtifactsRemovesOnlyExpiredRecords(t *testing.T) {
 	var flows []model.AuthFlow
 	require.NoError(t, model.DB.Find(&flows).Error)
 	require.Len(t, flows, 1)
-	assert.Equal(t, "recent-flow", flows[0].TokenHash)
+	assert.Equal(t, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", flows[0].TokenHash)
 	var kept []string
 	require.NoError(t, model.DB.Model(&model.UserAccessToken{}).Order("id").Pluck("token_hash", &kept).Error)
 	assert.Equal(t, []string{"within-retention", "never-expires"}, kept)

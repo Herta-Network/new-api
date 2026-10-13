@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/QuantumNous/new-api/internal/testutil"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -155,12 +156,9 @@ func TestRecordTaskResultSamplesTerminalTasks(t *testing.T) {
 	}, merged[bucketKey{model: "video-model", group: "a"}])
 }
 
-// TEST_PERF_MYSQL_DSN / TEST_PERF_POSTGRES_DSN optionally run the aggregation
-// against isolated real MySQL/PostgreSQL databases.
+// TEST_POSTGRES_DSN runs aggregation against an isolated PostgreSQL schema.
 func TestPerformanceAggregationAndFlush(t *testing.T) {
-	for _, dialect := range []struct{ name, env string }{
-		{"sqlite", ""}, {"mysql", "TEST_PERF_MYSQL_DSN"}, {"postgres", "TEST_PERF_POSTGRES_DSN"},
-	} {
+	for _, dialect := range []struct{ name, env string }{{"postgres", "TEST_POSTGRES_DSN"}} {
 		t.Run(dialect.name, func(t *testing.T) {
 			dsn := ""
 			if dialect.env != "" {
@@ -169,13 +167,13 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 					t.Skip("isolated test database DSN is not configured")
 				}
 			}
-			t.Setenv("SQL_DSN", dsn)
-			oldDB, oldPath, oldMaster, oldRedis := model.DB, common.SQLitePath, common.IsMasterNode, common.RedisEnabled
+			t.Setenv("SQL_DSN", testutil.PostgresDSN(t))
+			oldDB, oldMaster, oldRedis := model.DB, common.IsMasterNode, common.RedisEnabled
 			oldType, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()
-			common.SQLitePath, common.IsMasterNode, common.RedisEnabled = filepath.Join(t.TempDir(), "perf.db"), false, false
+			common.IsMasterNode, common.RedisEnabled = false, false
 			hotBuckets.Clear()
 			t.Cleanup(func() {
-				model.DB, common.SQLitePath, common.IsMasterNode, common.RedisEnabled = oldDB, oldPath, oldMaster, oldRedis
+				model.DB, common.IsMasterNode, common.RedisEnabled = oldDB, oldMaster, oldRedis
 				common.SetDatabaseTypes(oldType, oldLogType)
 				hotBuckets.Clear()
 			})
@@ -187,9 +185,7 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			require.NoError(t, db.Migrator().DropTable(&model.PerfMetric{}))
 			require.NoError(t, db.AutoMigrate(&model.PerfMetric{}))
 			versionQuery := "SELECT version()"
-			if dialect.name == "sqlite" {
-				versionQuery = "SELECT sqlite_version()"
-			}
+
 			var version string
 			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
 			t.Logf("database version: %s", version)

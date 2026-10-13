@@ -1,12 +1,15 @@
 package model
 
 import (
-	"os"
-	"path/filepath"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -58,20 +61,10 @@ type migrationDecimalV3 struct {
 }
 
 func TestMigrationSchemaStability(t *testing.T) {
-	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+	for _, dialect := range []string{"postgres"} {
 		t.Run(dialect, func(t *testing.T) {
 			var dsn string
-			switch dialect {
-			case "sqlite":
-				dsn = "local"
-				previousPath := common.SQLitePath
-				common.SQLitePath = filepath.Join(t.TempDir(), "migration.db")
-				t.Cleanup(func() { common.SQLitePath = previousPath })
-			case "mysql":
-				dsn = os.Getenv("TEST_MYSQL_DSN")
-			case "postgres":
-				dsn = os.Getenv("TEST_POSTGRES_DSN")
-			}
+			dsn = testutil.PostgresDSN(t)
 			if dsn == "" {
 				t.Skip("test database DSN is not configured")
 			}
@@ -184,37 +177,57 @@ func TestMigrationSchemaStability(t *testing.T) {
 				})
 			}
 
-			if dialect == "mysql" {
-				t.Run("decimal_default_and_real_changes", func(t *testing.T) {
-					const table = "migration_decimal_test"
-					t.Cleanup(func() { _ = db.Migrator().DropTable(table) })
-					require.NoError(t, db.Table(table).AutoMigrate(&migrationDecimalV1{}))
-					require.NoError(t, db.Table(table).Create(&migrationDecimalV1{ID: 1, Price: 12.345678}).Error)
-					for _, target := range []any{&migrationDecimalV1{}, &migrationDecimalV2{}, &migrationDecimalV3{}} {
-						require.NoError(t, db.Table(table).AutoMigrate(target))
-						recorder.reset()
-						require.NoError(t, db.Table(table).AutoMigrate(target))
-						assert.Empty(t, recorder.schemaMutations())
-					}
-					columns, err := db.Table(table).Migrator().ColumnTypes(&migrationDecimalV3{})
-					require.NoError(t, err)
-					for _, column := range columns {
-						if column.Name() == "price" {
-							precision, scale, ok := column.DecimalSize()
-							require.True(t, ok)
-							assert.EqualValues(t, 12, precision)
-							assert.EqualValues(t, 6, scale)
-							nullable, ok := column.Nullable()
-							require.True(t, ok)
-							assert.False(t, nullable)
-						}
-					}
-					require.NoError(t, db.Table(table).Create(&map[string]any{"id": 2}).Error)
-					var prices []float64
-					require.NoError(t, db.Table(table).Order("id").Pluck("price", &prices).Error)
-					assert.Equal(t, []float64{12.345678, 1.25}, prices)
-				})
+		})
+	}
+}
+
+// Startup must reject obsolete engines before connecting or creating files.
+func TestChooseDBRejectsUnsupportedConnections(t *testing.T) {
+	for _, tc := range []struct {
+		name, dsn string
+		log       bool
+	}{
+		{name: "missing primary"},
+		{name: "blank primary", dsn: "  "},
+		{name: "sqlite fallback", dsn: "local"},
+		{name: "sqlite file", dsn: "file:old.db"},
+		{name: "mysql primary", dsn: "user:private-password@tcp(localhost:3306)/new-api"},
+		{name: "mysql log", dsn: "user:private-password@tcp(localhost:3306)/logs", log: true},
+		{name: "clickhouse primary", dsn: "clickhouse://localhost:9000/logs"},
+		{name: "invalid postgres", dsn: "postgres://user:private-password@localhost:bad/new-api"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("DB_CONFIG_TEST_DSN", tc.dsn)
+			db, _, err := chooseDB("DB_CONFIG_TEST_DSN", tc.log)
+			require.Error(t, err)
+			assert.Nil(t, db)
+			assert.Contains(t, err.Error(), "DB_CONFIG_TEST_DSN")
+			assert.NotContains(t, err.Error(), "private-password")
+		})
+	}
+}
+
+func TestChooseDBAcceptsPostgreSQLConnectionForms(t *testing.T) {
+	for _, form := range []string{"postgres", "postgresql", "keywords"} {
+		t.Run(form, func(t *testing.T) {
+			dsn := testutil.PostgresDSN(t)
+			if form == "keywords" {
+				config, err := pgx.ParseConfig(dsn)
+				require.NoError(t, err)
+				dsn = fmt.Sprintf("host=%s port=%d user=%s password='%s' dbname=%s sslmode=disable search_path=%s", config.Host, config.Port, config.User, strings.NewReplacer("\\", "\\\\", "'", "\\'").Replace(config.Password), config.Database, config.RuntimeParams["search_path"])
+			} else {
+				dsn = strings.Replace(dsn, "postgres://", form+"://", 1)
+				dsn = strings.Replace(dsn, "postgresql://", form+"://", 1)
 			}
+			t.Setenv("DB_CONFIG_TEST_DSN", dsn)
+			db, kind, err := chooseDB("DB_CONFIG_TEST_DSN", false)
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+			require.NoError(t, sqlDB.Ping())
+			assert.Equal(t, common.DatabaseTypePostgreSQL, kind)
+			assert.False(t, db.Config.PrepareStmt)
 		})
 	}
 }

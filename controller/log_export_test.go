@@ -90,9 +90,8 @@ func TestLogExportDatabaseMatrix(t *testing.T) {
 		kind, env string
 		typ       common.DatabaseType
 	}{
-		{"sqlite", "", common.DatabaseTypeSQLite},
-		{"mysql", "AUDIT_MYSQL_DSN", common.DatabaseTypeMySQL},
-		{"postgres", "AUDIT_POSTGRES_DSN", common.DatabaseTypePostgreSQL},
+
+		{"postgres", "TEST_POSTGRES_DSN", common.DatabaseTypePostgreSQL},
 		{"clickhouse", "AUDIT_CLICKHOUSE_DSN", common.DatabaseTypeClickHouse},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
@@ -103,8 +102,8 @@ func TestLogExportDatabaseMatrix(t *testing.T) {
 			db, isolatedDSN := newAuditTestDatabase(t, tc.kind, dsn)
 			mainDB, mainType := db, tc.typ
 			if tc.kind == "clickhouse" {
-				mainDB, _ = newAuditTestDatabase(t, "sqlite", "")
-				mainType = common.DatabaseTypeSQLite
+				mainDB, _ = newAuditTestDatabase(t, "postgres", "")
+				mainType = common.DatabaseTypePostgreSQL
 			}
 			useLogExportDatabases(t, mainDB, db, mainType, tc.typ)
 			require.NoError(t, mainDB.AutoMigrate(&model.Channel{}))
@@ -115,9 +114,7 @@ func TestLogExportDatabaseMatrix(t *testing.T) {
 				require.NoError(t, db.AutoMigrate(&model.Log{}))
 			}
 			versionSQL := "SELECT version()"
-			if tc.kind == "sqlite" {
-				versionSQL = "SELECT sqlite_version()"
-			}
+
 			var version string
 			require.NoError(t, model.LOG_DB.Raw(versionSQL).Scan(&version).Error)
 			t.Logf("log database: %s %s", tc.kind, version)
@@ -152,8 +149,8 @@ func TestLogExportDatabaseMatrix(t *testing.T) {
 
 func TestLogExportRules(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db, _ := newAuditTestDatabase(t, "sqlite", "")
-	useLogExportDatabases(t, db, db, common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	db, _ := newAuditTestDatabase(t, "postgres", "")
+	useLogExportDatabases(t, db, db, common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
 	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Log{}, &model.QuotaData{}))
 	now := time.Now().Unix()
 	seedExportLogs(t, db, db, now)

@@ -175,7 +175,7 @@ func createAuthFlowWithTx(tx *gorm.DB, input AuthFlowCreate) (string, *AuthFlow,
 
 // ClaimExternalAuthAssertion records a signed provider assertion as consumed.
 // The assertion is HMACed before storage and the unique token_hash index makes
-// replay rejection atomic on SQLite, MySQL and PostgreSQL.
+// replay rejection atomic on PostgreSQL.
 func ClaimExternalAuthAssertion(purpose, assertion string, expiresAt time.Time) error {
 	return DB.Transaction(func(tx *gorm.DB) error {
 		return ClaimExternalAuthAssertionWithTx(tx, purpose, assertion, expiresAt)
@@ -247,8 +247,7 @@ func ConsumeAuthFlowWithAction(token string, match AuthFlowMatch, action func(tx
 	}
 	var consumed AuthFlow
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		// Claim with the first write, rather than upgrading a prior read lock.
-		// SQLite cannot reliably upgrade two concurrent deferred read transactions.
+		// Claim the unexpired flow atomically before reading its payload.
 		now := time.Now()
 		result := applyAuthFlowMatch(tx.Model(&AuthFlow{}), token, match).
 			Where("consumed_at IS NULL AND expires_at > ?", now).

@@ -3,6 +3,13 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"slices"
+	"strings"
+	"testing"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
@@ -11,12 +18,6 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"slices"
-	"strings"
-	"testing"
 
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -124,7 +125,7 @@ func TestRequestPolicyConfigReturnsSettingsWithoutMigration(t *testing.T) {
 
 func TestRequestPolicyRoutingDatabaseMatrix(t *testing.T) {
 	require.NoError(t, i18n.Init())
-	for _, dialect := range []struct{ kind, env string }{{"sqlite", ""}, {"mysql", "TEST_MYSQL_DSN"}, {"postgres", "TEST_POSTGRES_DSN"}} {
+	for _, dialect := range []struct{ kind, env string }{{"postgres", "TEST_POSTGRES_DSN"}} {
 		t.Run(dialect.kind, func(t *testing.T) {
 			dsn := ""
 			if dialect.env != "" {

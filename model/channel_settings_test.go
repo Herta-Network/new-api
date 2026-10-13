@@ -3,18 +3,16 @@ package model
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"testing"
+
+	"github.com/QuantumNous/new-api/internal/testutil"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	filterdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -109,26 +107,15 @@ func TestAdvancedCustomChannelRequiresModelListRouteOnlyWhenUpdateChecksEnabled(
 }
 
 func TestInferencePresetSettingsAndDatabaseRoundTrip(t *testing.T) {
-	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+	for _, dialect := range []string{"postgres"} {
 		t.Run(dialect, func(t *testing.T) {
-			var driver gorm.Dialector
-			switch dialect {
-			case "sqlite":
-				driver = sqlite.Open(filepath.Join(t.TempDir(), "presets.db"))
-			case "mysql":
-				dsn := os.Getenv("TEST_MYSQL_DSN")
-				if dsn == "" {
-					t.Skip("TEST_MYSQL_DSN is not configured")
-				}
-				driver = mysql.Open(dsn)
-			case "postgres":
-				dsn := os.Getenv("TEST_POSTGRES_DSN")
-				if dsn == "" {
-					t.Skip("TEST_POSTGRES_DSN is not configured")
-				}
-				driver = postgres.Open(dsn)
+
+			dsn := os.Getenv("TEST_POSTGRES_DSN")
+			if dsn == "" {
+				t.Skip("TEST_POSTGRES_DSN is not configured")
 			}
-			db, err := gorm.Open(driver, &gorm.Config{})
+
+			db, err := testutil.OpenDB(t, &gorm.Config{})
 			require.NoError(t, err)
 			sqlDB, err := db.DB()
 			require.NoError(t, err)
@@ -137,9 +124,7 @@ func TestInferencePresetSettingsAndDatabaseRoundTrip(t *testing.T) {
 			require.NoError(t, table.AutoMigrate(&Channel{}))
 			t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable("inference_preset_channels")) })
 			var version string
-			if dialect == "sqlite" {
-				require.NoError(t, db.Raw("select sqlite_version()").Scan(&version).Error)
-			} else {
+			{
 				require.NoError(t, db.Raw("select version()").Scan(&version).Error)
 			}
 			t.Logf("%s version: %s", dialect, version)

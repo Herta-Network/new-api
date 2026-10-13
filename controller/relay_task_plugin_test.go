@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
@@ -21,11 +23,8 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )
@@ -427,7 +426,7 @@ func TestExecuteTaskSubmissionDisconnectAfterDurableInsertDoesNotRefund(t *testi
 }
 
 // setupTaskSubmissionDatabase opens the dialect selected by
-// TEST_TASK_DB_DIALECT (SQLite in memory by default) and records every task
+// TEST_POSTGRES_DSN and records every task
 // INSERT in events so tests can assert the reserve → insert → settle order.
 // Without migrate the task table does not exist and inserts fail.
 func setupTaskSubmissionDatabase(t *testing.T, migrate bool, events *[]string) *gorm.DB {
@@ -468,32 +467,15 @@ func taskSubmissionRelayInfo(billing relaycommon.BillingSettler) *relaycommon.Re
 }
 
 // Uses the real submit adaptor, expression evaluator, BillingSession, task row
-// and consume log. Set TEST_TASK_DB_DIALECT plus TEST_MYSQL_DSN or
-// TEST_POSTGRES_DSN to exercise the same contract on an external test database.
-// Unique table prefixes keep the fixture isolated from all existing tables.
-// openTaskDialectDatabase opens the engine selected by TEST_TASK_DB_DIALECT
-// (default SQLite in memory; MySQL and PostgreSQL through TEST_MYSQL_DSN and
-// TEST_POSTGRES_DSN) with a unique table prefix, migrates the given models and
-// drops them on cleanup. It logs the engine version so database verification
-// runs leave a record.
+// and consume log in an isolated PostgreSQL schema through TEST_POSTGRES_DSN.
+// Table prefixes preserve the fixture's model naming contract.
 func openTaskDialectDatabase(t *testing.T, models ...any) (*gorm.DB, common.DatabaseType) {
 	t.Helper()
-	dialect := common.DatabaseType(os.Getenv("TEST_TASK_DB_DIALECT"))
-	var driver gorm.Dialector
-	switch dialect {
-	case "", common.DatabaseTypeSQLite:
-		dialect = common.DatabaseTypeSQLite
-		driver = sqlite.Open(":memory:")
-	case common.DatabaseTypeMySQL:
-		require.NotEmpty(t, os.Getenv("TEST_MYSQL_DSN"))
-		driver = mysql.Open(os.Getenv("TEST_MYSQL_DSN"))
-	case common.DatabaseTypePostgreSQL:
-		require.NotEmpty(t, os.Getenv("TEST_POSTGRES_DSN"))
-		driver = postgres.New(postgres.Config{DSN: os.Getenv("TEST_POSTGRES_DSN"), PreferSimpleProtocol: true})
-	default:
-		t.Fatalf("unsupported test dialect %q", dialect)
-	}
-	db, err := gorm.Open(driver, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: fmt.Sprintf("tsubmit_%d_", time.Now().UnixNano())}})
+	dialect := common.DatabaseTypePostgreSQL
+
+	require.NotEmpty(t, os.Getenv("TEST_POSTGRES_DSN"))
+
+	db, err := testutil.OpenDB(t, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: fmt.Sprintf("tsubmit_%d_", time.Now().UnixNano())}})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
@@ -502,9 +484,7 @@ func openTaskDialectDatabase(t *testing.T, models ...any) (*gorm.DB, common.Data
 	require.NoError(t, db.AutoMigrate(models...))
 	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(models...)) })
 	var version string
-	if dialect == common.DatabaseTypeSQLite {
-		require.NoError(t, db.Raw("SELECT sqlite_version()").Scan(&version).Error)
-	} else {
+	{
 		require.NoError(t, db.Raw("SELECT version()").Scan(&version).Error)
 	}
 	t.Logf("database: %s %s", dialect, version)

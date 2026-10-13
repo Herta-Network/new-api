@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"math"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
+
+	"github.com/QuantumNous/new-api/internal/testutil"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -20,75 +21,30 @@ import (
 	hosttypes "github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
-// The configured DSNs must point at isolated test databases. Each dialect runs
-// the real reservation, settlement and log paths with the same billing cases.
+// Exercise the real reservation, settlement and log paths on PostgreSQL.
 func TestFixedPriceBillingDatabaseMatrix(t *testing.T) {
-	for _, dialect := range []struct {
-		name   common.DatabaseType
-		env    string
-		logEnv string
-	}{
-		{common.DatabaseTypeSQLite, "", ""},
-		{common.DatabaseTypeMySQL, "TEST_FIXED_MYSQL_DSN", "TEST_FIXED_MYSQL_LOG_DSN"},
-		{common.DatabaseTypePostgreSQL, "TEST_FIXED_POSTGRES_DSN", "TEST_FIXED_POSTGRES_LOG_DSN"},
-	} {
-		t.Run(string(dialect.name), func(t *testing.T) {
-			var driver gorm.Dialector = sqlite.Open(":memory:")
-			if dialect.env != "" {
-				dsn := os.Getenv(dialect.env)
-				if dsn == "" {
-					t.Skip(dialect.env + " is not configured")
-				}
-				if dialect.name == common.DatabaseTypeMySQL {
-					driver = mysql.Open(dsn)
-				} else {
-					driver = postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
-				}
-			}
-			db, err := gorm.Open(driver, &gorm.Config{})
+	for _, separateLog := range []bool{false, true} {
+		t.Run(fmt.Sprintf("separate_log=%v", separateLog), func(t *testing.T) {
+			db, err := testutil.OpenDB(t, &gorm.Config{})
 			require.NoError(t, err)
-			sqlDB, err := db.DB()
-			require.NoError(t, err)
-			sqlDB.SetMaxOpenConns(1)
-			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 			logDB := db
-			if logDSN := os.Getenv(dialect.logEnv); logDSN != "" || dialect.name == common.DatabaseTypeSQLite {
-				var logDriver gorm.Dialector = sqlite.Open(":memory:")
-				if dialect.name == common.DatabaseTypeMySQL {
-					logDriver = mysql.Open(logDSN)
-				} else if dialect.name == common.DatabaseTypePostgreSQL {
-					logDriver = postgres.New(postgres.Config{DSN: logDSN, PreferSimpleProtocol: true})
-				}
-				logDB, err = gorm.Open(logDriver, &gorm.Config{})
+			if separateLog {
+				logDB, err = testutil.OpenDB(t, &gorm.Config{})
 				require.NoError(t, err)
-				logSQL, err := logDB.DB()
-				require.NoError(t, err)
-				logSQL.SetMaxOpenConns(1)
-				t.Cleanup(func() { require.NoError(t, logSQL.Close()) })
 			}
 			oldDB, oldLogDB := model.DB, model.LOG_DB
 			oldMainType, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()
 			model.DB, model.LOG_DB = db, logDB
-			common.SetDatabaseTypes(dialect.name, dialect.name)
+			common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
 			t.Cleanup(func() { model.DB, model.LOG_DB = oldDB, oldLogDB; common.SetDatabaseTypes(oldMainType, oldLogType) })
 			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}))
 			require.NoError(t, logDB.AutoMigrate(&model.Log{}))
-			versionQuery := "select version()"
-			if dialect.name == common.DatabaseTypeSQLite {
-				versionQuery = "select sqlite_version()"
-			}
-			var version string
-			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
-			t.Logf("database: %s", version)
 			runFixedPriceAccountingCases(t, db, logDB)
 		})
 	}

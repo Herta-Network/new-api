@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
@@ -17,7 +19,6 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -27,11 +28,11 @@ func setupOriginTaskDB(t *testing.T) {
 	t.Helper()
 	previousDB := model.DB
 	previousType := common.MainDatabaseType()
-	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	database, err := testutil.OpenDB(t, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, database.AutoMigrate(&model.Task{}, &model.Channel{}))
 	model.DB = database
-	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	common.SetMainDatabaseType(common.DatabaseTypePostgreSQL)
 	t.Cleanup(func() {
 		model.DB = previousDB
 		common.SetMainDatabaseType(previousType)

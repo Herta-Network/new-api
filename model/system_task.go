@@ -370,9 +370,7 @@ func UpdateSystemTaskState(taskID string, lockedBy string, state any) error {
 	if result.RowsAffected > 0 {
 		return nil
 	}
-	// MySQL counts changed rows, not matched rows. A no-op persist of the same
-	// state in the same second therefore returns RowsAffected == 0 even while
-	// the lease is still held. Confirm the lock before treating this as loss.
+	// Confirm the lease before treating a zero-row update as lock loss.
 	// Reuse `now` from the UPDATE so a clock tick cannot reintroduce false
 	// lock-loss; a lease that expires during the write is caught by the next heartbeat.
 	var held int64

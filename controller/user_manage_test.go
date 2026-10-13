@@ -34,15 +34,8 @@ func setupManageUserTestDB(t *testing.T) *gorm.DB {
 	previousDB, previousLogDB := model.DB, model.LOG_DB
 	previousRedisEnabled, previousSecret := common.RedisEnabled, common.SessionSecret
 	previousMainDatabaseType, previousLogDatabaseType := common.MainDatabaseType(), common.LogDatabaseType()
-	dialect := os.Getenv("TEST_MANAGE_USER_DIALECT")
-	if dialect == "" {
-		dialect = "sqlite"
-	}
-	databaseTypes := map[string]common.DatabaseType{
-		"sqlite": common.DatabaseTypeSQLite, "mysql": common.DatabaseTypeMySQL, "postgres": common.DatabaseTypePostgreSQL,
-	}
-	require.Contains(t, databaseTypes, dialect)
-	dsn := os.Getenv("TEST_" + strings.ToUpper(dialect) + "_DSN")
+	dialect := "postgres"
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
 	db, _ := newAuditTestDatabase(t, dialect, dsn)
 	logDB := db
 	if os.Getenv("TEST_MANAGE_USER_SEPARATE_LOG_DB") == "1" {
@@ -51,7 +44,7 @@ func setupManageUserTestDB(t *testing.T) *gorm.DB {
 	model.DB, model.LOG_DB = db, logDB
 	common.RedisEnabled = false
 	common.SessionSecret = "manage-user-test-secret"
-	common.SetDatabaseTypes(databaseTypes[dialect], databaseTypes[dialect])
+	common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
 
 	t.Cleanup(func() {
 		model.DB, model.LOG_DB = previousDB, previousLogDB
@@ -71,9 +64,7 @@ func setupManageUserTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.AuthFlow{}, &model.TwoFA{}, &model.PasskeyCredential{}, &model.UserAccessToken{}))
 	require.NoError(t, logDB.AutoMigrate(&model.Log{}, &model.AuditLog{}))
 	versionQuery := "SELECT version()"
-	if dialect == "sqlite" {
-		versionQuery = "SELECT sqlite_version()"
-	}
+
 	var version string
 	require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
 	t.Logf("database: %s %s, separate log database: %v", dialect, version, logDB != db)
@@ -551,7 +542,7 @@ func TestManageUserQuotaConcurrentSnapshots(t *testing.T) {
 	for range 2 {
 		result := <-results
 		if result.err != nil {
-			require.True(t, common.UsingMainDatabase(common.DatabaseTypeSQLite), "row-locking databases must serialize both adjustments: %v", result.err)
+			require.True(t, common.UsingMainDatabase(common.DatabaseTypePostgreSQL), "row-locking databases must serialize both adjustments: %v", result.err)
 			assert.Contains(t, strings.ToLower(result.err.Error()), "locked")
 			assert.Nil(t, result.adjustment)
 			continue

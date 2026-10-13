@@ -4,38 +4,26 @@ import (
 	"os"
 	"testing"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/QuantumNous/new-api/common"
-	"github.com/glebarez/sqlite"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )
 
 func TestSystemTaskHistoryDatabaseMatrix(t *testing.T) {
-	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+	for _, dialect := range []string{"postgres"} {
 		t.Run(dialect, func(t *testing.T) {
-			var dialector gorm.Dialector
-			switch dialect {
-			case "sqlite":
-				dialector = sqlite.Open(":memory:")
-			case "mysql":
-				dsn := os.Getenv("TEST_MYSQL_DSN")
-				if dsn == "" {
-					t.Skip("TEST_MYSQL_DSN is not configured")
-				}
-				dialector = mysql.Open(dsn)
-			case "postgres":
-				dsn := os.Getenv("TEST_POSTGRES_DSN")
-				if dsn == "" {
-					t.Skip("TEST_POSTGRES_DSN is not configured")
-				}
-				dialector = postgres.Open(dsn)
+
+			dsn := os.Getenv("TEST_POSTGRES_DSN")
+			if dsn == "" {
+				t.Skip("TEST_POSTGRES_DSN is not configured")
 			}
-			db, err := gorm.Open(dialector, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: "history_test_"}})
+
+			db, err := testutil.OpenDB(t, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: "history_test_"}})
 			require.NoError(t, err)
 			sqlDB, err := db.DB()
 			require.NoError(t, err)
@@ -50,9 +38,7 @@ func TestSystemTaskHistoryDatabaseMatrix(t *testing.T) {
 			require.NoError(t, db.AutoMigrate(&SystemTask{}))
 			var version string
 			versionQuery := "SELECT version()"
-			if dialect == "sqlite" {
-				versionQuery = "SELECT sqlite_version()"
-			}
+
 			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
 			t.Logf("database version: %s", version)
 
@@ -461,16 +447,13 @@ func TestSystemTaskUpdatesRequireUnexpiredLock(t *testing.T) {
 }
 
 func TestUpdateSystemTaskStateIdenticalPayloadDoesNotLoseLock(t *testing.T) {
-	// SQLite reports matched rows for unchanged UPDATEs, so this case passed
-	// even before the fix. The MySQL regression is covered by
-	// TestUpdateSystemTaskStateIdenticalPayloadDoesNotLoseLockConfiguredDatabases.
 	truncateTables(t)
 	runUpdateSystemTaskStateIdenticalPayloadKeepsLock(t, SystemTaskTypeLogCleanup)
 }
 
 func runUpdateSystemTaskStateIdenticalPayloadKeepsLock(t *testing.T, taskType string) {
 	t.Helper()
-	// Two persists in the same second so MySQL's unchanged-row UPDATE returns 0.
+	// Two persists in the same second keep the payload and timestamp unchanged.
 
 	task, err := CreateSystemTask(taskType, nil, nil)
 	require.NoError(t, err)

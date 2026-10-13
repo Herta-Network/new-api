@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
@@ -18,7 +20,6 @@ import (
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -74,7 +75,7 @@ func TestProcessChannelErrorMasksDisableReasonAndNotification(t *testing.T) {
 		httpClient, system_setting.WorkerUrl = previousClient, previousWorker
 		*fetch = previousFetch
 	})
-	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	database, err := testutil.OpenDB(t, &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := database.DB()
 	require.NoError(t, err)
@@ -82,7 +83,7 @@ func TestProcessChannelErrorMasksDisableReasonAndNotification(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.User{}))
 	model.DB = database
-	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	common.SetMainDatabaseType(common.DatabaseTypePostgreSQL)
 	common.MemoryCacheEnabled, common.RedisEnabled = false, false
 	common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled = true, false
 	constant.NotifyLimitCount = 10

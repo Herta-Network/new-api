@@ -5,13 +5,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -20,7 +21,7 @@ import (
 func TestGetTaskPluginOptionsAdminForbiddenRootAllowed(t *testing.T) {
 	wasMaster := common.IsMasterNode
 	common.IsMasterNode = true
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := testutil.OpenDB(t, &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)

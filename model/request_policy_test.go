@@ -8,38 +8,26 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )
 
 func TestRequestPolicyDatabaseMatrix(t *testing.T) {
-	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+	for _, dialect := range []string{"postgres"} {
 		t.Run(dialect, func(t *testing.T) {
-			var driver gorm.Dialector
-			switch dialect {
-			case "sqlite":
-				driver = sqlite.Open(":memory:")
-			case "mysql":
-				dsn := os.Getenv("TEST_MYSQL_DSN")
-				if dsn == "" {
-					t.Skip("TEST_MYSQL_DSN not configured")
-				}
-				driver = mysql.Open(dsn)
-			case "postgres":
-				dsn := os.Getenv("TEST_POSTGRES_DSN")
-				if dsn == "" {
-					t.Skip("TEST_POSTGRES_DSN not configured")
-				}
-				driver = postgres.Open(dsn)
+
+			dsn := os.Getenv("TEST_POSTGRES_DSN")
+			if dsn == "" {
+				t.Skip("TEST_POSTGRES_DSN not configured")
 			}
-			db, err := gorm.Open(driver, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: "policy_test_"}})
+
+			db, err := testutil.OpenDB(t, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: "policy_test_"}})
 			require.NoError(t, err)
 			sqlDB, err := db.DB()
 			require.NoError(t, err)
@@ -69,9 +57,7 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			require.NoError(t, db.AutoMigrate(&Option{}))
 			var version string
 			query := "SELECT version()"
-			if dialect == "sqlite" {
-				query = "SELECT sqlite_version()"
-			}
+
 			require.NoError(t, db.Raw(query).Scan(&version).Error)
 			t.Logf("database version: %s", version)
 			rules := `[{"name":"session","model_regex":[".*"],"key_sources":[{"type":"request_header","key":"X-Session"}],"ttl_seconds":0,"skip_retry_on_failure":false,"include_using_group":false,"param_override_template":{"temperature":0},"future_field":{"enabled":false}}]`

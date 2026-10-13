@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
@@ -23,7 +25,6 @@ import (
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/fxamacker/cbor/v2"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -657,11 +658,11 @@ func setupAuthFlowControllerTest(t *testing.T) *authFlowTestOAuthProvider {
 	previousRedis := common.RedisEnabled
 	common.RedisEnabled = false
 	previousType := common.MainDatabaseType()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := testutil.OpenDB(t, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.AuthFlow{}, &model.User{}, &model.UserSession{}, &model.AuditLog{}))
 	model.DB, model.LOG_DB = db, db
-	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	common.SetMainDatabaseType(common.DatabaseTypePostgreSQL)
 	provider := &authFlowTestOAuthProvider{}
 	oauth.Register("auth-flow-test", provider)
 	t.Cleanup(func() {

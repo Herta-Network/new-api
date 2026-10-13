@@ -9,12 +9,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/QuantumNous/new-api/internal/testutil"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -46,7 +47,7 @@ func setupResponsesWSRequestTest(t *testing.T) (*model.User, *model.Token) {
 	previousLogType := common.LogDatabaseType()
 	previousRedis := common.RedisEnabled
 	previousRDB := common.RDB
-	previousMaster, previousMemory, previousSQLite := common.IsMasterNode, common.MemoryCacheEnabled, common.SQLitePath
+	previousMaster, previousMemory := common.IsMasterNode, common.MemoryCacheEnabled
 	previousEnabled := setting.ModelRequestRateLimitEnabled
 	previousDuration := setting.ModelRequestRateLimitDurationMinutes
 	previousTotal := setting.ModelRequestRateLimitCount
@@ -55,10 +56,10 @@ func setupResponsesWSRequestTest(t *testing.T) (*model.User, *model.Token) {
 	previousGroups := setting.ModelRequestRateLimitGroup
 	setting.ModelRequestRateLimitGroup = nil
 	setting.ModelRequestRateLimitMutex.Unlock()
-	t.Setenv("SQL_DSN", os.Getenv("TEST_RESPONSES_SQL_DSN"))
+	t.Setenv("SQL_DSN", testutil.PostgresDSN(t))
 	t.Setenv("LOG_SQL_DSN", os.Getenv("TEST_RESPONSES_LOG_SQL_DSN"))
 	common.IsMasterNode, common.MemoryCacheEnabled, common.RedisEnabled = false, false, false
-	common.SQLitePath = filepath.Join(t.TempDir(), "responses.db")
+
 	require.NoError(t, model.InitDB())
 	db := model.DB
 	sqlDB, err := db.DB()
@@ -78,7 +79,7 @@ func setupResponsesWSRequestTest(t *testing.T) (*model.User, *model.Token) {
 		common.SetDatabaseTypes(previousType, previousLogType)
 		common.RedisEnabled = previousRedis
 		common.RDB = previousRDB
-		common.IsMasterNode, common.MemoryCacheEnabled, common.SQLitePath = previousMaster, previousMemory, previousSQLite
+		common.IsMasterNode, common.MemoryCacheEnabled = previousMaster, previousMemory
 		setting.ModelRequestRateLimitEnabled = previousEnabled
 		setting.ModelRequestRateLimitDurationMinutes = previousDuration
 		setting.ModelRequestRateLimitCount = previousTotal
@@ -872,7 +873,7 @@ func TestResponsesWebSocketInitialUpstreamRejectionRefundsReservation(t *testing
 }
 
 // TEST_RESPONSES_SQL_DSN / TEST_RESPONSES_LOG_SQL_DSN optionally run these
-// entry-point regressions against isolated real MySQL/PostgreSQL databases.
+// entry-point regressions against isolated PostgreSQL schemas.
 func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 	for _, transport := range []string{"websocket", "http-sse"} {
 		for _, tc := range []struct {

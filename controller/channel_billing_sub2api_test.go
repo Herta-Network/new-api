@@ -5,22 +5,23 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
-// setupSub2APIBalanceTest wires an in-memory SQLite DB into model.DB so
+// setupSub2APIBalanceTest wires an isolated PostgreSQL schema into model.DB so
 // Channel.UpdateBalance can persist, mirroring the pattern used by other
 // controller tests.
 func setupSub2APIBalanceTest(t *testing.T) {
 	t.Helper()
 	originalDB := model.DB
-	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+	database, err := testutil.OpenDB(t, &gorm.Config{
 		Logger: logger.Discard,
 	})
 	require.NoError(t, err)

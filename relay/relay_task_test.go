@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
@@ -19,7 +21,6 @@ import (
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -30,14 +31,14 @@ func setupRelayChannelDB(t *testing.T) *gorm.DB {
 	previousDB := model.DB
 	previousType := common.MainDatabaseType()
 	previousCache := common.MemoryCacheEnabled
-	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	database, err := testutil.OpenDB(t, &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := database.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, database.AutoMigrate(&model.Channel{}))
 	model.DB = database
-	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	common.SetMainDatabaseType(common.DatabaseTypePostgreSQL)
 	common.MemoryCacheEnabled = false
 	t.Cleanup(func() {
 		model.DB = previousDB

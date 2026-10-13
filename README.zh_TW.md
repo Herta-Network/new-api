@@ -148,18 +148,19 @@ New API 是面向應用程式、Agent 和團隊的自託管 AI 閘道。將不�
 
 ### 使用 Docker 本機體驗
 
-以下指令使用 SQLite 啟動單一執行個體，僅監聽本機連接埠：
+以下指令使用 PostgreSQL 啟動單一執行個體，僅監聽本機連接埠。請將 SQL_DSN 範例替換為容器可存取的 PostgreSQL 連線：
 
 ```bash
 mkdir -p data
 docker run --name new-api -d --restart unless-stopped \
   -p 127.0.0.1:3000:3000 \
   -e TZ=Asia/Shanghai \
+  -e SQL_DSN="postgresql://new_api:change_me@postgres.example.com:5432/new-api" \
   -v "$(pwd)/data:/data" \
   calciumion/new-api:latest
 ```
 
-開啟 [http://localhost:3000](http://localhost:3000)，依初始化精靈建立管理員帳號。SQLite 資料庫存放在掛載的 `data` 目錄中，更換容器後仍會保留。
+開啟 [http://localhost:3000](http://localhost:3000)，依初始化精靈建立管理員帳號。PostgreSQL 資料庫需另外備份；掛載的 `data` 目錄用於持久化本機檔案。
 
 ### 發起第一次請求
 
@@ -190,7 +191,7 @@ curl --fail-with-body http://localhost:3000/v1/responses \
 
 ### Docker Compose
 
-儲存庫的 [Compose 設定](./docker-compose.yml) 預設啟動 **New API + PostgreSQL + Redis**，並提供 MySQL 和獨立 ClickHouse 日誌資料庫的設定範例。
+儲存庫的 [Compose 設定](./docker-compose.yml) 預設啟動 **New API + PostgreSQL + Redis**，並提供 獨立 ClickHouse 日誌資料庫的設定範例。
 
 ```bash
 git clone https://github.com/QuantumNous/new-api.git
@@ -208,14 +209,14 @@ docker compose logs -f new-api
 
 | 元件 | 可選方案 |
 | --- | --- |
-| 主資料庫 | SQLite、MySQL ≥ 5.7.8、PostgreSQL ≥ 9.6 |
+| 主資料庫 | PostgreSQL ≥ 9.6 |
 | 獨立日誌資料庫 | 透過 `LOG_SQL_DSN` 設定，額外支援 ClickHouse |
 | 快取 | 可選 Redis 與記憶體快取；多節點需要共享限流額度時使用共享 Redis |
 | 容器平台 | Linux amd64 / arm64 |
 
 | 環境變數 | 用途 |
 | --- | --- |
-| `SQL_DSN` | 主資料庫連線字串；未設定時使用 SQLite |
+| `SQL_DSN` | 必要的 PostgreSQL 主資料庫連線字串 |
 | `LOG_SQL_DSN` | 可選的獨立日誌資料庫連線字串 |
 | `REDIS_CONN_STRING` | Redis 連線字串 |
 | `SESSION_SECRET` | 持久保存的驗證金鑰，所有節點必須一致 |
@@ -267,6 +268,8 @@ bun run dev -- --port 5173
 | [electron/](./electron/README.md) | 桌面封裝與打包 |
 
 貢獻前請閱讀 [AGENTS.md](./AGENTS.md)。依改動範圍執行檢查：Go 模組使用 `make test`；前端在 `web/` 下執行 `bun run typecheck`、`bun run lint`、`bun run test` 和 `bun run build`。修改 RelayKit 後還必須在 `relaykit/` 下執行 `GOWORK=off go build ./...`。
+
+資料庫測試需要設定 `TEST_POSTGRES_DSN`，連線至本機 PostgreSQL；每個測試夾具會建立並清理獨立 schema。設定 `AUDIT_CLICKHOUSE_DSN` 可在本機 ClickHouse 測試執行個體上驗證獨立日誌資料庫。
 
 <a id="documentation"></a>
 

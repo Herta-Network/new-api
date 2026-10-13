@@ -261,13 +261,10 @@ function startServer() {
       fs.mkdirSync(dataDir, { recursive: true });
     }
 
-    env.SQLITE_PATH = path.join(dataDir, 'new-api.db');
-    
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('📁 您的数据存储位置：');
-    console.log('   ' + dataDir);
-    console.log('   💡 备份提示：复制此目录即可备份所有数据');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    if (!env.SQL_DSN) {
+      reject(new Error('SQL_DSN is required. Configure a PostgreSQL connection before starting the desktop app.'));
+      return;
+    }
 
     const binaryPath = getBinaryPath();
     const workingDir = process.resourcesPath;

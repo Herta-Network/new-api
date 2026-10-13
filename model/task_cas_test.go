@@ -8,23 +8,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
 func TestMain(m *testing.M) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, cleanup, err := testutil.OpenMainDB(&gorm.Config{})
 	if err != nil {
 		panic("failed to open test db: " + err.Error())
 	}
 	DB = db
 	LOG_DB = db
 
-	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
 	common.RedisEnabled = false
 	common.BatchUpdateEnabled = false
 	common.LogConsumeEnabled = true
@@ -64,7 +65,11 @@ func TestMain(m *testing.M) {
 		panic("failed to migrate: " + err.Error())
 	}
 
-	os.Exit(m.Run())
+	code := m.Run()
+	if err := cleanup(); err != nil {
+		panic(err)
+	}
+	os.Exit(code)
 }
 
 func truncateTables(t *testing.T) {

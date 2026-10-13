@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
@@ -17,7 +19,6 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -40,11 +41,10 @@ func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	initModelListColumnNames(t)
 
 	gin.SetMode(gin.TestMode)
-	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
 	common.RedisEnabled = false
 
-	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	db, err := testutil.OpenDB(t, &gorm.Config{})
 	require.NoError(t, err)
 	model.DB = db
 	model.LOG_DB = db
@@ -65,13 +65,13 @@ func initModelListColumnNames(t *testing.T) {
 	t.Helper()
 
 	originalIsMasterNode := common.IsMasterNode
-	originalSQLitePath := common.SQLitePath
+
 	originalMainDatabaseType := common.MainDatabaseType()
 	originalLogDatabaseType := common.LogDatabaseType()
 	originalSQLDSN, hadSQLDSN := os.LookupEnv("SQL_DSN")
 	defer func() {
 		common.IsMasterNode = originalIsMasterNode
-		common.SQLitePath = originalSQLitePath
+
 		common.SetDatabaseTypes(originalMainDatabaseType, originalLogDatabaseType)
 		if hadSQLDSN {
 			require.NoError(t, os.Setenv("SQL_DSN", originalSQLDSN))
@@ -81,9 +81,9 @@ func initModelListColumnNames(t *testing.T) {
 	}()
 
 	common.IsMasterNode = false
-	common.SQLitePath = fmt.Sprintf("file:%s_init?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
-	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
-	require.NoError(t, os.Setenv("SQL_DSN", "local"))
+
+	common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
+	require.NoError(t, os.Setenv("SQL_DSN", testutil.PostgresDSN(t)))
 
 	require.NoError(t, model.InitDB())
 	if model.DB != nil {

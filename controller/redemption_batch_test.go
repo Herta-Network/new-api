@@ -8,53 +8,34 @@ import (
 	"os"
 	"testing"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 func TestDeleteRedemptionBatch(t *testing.T) {
-	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+	for _, dialect := range []string{"postgres"} {
 		t.Run(dialect, func(t *testing.T) {
-			var driver, logDriver gorm.Dialector
-			dbType := common.DatabaseTypeSQLite
-			switch dialect {
-			case "sqlite":
-				driver = sqlite.Open(":memory:")
-				logDriver = sqlite.Open(":memory:")
-			case "mysql":
-				dsn := os.Getenv("TEST_MYSQL_DSN")
-				if dsn == "" {
-					t.Skip("TEST_MYSQL_DSN is not configured")
-				}
-				driver = mysql.Open(dsn)
-				logDSN := os.Getenv("TEST_MYSQL_LOG_DSN")
-				if logDSN == "" {
-					logDSN = dsn
-				}
-				logDriver = mysql.Open(logDSN)
-				dbType = common.DatabaseTypeMySQL
-			case "postgres":
-				dsn := os.Getenv("TEST_POSTGRES_DSN")
-				if dsn == "" {
-					t.Skip("TEST_POSTGRES_DSN is not configured")
-				}
-				driver = postgres.Open(dsn)
-				logDSN := os.Getenv("TEST_POSTGRES_LOG_DSN")
-				if logDSN == "" {
-					logDSN = dsn
-				}
-				logDriver = postgres.Open(logDSN)
-				dbType = common.DatabaseTypePostgreSQL
+
+			dbType := common.DatabaseTypePostgreSQL
+			dsn := os.Getenv("TEST_POSTGRES_DSN")
+			if dsn == "" {
+				t.Skip("TEST_POSTGRES_DSN is not configured")
 			}
-			db, err := gorm.Open(driver, &gorm.Config{})
+
+			logDSN := os.Getenv("TEST_POSTGRES_DSN")
+			if logDSN == "" {
+				logDSN = dsn
+			}
+
+			dbType = common.DatabaseTypePostgreSQL
+			db, err := testutil.OpenDB(t, &gorm.Config{})
 			require.NoError(t, err)
 			sqlDB, err := db.DB()
 			require.NoError(t, err)
@@ -62,13 +43,11 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 			var version string
 			query := "SELECT version()"
-			if dialect == "sqlite" {
-				query = "SELECT sqlite_version()"
-			}
+
 			require.NoError(t, db.Raw(query).Scan(&version).Error)
 			t.Logf("database version: %s", version)
 
-			logDB, err := gorm.Open(logDriver, &gorm.Config{})
+			logDB, err := testutil.OpenDB(t, &gorm.Config{})
 			require.NoError(t, err)
 			logSQL, err := logDB.DB()
 			require.NoError(t, err)

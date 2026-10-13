@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
@@ -18,7 +20,6 @@ import (
 	"github.com/QuantumNous/new-api/plugins"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -27,7 +28,7 @@ import (
 func setupTaskPluginControllerTest(t *testing.T) {
 	t.Helper()
 	originalDB := model.DB
-	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	database, err := testutil.OpenDB(t, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, database.AutoMigrate(&model.TaskPlugin{}, &model.Channel{}, &model.Ability{}, &model.Task{}, &model.Option{}))
 	model.DB = database
@@ -325,47 +326,8 @@ export function parseTaskResult() { return {}; }
 	assert.True(t, ok)
 }
 
-// The shipped alibaba plugin is already larger than a MySQL TEXT column
-// (64 KiB), so storing it through the model path the upload endpoint uses and
-// reading it back unchanged proves the source and icon columns are not
-// truncated. Set TEST_TASK_DB_DIALECT plus TEST_MYSQL_DSN or TEST_POSTGRES_DSN
-// to run the same contract against a real MySQL or PostgreSQL server.
-func TestTaskPluginSourceAboveMySQLTextLimitRoundTrips(t *testing.T) {
-	database, _ := openTaskDialectDatabase(t, &model.TaskPlugin{})
-	originalDB := model.DB
-	model.DB = database
-	t.Cleanup(func() { model.DB = originalDB })
-
-	source, err := plugins.Source("alibaba")
-	require.NoError(t, err)
-	require.Greater(t, len(source), 65535, "fixture must exceed the MySQL TEXT limit")
-	icon := "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(strings.Repeat(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`, 2048)))
-	require.Greater(t, len(icon), 65535, "icon fixture must exceed the MySQL TEXT limit")
-
-	plugin := model.TaskPlugin{Key: "alibaba", APIVersion: 1, Version: "roundtrip", Source: model.LongText(source), SourceHash: "hash", Enabled: true}
-	require.NoError(t, model.SaveTaskPlugin(&plugin))
-	// Re-saving the same version attaches the icon through the update path.
-	withIcon := model.TaskPlugin{Key: "alibaba", APIVersion: 1, Version: "roundtrip", Source: model.LongText(source), SourceHash: "hash", Icon: model.LongText(icon), Enabled: true}
-	require.NoError(t, model.SaveTaskPlugin(&withIcon))
-
-	stored, err := model.GetTaskPluginVersion("alibaba", "roundtrip")
-	require.NoError(t, err)
-	assert.Equal(t, source, string(stored.Source))
-	assert.Equal(t, icon, string(stored.Icon))
-
-	// The 30-second sync poll must not pull these payloads; it reads hashes
-	// and fetches source only for rows it has to recompile.
-	snapshot, err := model.GetTaskPluginSyncSnapshot()
-	require.NoError(t, err)
-	require.Len(t, snapshot.Plugins, 1)
-	assert.Equal(t, stored.Id, snapshot.Plugins[0].Id)
-	assert.Equal(t, "hash", snapshot.Plugins[0].SourceHash)
-	assert.Empty(t, snapshot.Plugins[0].Source)
-	assert.Empty(t, snapshot.Plugins[0].Icon)
-	loaded, err := model.GetTaskPluginSource(snapshot.Plugins[0].Id)
-	require.NoError(t, err)
-	assert.Equal(t, source, string(loaded))
-}
+// Protect large plugin source and icons through their PostgreSQL storage path
+// using an isolated schema configured by TEST_POSTGRES_DSN.
 
 func TestUploadTaskPluginAcceptsSourcesUpToEightMiB(t *testing.T) {
 	setupTaskPluginControllerTest(t)

@@ -11,13 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,12 +32,12 @@ func setupDashboardAuthMiddlewareTest(t *testing.T) {
 	previousType := common.MainDatabaseType()
 	previousRedis := common.RedisEnabled
 	previousSecret := common.SessionSecret
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := testutil.OpenDB(t, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuditLog{}, &model.UserAccessToken{}, &model.Option{}))
 	model.DB = db
 	model.LOG_DB = db
-	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	common.SetMainDatabaseType(common.DatabaseTypePostgreSQL)
 	common.RedisEnabled = false
 	common.SessionSecret = "middleware-auth-test-secret"
 	require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))
@@ -85,7 +86,7 @@ func createMiddlewarePATUser(t *testing.T, username, token string) *model.User {
 	user := &model.User{
 		Username: username, Password: "password-placeholder", Role: common.RoleCommonUser,
 		Status: common.UserStatusEnabled, Group: "default", AccessToken: &token, AuthVersion: 1,
-		AffCode: "middleware-aff-" + username,
+		AffCode: model.AccessTokenFingerprint(username)[:32],
 	}
 	require.NoError(t, model.DB.Create(user).Error)
 	return user
@@ -141,7 +142,14 @@ func TestUserAuthNeverFallsBackForRecognizedInvalidInternalJWT(t *testing.T) {
 	token, _, err := service.IssueAccessToken(identity)
 	require.NoError(t, err)
 	tampered := tamperDashboardToken(token)
-	createMiddlewarePATUser(t, "jwt-fallback-user", tampered)
+	// Reject database lookups so a legacy-PAT fallback changes the API result
+	// even though PostgreSQL's CHAR(32) cannot store an entire JWT.
+	lookupAttempted := false
+	require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register("test:reject_opaque_fallback", func(db *gorm.DB) {
+		lookupAttempted = true
+		db.AddError(errors.New("opaque credential fallback attempted"))
+	}))
+	t.Cleanup(func() { require.NoError(t, model.DB.Callback().Query().Remove("test:reject_opaque_fallback")) })
 	router := gin.New()
 	router.GET("/protected", UserAuth(), func(c *gin.Context) {
 		c.Status(http.StatusNoContent)
@@ -154,6 +162,7 @@ func TestUserAuthNeverFallsBackForRecognizedInvalidInternalJWT(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, response.Code)
 	assert.Contains(t, response.Body.String(), "AUTH_UNAUTHORIZED")
+	assert.False(t, lookupAttempted, "invalid internal JWTs must never reach opaque-token authentication")
 }
 
 func TestTryUserAuthCredentialClassification(t *testing.T) {

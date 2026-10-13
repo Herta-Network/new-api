@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
@@ -20,7 +22,6 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,7 +29,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, cleanup, err := testutil.OpenMainDB(&gorm.Config{})
 	if err != nil {
 		panic("failed to open test db: " + err.Error())
 	}
@@ -41,7 +42,7 @@ func TestMain(m *testing.M) {
 	model.DB = db
 	model.LOG_DB = db
 
-	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
 	common.RedisEnabled = false
 	common.BatchUpdateEnabled = false
 	common.LogConsumeEnabled = true
@@ -64,7 +65,11 @@ func TestMain(m *testing.M) {
 		panic("failed to migrate: " + err.Error())
 	}
 
-	os.Exit(m.Run())
+	code := m.Run()
+	if err := cleanup(); err != nil {
+		panic(err)
+	}
+	os.Exit(code)
 }
 
 // ---------------------------------------------------------------------------
@@ -736,15 +741,18 @@ func TestSettleMidjourneyTaskBillingFundingFailureClearsMarkers(t *testing.T) {
 	require.NoError(t, task.Insert())
 
 	require.NoError(t, model.DB.Exec(`
-		CREATE TRIGGER fail_midjourney_user_update
-		BEFORE UPDATE ON users
-		WHEN OLD.id = 52
-		BEGIN
-			SELECT RAISE(ABORT, 'forced user quota failure');
-		END;
-	`).Error)
+        CREATE FUNCTION fail_midjourney_user_update_fn() RETURNS trigger AS $$
+        BEGIN
+          RAISE EXCEPTION 'forced user quota failure';
+        END;
+        $$ LANGUAGE plpgsql;
+        CREATE TRIGGER fail_midjourney_user_update
+        BEFORE UPDATE ON users FOR EACH ROW WHEN (OLD.id = 52)
+        EXECUTE FUNCTION fail_midjourney_user_update_fn();
+    `).Error)
 	t.Cleanup(func() {
-		model.DB.Exec("DROP TRIGGER IF EXISTS fail_midjourney_user_update")
+		require.NoError(t, model.DB.Exec("DROP TRIGGER IF EXISTS fail_midjourney_user_update ON users").Error)
+		require.NoError(t, model.DB.Exec("DROP FUNCTION IF EXISTS fail_midjourney_user_update_fn()").Error)
 	})
 
 	billed, err := SettleMidjourneyTaskBilling(relayInfo, task, prepared)
@@ -790,15 +798,18 @@ func TestSettleMidjourneyTaskBillingTokenFailureKeepsFundingRefundable(t *testin
 	require.NoError(t, task.Insert())
 
 	require.NoError(t, model.DB.Exec(`
-		CREATE TRIGGER fail_midjourney_token_update
-		BEFORE UPDATE ON tokens
-		WHEN OLD.id = 53
-		BEGIN
-			SELECT RAISE(ABORT, 'forced token quota failure');
-		END;
-	`).Error)
+        CREATE FUNCTION fail_midjourney_token_update_fn() RETURNS trigger AS $$
+        BEGIN
+          RAISE EXCEPTION 'forced token quota failure';
+        END;
+        $$ LANGUAGE plpgsql;
+        CREATE TRIGGER fail_midjourney_token_update
+        BEFORE UPDATE ON tokens FOR EACH ROW WHEN (OLD.id = 53)
+        EXECUTE FUNCTION fail_midjourney_token_update_fn();
+    `).Error)
 	t.Cleanup(func() {
-		model.DB.Exec("DROP TRIGGER IF EXISTS fail_midjourney_token_update")
+		require.NoError(t, model.DB.Exec("DROP TRIGGER IF EXISTS fail_midjourney_token_update ON tokens").Error)
+		require.NoError(t, model.DB.Exec("DROP FUNCTION IF EXISTS fail_midjourney_token_update_fn()").Error)
 	})
 
 	billed, err := SettleMidjourneyTaskBilling(relayInfo, task, prepared)

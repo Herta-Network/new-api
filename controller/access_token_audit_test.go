@@ -13,7 +13,8 @@ import (
 	"testing"
 	"time"
 
-	sqlmysql "github.com/go-sql-driver/mysql"
+	"github.com/QuantumNous/new-api/internal/testutil"
+
 	"gorm.io/driver/clickhouse"
 
 	"github.com/QuantumNous/new-api/common"
@@ -23,10 +24,8 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -36,13 +35,13 @@ func setupAccessTokenAudit(t *testing.T) (*model.User, string) {
 	previousDB, previousLogDB := model.DB, model.LOG_DB
 	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
 	previousRedis := common.RedisEnabled
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := testutil.OpenDB(t, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, i18n.Init())
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Log{}, &model.AuditLog{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.UserAccessToken{}, &model.Option{},
 		&model.AuthFlow{}, &model.TwoFA{}, &model.TwoFABackupCode{}, &model.PasskeyCredential{}, &model.UserOAuthBinding{}))
 	model.DB, model.LOG_DB = db, db
-	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
 	require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))
 	common.RedisEnabled = false
 	previousMaster := common.IsMasterNode
@@ -54,7 +53,7 @@ func setupAccessTokenAudit(t *testing.T) (*model.User, string) {
 		common.SetDatabaseTypes(previousMain, previousLog)
 		common.RedisEnabled = previousRedis
 	})
-	token := "legacy-opaque-token"
+	token := "legacy-opaque-token0000000000000"
 	user := &model.User{Username: "audit-owner", Password: "placeholder", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AccessToken: &token, AuthVersion: 1, AffCode: "audit-owner"}
 	require.NoError(t, db.Create(user).Error)
 	return user, token
@@ -830,48 +829,34 @@ func (releasedAuditLog) TableName() string { return "logs" }
 // instance. They never drop databases or tables supplied through an environment variable.
 func newAuditTestDatabase(t *testing.T, kind, dsn string) (*gorm.DB, string) {
 	t.Helper()
-	if kind == "sqlite" {
-		path := t.TempDir() + "/audit.db"
-		db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
+	if kind == "postgres" {
+		dsn = testutil.PostgresDSN(t)
+		db, err := gorm.Open(postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true}), &gorm.Config{})
 		require.NoError(t, err)
-		return db, path
+		connection, err := db.DB()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = connection.Close() })
+		return db, dsn
 	}
+	require.Equal(t, "clickhouse", kind)
 	require.NotEmpty(t, dsn)
 	name := fmt.Sprintf("newapi_audit_%d", time.Now().UnixNano())
 	var original, isolated gorm.Dialector
 	var newDSN string
-	if kind == "mysql" {
-		config, err := sqlmysql.ParseDSN(dsn)
-		require.NoError(t, err)
-		require.Equal(t, "tcp", config.Net)
-		host, _, err := net.SplitHostPort(config.Addr)
-		require.NoError(t, err)
-		require.True(t, net.ParseIP(host).IsLoopback(), "database tests only permit loopback instances")
-		original = mysql.Open(dsn)
-		config.DBName = name
-		newDSN = config.FormatDSN()
-		isolated = mysql.Open(newDSN)
-	} else {
+	{
 		parsed, err := url.Parse(dsn)
 		require.NoError(t, err)
 		require.True(t, net.ParseIP(parsed.Hostname()).IsLoopback(), "database tests only permit loopback instances")
 		parsed.Path = "/" + name
 		newDSN = parsed.String()
-		if kind == "clickhouse" {
-			original = clickhouse.Open(dsn)
-			isolated = clickhouse.Open(newDSN)
-		} else {
-			original = postgres.Open(dsn)
-			isolated = postgres.Open(newDSN)
-		}
+		original = clickhouse.Open(dsn)
+		isolated = clickhouse.Open(newDSN)
 	}
 	admin, err := gorm.Open(original, &gorm.Config{})
 	require.NoError(t, err)
 	// No IF NOT EXISTS: a collision fails before any test data can be written.
 	createSQL := "CREATE DATABASE " + name
-	if kind == "mysql" {
-		createSQL += " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-	}
+
 	require.NoError(t, admin.Exec(createSQL).Error)
 	sqlDB, err := admin.DB()
 	require.NoError(t, err)
@@ -1028,11 +1013,11 @@ func TestAuditDatabaseMatrix(t *testing.T) {
 	previousDB, previousLogDB := model.DB, model.LOG_DB
 	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
 	previousRedis := common.RedisEnabled
-	previousMaster, previousSQLite := common.IsMasterNode, common.SQLitePath
+	previousMaster := common.IsMasterNode
 	common.IsMasterNode = true
 	common.RedisEnabled = false
 	t.Cleanup(func() {
-		common.IsMasterNode, common.SQLitePath = previousMaster, previousSQLite
+		common.IsMasterNode = previousMaster
 		model.DB, model.LOG_DB = previousDB, previousLogDB
 		common.SetDatabaseTypes(previousMain, previousLog)
 		common.RedisEnabled = previousRedis
@@ -1040,9 +1025,7 @@ func TestAuditDatabaseMatrix(t *testing.T) {
 	cases := []struct {
 		name, env string
 		typ       common.DatabaseType
-	}{
-		{"sqlite", "", common.DatabaseTypeSQLite}, {"mysql", "AUDIT_MYSQL_DSN", common.DatabaseTypeMySQL}, {"postgres", "AUDIT_POSTGRES_DSN", common.DatabaseTypePostgreSQL},
-	}
+	}{{"postgres", "TEST_POSTGRES_DSN", common.DatabaseTypePostgreSQL}}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dsn := os.Getenv(tc.env)
@@ -1053,18 +1036,13 @@ func TestAuditDatabaseMatrix(t *testing.T) {
 				t.Run(fmt.Sprintf("upgrade=%v", upgrade), func(t *testing.T) {
 					db, isolatedDSN := newAuditTestDatabase(t, tc.name, dsn)
 					t.Setenv("LOG_SQL_DSN", "")
-					if tc.name == "sqlite" {
-						common.SQLitePath = isolatedDSN
-						t.Setenv("SQL_DSN", "local")
-					} else {
+					{
 						t.Setenv("SQL_DSN", isolatedDSN)
 					}
 					model.DB, model.LOG_DB = db, db
 					common.SetDatabaseTypes(tc.typ, tc.typ)
 					versionSQL := "SELECT version()"
-					if tc.name == "sqlite" {
-						versionSQL = "SELECT sqlite_version()"
-					}
+
 					var version string
 					require.NoError(t, db.Raw(versionSQL).Scan(&version).Error)
 					t.Logf("database version: %s", version)
@@ -1170,7 +1148,7 @@ func TestIndependentAuditLogStores(t *testing.T) {
 	previousMaster := common.IsMasterNode
 	common.IsMasterNode = true
 	t.Cleanup(func() { common.IsMasterNode = previousMaster })
-	for _, tc := range []struct{ kind, env string }{{"mysql", "AUDIT_MYSQL_DSN"}, {"postgres", "AUDIT_POSTGRES_DSN"}, {"clickhouse", "AUDIT_CLICKHOUSE_DSN"}} {
+	for _, tc := range []struct{ kind, env string }{{"postgres", "TEST_POSTGRES_DSN"}, {"clickhouse", "AUDIT_CLICKHOUSE_DSN"}} {
 		for _, upgrade := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/upgrade=%v", tc.kind, upgrade), func(t *testing.T) {
 				dsn := os.Getenv(tc.env)
