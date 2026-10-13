@@ -379,7 +379,7 @@ func SearchUserTopUps(userId int, keyword string, pageInfo *common.PageInfo) (to
 		query = query.Where("trade_no LIKE ? ESCAPE '!'", pattern)
 	}
 
-	if err = query.Limit(searchTopUpCountHardLimit).Count(&total).Error; err != nil {
+	if total, err = countMatchingRowsUpTo(query, searchTopUpCountHardLimit); err != nil {
 		tx.Rollback()
 		common.SysError(common.LogText("failed to count search topups: %s", err.Error()))
 		return nil, 0, common.NewMessage("Failed to search top-up records")
@@ -419,7 +419,7 @@ func SearchAllTopUps(keyword string, pageInfo *common.PageInfo) (topups []*TopUp
 		query = query.Where("trade_no LIKE ? ESCAPE '!'", pattern)
 	}
 
-	if err = query.Limit(searchTopUpCountHardLimit).Count(&total).Error; err != nil {
+	if total, err = countMatchingRowsUpTo(query, searchTopUpCountHardLimit); err != nil {
 		tx.Rollback()
 		common.SysError(common.LogText("failed to count search topups: %s", err.Error()))
 		return nil, 0, common.NewMessage("Failed to search top-up records")

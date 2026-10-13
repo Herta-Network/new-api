@@ -58,6 +58,8 @@ func TestMain(m *testing.M) {
 		&UserOAuthBinding{},
 		&PerfMetric{},
 		&StatisticsWriteCheckpoint{},
+		&QuotaBatch{},
+		&QuotaBatchReceipt{},
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
@@ -353,4 +355,45 @@ func TestUpdateWithStatus_PersistsPluginStateAndPollFailures(t *testing.T) {
 	assert.EqualValues(t, TaskStatusInProgress, reloaded.Status)
 	assert.JSONEq(t, `{"req_key":"new"}`, string(reloaded.PrivateData.PluginState))
 	assert.Equal(t, 4, reloaded.PrivateData.PollFailures)
+}
+
+func TestTaskSnapshotUpdatePreservesConcurrentUnchangedFields(t *testing.T) {
+	truncateTables(t)
+	task := &Task{TaskID: "selective-cas", Status: TaskStatusInProgress, Progress: "50%", Quota: 10,
+		Data: json.RawMessage(`{"value":1}`), PrivateData: TaskPrivateData{PollFailures: 3}}
+	insertTask(t, task)
+	before := task.Snapshot()
+	require.NoError(t, DB.Model(&Task{}).Where("id = ?", task.ID).
+		Updates(map[string]any{"quota": 20, "data": `{"value":2}`, "properties": Properties{Input: "concurrent"}}).Error)
+	task.Progress = ""
+	task.PrivateData.PollFailures = 0
+	won, err := task.UpdateWithSnapshot(before)
+	require.NoError(t, err)
+	require.True(t, won)
+	var saved Task
+	require.NoError(t, DB.First(&saved, task.ID).Error)
+	assert.Equal(t, 20, saved.Quota)
+	assert.JSONEq(t, `{"value":2}`, string(saved.Data))
+	assert.Equal(t, "concurrent", saved.Properties.Input)
+	assert.Empty(t, saved.Progress)
+	assert.Zero(t, saved.PrivateData.PollFailures)
+	unchanged := saved.Snapshot()
+	won, err = saved.UpdateWithSnapshot(unchanged)
+	require.NoError(t, err)
+	assert.False(t, won, "an unchanged poll does not write")
+	// Snapshot owns JSON bytes, so in-place changes cannot hide an update.
+	saved.Data[len(saved.Data)-2] = '3'
+	won, err = saved.UpdateWithSnapshot(unchanged)
+	require.NoError(t, err)
+	require.True(t, won)
+	require.NoError(t, DB.First(&saved, task.ID).Error)
+	assert.JSONEq(t, `{"value":3}`, string(saved.Data))
+	before = saved.Snapshot()
+	require.NoError(t, DB.Model(&Task{}).Where("id = ?", task.ID).Update("status", TaskStatusFailure).Error)
+	saved.Status = TaskStatusSuccess
+	won, err = saved.UpdateWithSnapshot(before)
+	require.NoError(t, err)
+	assert.False(t, won)
+	require.NoError(t, DB.First(&saved, task.ID).Error)
+	assert.EqualValues(t, TaskStatusFailure, saved.Status)
 }

@@ -280,3 +280,55 @@ func TestPostgreSQL18FreshStartupIsIdempotent(t *testing.T) {
 	row.Id = 0
 	assert.Error(t, db.Create(&row).Error, "statistics dimensions must remain unique after restart")
 }
+
+func TestPostgreSQLConnectionPoolsAndProtocols(t *testing.T) {
+	previousDB, previousLog := DB, LOG_DB
+	t.Cleanup(func() { DB, LOG_DB = previousDB, previousLog })
+	for _, prepared := range []string{"false", "true"} {
+		t.Run("prepared="+prepared, func(t *testing.T) {
+			t.Setenv("SQL_DSN", testutil.PostgresDSN(t))
+			t.Setenv("LOG_SQL_DSN", testutil.PostgresDSN(t))
+			t.Setenv("SQL_PREPARE_STATEMENTS", prepared)
+			t.Setenv("SQL_MAX_OPEN_CONNS", "7")
+			t.Setenv("SQL_MAX_IDLE_CONNS", "2")
+			t.Setenv("LOG_SQL_MAX_OPEN_CONNS", "3")
+			mainDB, _, err := chooseDB("SQL_DSN")
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, closeDB(mainDB)) })
+			logDB, _, err := chooseDB("LOG_SQL_DSN")
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, closeDB(logDB)) })
+			DB, LOG_DB = mainDB, logDB
+			require.NoError(t, mainDB.AutoMigrate(&Task{}))
+			require.NoError(t, logDB.AutoMigrate(&Log{}))
+			task := &Task{TaskID: "protocol-json", Status: TaskStatusInProgress, Data: []byte(`{"state":"initial"}`), PrivateData: TaskPrivateData{PluginState: []byte(`{"step":1}`)}}
+			require.NoError(t, mainDB.Create(task).Error)
+			before := task.Snapshot()
+			task.PrivateData.PluginState = []byte(`{"step":2}`)
+			won, err := task.UpdateWithSnapshot(before)
+			require.NoError(t, err)
+			require.True(t, won)
+			var saved Task
+			require.NoError(t, mainDB.First(&saved, task.ID).Error)
+			assert.JSONEq(t, `{"step":2}`, string(saved.PrivateData.PluginState))
+			require.NoError(t, logDB.Create(&Log{RequestId: "separate-pool"}).Error)
+			pools := GetDatabasePoolStats()
+			require.Len(t, pools, 2)
+			assert.Equal(t, "main", pools[0].Name)
+			assert.Equal(t, 7, pools[0].MaxOpenConnections)
+			assert.Equal(t, "log", pools[1].Name)
+			assert.Equal(t, 3, pools[1].MaxOpenConnections)
+			LOG_DB = DB
+			assert.Len(t, GetDatabasePoolStats(), 1, "shared pools must not be reported twice")
+		})
+	}
+	t.Run("invalid connection budget rejects startup", func(t *testing.T) {
+		t.Setenv("SQL_DSN", testutil.PostgresDSN(t))
+		for _, value := range []string{"0", "-1", "invalid"} {
+			t.Setenv("SQL_MAX_OPEN_CONNS", value)
+			db, _, err := chooseDB("SQL_DSN")
+			require.ErrorContains(t, err, "SQL_MAX_OPEN_CONNS")
+			assert.Nil(t, db)
+		}
+	})
+}

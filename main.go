@@ -161,8 +161,9 @@ func main() {
 	if os.Getenv("BATCH_UPDATE_ENABLED") == "true" {
 		common.BatchUpdateEnabled = true
 		common.SysLog(common.LogText("batch update enabled with interval %ss", strconv.Itoa(common.BatchUpdateInterval)))
-		model.InitBatchUpdater()
 	}
+	// Recover durable accounting batches even if buffering has been disabled.
+	model.InitBatchUpdater()
 
 	if os.Getenv("ENABLE_PPROF") == "true" {
 		gopool.Go(func() {
@@ -238,6 +239,11 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		common.SysError(common.LogText("server forced to shutdown: %v", err))
 	}
+	flushCtx, flushCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := model.FlushQuotaBatches(flushCtx); err != nil {
+		common.SysError(common.LogText("failed to flush accounting batches: %s", err.Error()))
+	}
+	flushCancel()
 	// 内存中的看板数据保存入库，避免重启丢失未落库数据 (issue #5679)
 	if common.DataExportEnabled {
 		model.SaveQuotaDataCache()

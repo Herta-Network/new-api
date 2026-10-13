@@ -52,6 +52,8 @@ func TestMain(m *testing.M) {
 
 	if err := db.AutoMigrate(
 		&model.Task{},
+		&model.QuotaBatch{},
+		&model.QuotaBatchReceipt{},
 		&model.User{},
 		&model.Token{},
 		&model.Log{},

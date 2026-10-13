@@ -112,12 +112,27 @@ func chooseDB(envName string) (*gorm.DB, common.DatabaseType, error) {
 		return nil, "", fmt.Errorf("%s contains an invalid PostgreSQL connection", envName)
 	}
 	common.SysLog(common.LogText("using PostgreSQL as database"))
-	// Disable both pgx and GORM prepared statements for transaction poolers.
+	// Simple protocol is the default for transaction poolers. Direct PostgreSQL
+	// deployments can opt in to pgx's bounded statement cache; GORM has no second cache.
+	prepareKey := "SQL_PREPARE_STATEMENTS"
+	if envName == "LOG_SQL_DSN" {
+		if _, ok := os.LookupEnv("LOG_SQL_PREPARE_STATEMENTS"); ok {
+			prepareKey = "LOG_SQL_PREPARE_STATEMENTS"
+		}
+	}
+	prepare := common.GetEnvOrDefaultBool(prepareKey, false)
 	db, err := gorm.Open(postgresMigrationDialector{postgres.Dialector{Config: &postgres.Config{
-		DSN:                  dsn,
-		PreferSimpleProtocol: true,
+		DSN: dsn, PreferSimpleProtocol: !prepare,
 	}}}, newGormConfig(false))
 	if err != nil {
+		return nil, "", err
+	}
+	sqlDB, err := db.DB()
+	if err == nil {
+		err = configureDatabasePool(sqlDB, envName)
+	}
+	if err != nil {
+		_ = closeDB(db)
 		return nil, "", err
 	}
 	var version int
@@ -146,13 +161,6 @@ func InitDB() (err error) {
 		if err := ensureUserQuotaColumns(DB, common.MainDatabaseType()); err != nil {
 			return err
 		}
-		sqlDB, err := DB.DB()
-		if err != nil {
-			return err
-		}
-		sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100))
-		sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
-		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
 
 		if !common.IsMasterNode {
 			// Only the master node migrates. A node that cannot read the deadline
@@ -187,13 +195,6 @@ func InitLogDB() (err error) {
 			db = db.Debug()
 		}
 		LOG_DB = db
-		sqlDB, err := LOG_DB.DB()
-		if err != nil {
-			return err
-		}
-		sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100))
-		sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
-		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
 
 		if !common.IsMasterNode {
 			return nil
@@ -298,6 +299,8 @@ func migrateDB() error {
 		&UserOAuthBinding{},
 		&PerfMetric{},
 		&StatisticsWriteCheckpoint{},
+		&QuotaBatch{},
+		&QuotaBatchReceipt{},
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},

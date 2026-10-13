@@ -2,6 +2,7 @@ package model
 
 import (
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/QuantumNous/new-api/internal/testutil"
@@ -472,4 +473,65 @@ func runUpdateSystemTaskStateIdenticalPayloadKeepsLock(t *testing.T, taskType st
 	require.NoError(t, err)
 	require.NotNil(t, finished)
 	assert.Equal(t, SystemTaskStatusSucceeded, finished.Status)
+}
+
+func TestSystemTaskClaimRollsBackLeaseOnTransitionFailure(t *testing.T) {
+	truncateTables(t)
+	first, err := CreateSystemTask(SystemTaskTypeLogCleanup, nil, nil)
+	require.NoError(t, err)
+	_, claimed, err := ClaimSystemTask(first.ID, first.Type, "previous", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, DB.Model(&SystemTaskLock{}).Where("type = ?", first.Type).Update("locked_until", common.GetTimestamp()-1).Error)
+	second := createLegacyPendingSystemTask(t, first.Type)
+	require.NoError(t, DB.Exec(`ALTER TABLE system_tasks ADD CONSTRAINT reject_claim CHECK (locked_by <> 'rejected')`).Error)
+	t.Cleanup(func() { require.NoError(t, DB.Exec(`ALTER TABLE system_tasks DROP CONSTRAINT reject_claim`).Error) })
+	_, claimed, err = ClaimSystemTask(second.ID, second.Type, "rejected", common.GetTimestamp()+60)
+	require.Error(t, err)
+	assert.False(t, claimed)
+	var lease SystemTaskLock
+	require.NoError(t, DB.Where("type = ?", first.Type).First(&lease).Error)
+	assert.Equal(t, first.TaskID, lease.TaskID)
+	assert.Equal(t, "previous", lease.LockedBy)
+	require.NoError(t, DB.First(first, first.ID).Error)
+	assert.Equal(t, SystemTaskStatusRunning, first.Status, "failed replacement cannot expire the old run")
+	require.NoError(t, DB.First(second, second.ID).Error)
+	assert.Equal(t, SystemTaskStatusPending, second.Status)
+}
+
+func TestSystemTaskConcurrentClaimsShareOneTypeLease(t *testing.T) {
+	db, err := testutil.OpenDB(t, &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&SystemTask{}, &SystemTaskLock{}))
+	previous := DB
+	DB = db
+	t.Cleanup(func() { DB = previous })
+	tasks := []SystemTask{
+		{TaskID: "race-claim-a", Type: SystemTaskTypeLogCleanup, Status: SystemTaskStatusPending},
+		{TaskID: "race-claim-b", Type: SystemTaskTypeLogCleanup, Status: SystemTaskStatusPending},
+	}
+	require.NoError(t, db.Create(&tasks).Error)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	claimed := make([]bool, len(tasks))
+	errors := make([]error, len(tasks))
+	for i := range tasks {
+		wg.Go(func() {
+			<-start
+			_, claimed[i], errors[i] = ClaimSystemTask(tasks[i].ID, tasks[i].Type, tasks[i].TaskID, common.GetTimestamp()+60)
+		})
+	}
+	close(start)
+	wg.Wait()
+	wins := 0
+	for i := range tasks {
+		require.NoError(t, errors[i])
+		if claimed[i] {
+			wins++
+		}
+	}
+	assert.Equal(t, 1, wins)
+	var running int64
+	require.NoError(t, db.Model(&SystemTask{}).Where("status = ?", SystemTaskStatusRunning).Count(&running).Error)
+	assert.EqualValues(t, 1, running)
 }

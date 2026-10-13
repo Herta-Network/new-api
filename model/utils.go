@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"math"
 	"sync"
@@ -34,8 +35,8 @@ func init() {
 func InitBatchUpdater() {
 	gopool.Go(func() {
 		for {
-			time.Sleep(time.Duration(common.BatchUpdateInterval) * time.Second)
 			batchUpdate()
+			time.Sleep(time.Duration(max(1, common.BatchUpdateInterval)) * time.Second)
 		}
 	})
 }
@@ -62,66 +63,11 @@ func addNewRecord(type_ int, id int, value int) {
 }
 
 func batchUpdate() {
-	// check if there's any data to update
-	hasData := false
-	for i := range BatchUpdateTypeCount {
-		batchUpdateLocks[i].Lock()
-		if len(batchUpdateStores[i]) > 0 {
-			hasData = true
-			batchUpdateLocks[i].Unlock()
-			break
-		}
-		batchUpdateLocks[i].Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := FlushQuotaBatches(ctx); err != nil {
+		common.SysError(common.LogText("failed to flush accounting batches: %s", err.Error()))
 	}
-
-	if !hasData {
-		return
-	}
-
-	common.SysLog(common.LogText("batch update started"))
-	stores := make([]map[int]int, BatchUpdateTypeCount)
-	for i := range BatchUpdateTypeCount {
-		batchUpdateLocks[i].Lock()
-		stores[i] = batchUpdateStores[i]
-		batchUpdateStores[i] = make(map[int]int)
-		batchUpdateLocks[i].Unlock()
-	}
-
-	for i, store := range stores {
-		if i == BatchUpdateTypeUserQuota || i == BatchUpdateTypeUsedQuota || i == BatchUpdateTypeRequestCount {
-			continue
-		}
-		for key, value := range store {
-			switch i {
-			case BatchUpdateTypeTokenQuota:
-				err := increaseTokenQuota(key, value)
-				if err != nil {
-					common.SysLog(common.LogText("failed to batch update token quota: %s", err.Error()))
-				}
-			case BatchUpdateTypeChannelUsedQuota:
-				updateChannelUsedQuota(key, value)
-			}
-		}
-	}
-
-	userQuotaStore := stores[BatchUpdateTypeUserQuota]
-	usedQuotaStore := stores[BatchUpdateTypeUsedQuota]
-	requestCountStore := stores[BatchUpdateTypeRequestCount]
-
-	userIDs := make(map[int]struct{}, len(userQuotaStore)+len(usedQuotaStore)+len(requestCountStore))
-	for key := range userQuotaStore {
-		userIDs[key] = struct{}{}
-	}
-	for key := range usedQuotaStore {
-		userIDs[key] = struct{}{}
-	}
-	for key := range requestCountStore {
-		userIDs[key] = struct{}{}
-	}
-	for key := range userIDs {
-		updateUserQuotaUsedQuotaAndRequestCount(key, userQuotaStore[key], usedQuotaStore[key], requestCountStore[key])
-	}
-	common.SysLog(common.LogText("batch update finished"))
 }
 
 func RecordExist(err error) (bool, error) {

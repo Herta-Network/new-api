@@ -577,7 +577,7 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 	}
 
 	if !snap.Equal(task.Snapshot()) {
-		_, _ = task.UpdateWithStatus(snap.Status)
+		_, _ = task.UpdateWithSnapshot(snap)
 	}
 
 	// OpenAI Video API 由调用者的 ConvertToOpenAIVideo 分支处理

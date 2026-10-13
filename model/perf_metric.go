@@ -122,22 +122,27 @@ func GetPerfMetricsSummaryBucketsAll(startTs int64, endTs int64, groups []string
 	return summaries, err
 }
 
-// GetRecentPerfMetricSuccessBuckets reads the latest nonempty hours within
-// the supplied history window, independently of the summary's reporting window.
-func GetRecentPerfMetricSuccessBuckets(modelName string, startTs int64, endTs int64, groups []string, limit int) ([]PerfMetricSummaryBucket, error) {
-	if modelName == "" || limit <= 0 || (groups != nil && len(groups) == 0) {
+// GetRecentPerfMetricSuccessBuckets reads each requested model's most recent
+// nonempty hours in one database query. Ranking happens after hour aggregation
+// and permission filtering, so each model keeps its own sample limit.
+func GetRecentPerfMetricSuccessBuckets(modelNames []string, startTs int64, endTs int64, groups []string, limit int) ([]PerfMetricSummaryBucket, error) {
+	if len(modelNames) == 0 || limit <= 0 || (groups != nil && len(groups) == 0) {
 		return nil, nil
 	}
 	const hourBucket = "bucket_ts - (bucket_ts % 3600)"
-	query := DB.Model(&PerfMetric{}).
+	hourly := DB.Model(&PerfMetric{}).
 		Select("model_name, "+hourBucket+" AS bucket_ts, SUM(request_count) AS request_count, SUM(success_count) AS success_count").
-		Where("model_name = ? AND bucket_ts >= ? AND bucket_ts <= ? AND request_count > 0", modelName, startTs, endTs)
+		Where("model_name IN ? AND bucket_ts >= ? AND bucket_ts <= ? AND request_count > 0", modelNames, startTs, endTs).
+		Group("model_name, " + hourBucket)
 	if groups != nil {
-		query = query.Where(commonGroupCol+" IN ?", groups)
+		hourly = hourly.Where(commonGroupCol+" IN ?", groups)
 	}
+	ranked := DB.Table("(?) AS hourly", hourly).
+		Select("hourly.*, ROW_NUMBER() OVER (PARTITION BY model_name ORDER BY bucket_ts DESC) AS sample_rank")
 	var buckets []PerfMetricSummaryBucket
-	err := query.Group("model_name, " + hourBucket).
-		Order("bucket_ts DESC").Limit(limit).Find(&buckets).Error
+	err := DB.Table("(?) AS ranked", ranked).
+		Select("model_name, bucket_ts, request_count, success_count").Where("sample_rank <= ?", limit).
+		Order("model_name, bucket_ts DESC").Find(&buckets).Error
 	return buckets, err
 }
 

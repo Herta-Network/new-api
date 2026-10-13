@@ -369,7 +369,10 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 
 		isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
 		terminalTransition := isDone && snap.Status != task.Status
-		won, updateErr := task.UpdateWithStatus(snap.Status)
+		if snap.Equal(task.Snapshot()) {
+			continue
+		}
+		won, updateErr := task.UpdateWithSnapshot(snap)
 		if updateErr != nil {
 			common.SysLog(common.LogText("UpdateSunoTask task error: %s", updateErr.Error()))
 			continue
@@ -605,7 +608,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
 	if isDone && snap.Status != task.Status {
-		won, err := task.UpdateWithStatus(snap.Status)
+		won, err := task.UpdateWithSnapshot(snap)
 		if err != nil {
 			logger.LogError(ctx, common.LogText("UpdateWithStatus failed for task %s: %s", task.TaskID, err.Error()))
 			shouldFinalizeBilling = false
@@ -614,7 +617,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			shouldFinalizeBilling = false
 		}
 	} else if !snap.Equal(task.Snapshot()) {
-		if _, err := task.UpdateWithStatus(snap.Status); err != nil {
+		if _, err := task.UpdateWithSnapshot(snap); err != nil {
 			logger.LogError(ctx, common.LogText("Failed to update task %s: %s", task.TaskID, err.Error()))
 		}
 	} else {

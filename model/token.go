@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -173,7 +174,11 @@ func SearchUserTokens(userId int, keyword string, token string, offset int, limi
 	maxTokens := operation_setting.GetMaxUserTokens()
 	hasFuzzy := strings.Contains(keyword, "%") || strings.Contains(token, "%")
 	if hasFuzzy {
-		count, err := CountUserTokens(userId)
+		countLimit := maxTokens
+		if countLimit < math.MaxInt {
+			countLimit++
+		}
+		count, err := countMatchingRowsUpTo(DB.Model(&Token{}).Where("user_id = ?", userId), countLimit)
 		if err != nil {
 			common.SysLog(common.LogText("failed to count user tokens: %s", err.Error()))
 			return nil, 0, common.NewMessage("Failed to get the token count")
@@ -202,7 +207,7 @@ func SearchUserTokens(userId int, keyword string, token string, offset int, limi
 	}
 
 	// 先查匹配总数（用于分页，受 maxTokens 上限保护，避免全表 COUNT）
-	err = baseQuery.Limit(maxTokens).Count(&total).Error
+	total, err = countMatchingRowsUpTo(baseQuery, maxTokens)
 	if err != nil {
 		common.SysError(common.LogText("failed to count search tokens: %s", err.Error()))
 		return nil, 0, common.NewMessage("Failed to search tokens")

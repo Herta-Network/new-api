@@ -1,11 +1,17 @@
 package model
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"testing"
+	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/internal/testutil"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -95,4 +101,108 @@ func TestPostgreSQLLogCountBoundsAndBatchDeletion(t *testing.T) {
 		assert.ErrorIs(t, err, context.Canceled)
 		assert.Zero(t, deleted)
 	})
+}
+
+func TestSearchCountsRespectBoundsAndOwnership(t *testing.T) {
+	db, err := testutil.OpenDB(t, &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&Token{}, &TopUp{}))
+	previousDB := DB
+	DB = db
+	t.Cleanup(func() { DB = previousDB })
+	previousLimit := operation_setting.GetTokenSetting().MaxUserTokens
+	operation_setting.GetTokenSetting().MaxUserTokens = 3
+	t.Cleanup(func() { operation_setting.GetTokenSetting().MaxUserTokens = previousLimit })
+	tokens := []Token{
+		{UserId: 1, Key: "cap-token-1", Name: "match"}, {UserId: 1, Key: "cap-token-2", Name: "match"},
+		{UserId: 1, Key: "cap-token-3", Name: "match"}, {UserId: 1, Key: "cap-token-4", Name: "match"},
+		{UserId: 2, Key: "other-token", Name: "match"},
+	}
+	require.NoError(t, db.Create(&tokens).Error)
+	found, total, err := SearchUserTokens(1, "match", "", 0, 2)
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, total)
+	require.Len(t, found, 2)
+	for _, token := range found {
+		assert.Equal(t, 1, token.UserId)
+	}
+	_, _, err = SearchUserTokens(1, "mat%", "", 0, 2)
+	assert.Error(t, err, "an over-limit user cannot bypass the fuzzy-search guard")
+	require.NoError(t, db.Exec(`INSERT INTO top_ups (user_id,trade_no,create_time) SELECT 1,'cap-'||i,? FROM generate_series(1,10002) i`, common.GetTimestamp()).Error)
+	require.NoError(t, db.Create(&TopUp{UserId: 2, TradeNo: "cap-other", CreateTime: common.GetTimestamp()}).Error)
+	page := &common.PageInfo{Page: 1, PageSize: 2}
+	topups, total, err := SearchUserTopUps(1, "cap%", page)
+	require.NoError(t, err)
+	assert.EqualValues(t, 10000, total)
+	require.Len(t, topups, 2)
+	for _, topup := range topups {
+		assert.Equal(t, 1, topup.UserId)
+	}
+	_, total, err = SearchUserTopUps(2, "cap%", page)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, total)
+	_, total, err = SearchAllTopUps("cap%", page)
+	require.NoError(t, err)
+	assert.EqualValues(t, 10000, total)
+}
+
+func TestLogExportKeysetReleasesConnectionAndPreservesOrder(t *testing.T) {
+	db, err := testutil.OpenDB(t, &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&Log{}))
+	pool, err := db.DB()
+	require.NoError(t, err)
+	pool.SetMaxOpenConns(1)
+	previous := LOG_DB
+	LOG_DB = db
+	t.Cleanup(func() { LOG_DB = previous })
+	for _, all := range []bool{true, false} {
+		t.Run(fmt.Sprint("all=", all), func(t *testing.T) {
+			require.NoError(t, db.Exec("TRUNCATE logs RESTART IDENTITY").Error)
+			rows := make([]Log, 501)
+			for i := range rows {
+				rows[i] = Log{UserId: 1, CreatedAt: int64(i % 13), RequestId: fmt.Sprint(i), ModelName: "export-batch"}
+			}
+			require.NoError(t, db.CreateInBatches(&rows, 100).Error)
+			require.NoError(t, db.Create(&Log{UserId: 2, CreatedAt: 20, ModelName: "other"}).Error)
+			slices.SortFunc(rows, func(a, b Log) int {
+				if all {
+					return cmp.Or(cmp.Compare(b.CreatedAt, a.CreatedAt), cmp.Compare(b.Id, a.Id))
+				}
+				return cmp.Compare(b.Id, a.Id)
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			seen := make([]string, 0, len(rows))
+			consume := func(log *Log) error {
+				if len(seen) == 0 {
+					// This would exhaust the pool if export still held an open Rows.
+					if err := db.WithContext(ctx).Create(&Log{UserId: 1, CreatedAt: 0, ModelName: "export-batch", RequestId: "inserted-during-export"}).Error; err != nil {
+						return err
+					}
+				}
+				seen = append(seen, log.RequestId)
+				if !all {
+					assert.Equal(t, len(seen), log.Id)
+				}
+				return nil
+			}
+			filter := LogFilter{ModelName: "export-batch"}
+			if all {
+				err = StreamAllLogs(ctx, filter, common.RoleRootUser, consume)
+			} else {
+				err = StreamUserLogs(ctx, 1, filter, consume)
+			}
+			require.NoError(t, err)
+			want := make([]string, len(rows))
+			for i := range rows {
+				want[i] = rows[i].RequestId
+			}
+			assert.Equal(t, want, seen)
+			stop := errors.New("client disconnected")
+			assert.ErrorIs(t, StreamUserLogs(ctx, 1, filter, func(*Log) error { return stop }), stop)
+			cancel()
+			assert.ErrorIs(t, StreamUserLogs(ctx, 1, filter, consume), context.Canceled)
+		})
+	}
 }

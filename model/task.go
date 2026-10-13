@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -498,19 +499,26 @@ func (Task *Task) InsertWithContext(ctx context.Context, omitColumns ...string) 
 }
 
 type taskSnapshot struct {
-	Status       TaskStatus
-	Progress     string
-	StartTime    int64
-	FinishTime   int64
-	FailReason   string
-	ResultURL    string
-	Data         json.RawMessage
-	PluginState  json.RawMessage
-	PollFailures int
+	Quota            int
+	SubmitTime       int64
+	Properties       Properties
+	privateData      driver.Value
+	privateDataError error
+	Status           TaskStatus
+	Progress         string
+	StartTime        int64
+	FinishTime       int64
+	FailReason       string
+	ResultURL        string
+	Data             json.RawMessage
+	PluginState      json.RawMessage
+	PollFailures     int
 }
 
 func (s taskSnapshot) Equal(other taskSnapshot) bool {
-	return s.Status == other.Status &&
+	return s.privateDataError == nil && other.privateDataError == nil &&
+		s.Quota == other.Quota && s.SubmitTime == other.SubmitTime && s.Properties == other.Properties && s.privateData == other.privateData &&
+		s.Status == other.Status &&
 		s.Progress == other.Progress &&
 		s.StartTime == other.StartTime &&
 		s.FinishTime == other.FinishTime &&
@@ -522,16 +530,22 @@ func (s taskSnapshot) Equal(other taskSnapshot) bool {
 }
 
 func (t *Task) Snapshot() taskSnapshot {
+	privateData, err := t.PrivateData.Value()
 	return taskSnapshot{
-		Status:       t.Status,
-		Progress:     t.Progress,
-		StartTime:    t.StartTime,
-		FinishTime:   t.FinishTime,
-		FailReason:   t.FailReason,
-		ResultURL:    t.PrivateData.ResultURL,
-		Data:         t.Data,
-		PluginState:  t.PrivateData.PluginState,
-		PollFailures: t.PrivateData.PollFailures,
+		Quota:            t.Quota,
+		SubmitTime:       t.SubmitTime,
+		Properties:       t.Properties,
+		privateData:      privateData,
+		privateDataError: err,
+		Status:           t.Status,
+		Progress:         t.Progress,
+		StartTime:        t.StartTime,
+		FinishTime:       t.FinishTime,
+		FailReason:       t.FailReason,
+		ResultURL:        t.PrivateData.ResultURL,
+		Data:             bytes.Clone(t.Data),
+		PluginState:      bytes.Clone(t.PrivateData.PluginState),
+		PollFailures:     t.PrivateData.PollFailures,
 	}
 }
 
@@ -552,12 +566,65 @@ func (t *Task) UpdateQuota() error {
 // Uses Model().Select("*").Updates() instead of Save() because GORM's Save
 // falls back to INSERT ON CONFLICT when the WHERE-guarded UPDATE matches
 // zero rows, which silently bypasses the CAS guard.
-func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
-	result := DB.Model(t).Where("status = ?", fromStatus).Select("*").Updates(t)
+func (t *Task) UpdateWithStatus(fromStatus TaskStatus, columns ...string) (bool, error) {
+	if t.ID <= 0 {
+		return false, errors.New("task ID is required for a status update")
+	}
+	if len(columns) == 0 {
+		columns = []string{"*"}
+	}
+	result := DB.Model(t).Where("status = ?", fromStatus).Select(columns).Updates(t)
 	if result.Error != nil {
 		return false, result.Error
 	}
 	return result.RowsAffected > 0, nil
+}
+
+// UpdateWithSnapshot writes only changed polling fields, including explicit
+// zero values. Immutable request data and unchanged JSON never enter the UPDATE.
+func (t *Task) UpdateWithSnapshot(before taskSnapshot) (bool, error) {
+	after := t.Snapshot()
+	if before.privateDataError != nil {
+		return false, before.privateDataError
+	}
+	if after.privateDataError != nil {
+		return false, after.privateDataError
+	}
+	columns := make([]string, 0, 11)
+	if before.Status != after.Status {
+		columns = append(columns, "status")
+	}
+	if before.Progress != after.Progress {
+		columns = append(columns, "progress")
+	}
+	if before.StartTime != after.StartTime {
+		columns = append(columns, "start_time")
+	}
+	if before.FinishTime != after.FinishTime {
+		columns = append(columns, "finish_time")
+	}
+	if before.SubmitTime != after.SubmitTime {
+		columns = append(columns, "submit_time")
+	}
+	if before.FailReason != after.FailReason {
+		columns = append(columns, "fail_reason")
+	}
+	if before.Quota != after.Quota {
+		columns = append(columns, "quota")
+	}
+	if before.Properties != after.Properties {
+		columns = append(columns, "properties")
+	}
+	if before.privateData != after.privateData {
+		columns = append(columns, "private_data")
+	}
+	if !bytes.Equal(before.Data, after.Data) {
+		columns = append(columns, "data")
+	}
+	if len(columns) == 0 {
+		return false, nil
+	}
+	return t.UpdateWithStatus(before.Status, columns...)
 }
 
 // TaskBulkUpdateByID performs an unconditional bulk UPDATE by primary key IDs.

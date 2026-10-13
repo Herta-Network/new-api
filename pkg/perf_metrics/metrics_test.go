@@ -288,8 +288,16 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 
 				window, err := QuerySummaryAll(24, groups)
 				require.NoError(t, err)
+				queries := 0
+				require.NoError(t, db.Callback().Query().After("gorm:query").Register("test:summary_queries", func(tx *gorm.DB) {
+					if !tx.DryRun {
+						queries++
+					}
+				}))
 				history, err := QuerySummaryAll(24, groups, "history-model", "history-idle", "history-hidden", "history-hot", "missing")
+				require.NoError(t, db.Callback().Query().Remove("test:summary_queries"))
 				require.NoError(t, err)
+				assert.Equal(t, 2, queries, "summary plus recent history must have constant query count")
 				assert.Equal(t, window.Summary, history.Summary)
 				assert.ElementsMatch(t, window.Models, history.Models)
 				assert.Equal(t, window.WindowStart, history.WindowStart)

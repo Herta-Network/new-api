@@ -14,3 +14,8 @@ import (
 func lockForUpdate(tx *gorm.DB) *gorm.DB {
 	return tx.Clauses(clause.Locking{Strength: "UPDATE"})
 }
+
+// Queue consumers skip rows claimed by another worker without dropping pending work.
+func lockForUpdateSkipLocked(tx *gorm.DB) *gorm.DB {
+	return tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"})
+}

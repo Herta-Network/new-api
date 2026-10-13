@@ -554,8 +554,7 @@ func GetUserLogs(userId int, filter LogFilter, startIdx int, num int) (logs []*L
 	if err != nil {
 		return nil, 0, err
 	}
-	countQuery := tx.Session(&gorm.Session{}).Model(&Log{}).Select("1").Limit(logSearchCountLimit)
-	err = LOG_DB.Table("(?) AS matched_logs", countQuery).Count(&total).Error
+	total, err = countMatchingRowsUpTo(tx.Model(&Log{}), logSearchCountLimit)
 	if err != nil {
 		common.SysError(common.LogText("failed to count user logs: %s", err.Error()))
 		return nil, 0, common.NewMessage("Failed to query logs")
@@ -572,8 +571,8 @@ func GetUserLogs(userId int, filter LogFilter, startIdx int, num int) (logs []*L
 }
 
 // StreamAllLogs calls fn with each log matching filter, newest first, as an
-// administrator with role sees it. Rows are read one at a time, so an export
-// never holds the whole result in memory.
+// administrator with role sees it. Keyset batches bound memory and release the
+// database connection before channel lookups or a slow client write.
 func StreamAllLogs(ctx context.Context, filter LogFilter, role int, fn func(*Log) error) error {
 	tx, err := filter.apply(LOG_DB.WithContext(ctx))
 	if err != nil {
@@ -584,7 +583,7 @@ func StreamAllLogs(ctx context.Context, filter LogFilter, role int, fn func(*Log
 		visibility = logOtherVisibilityRoot
 	}
 	channelNames := make(map[int]string)
-	return streamLogs(tx, "logs.created_at desc, logs.id desc", func(log *Log) error {
+	return streamLogs(tx, true, func(log *Log) error {
 		if log.ChannelId != 0 {
 			name, ok := channelNames[log.ChannelId]
 			if !ok {
@@ -608,7 +607,7 @@ func StreamUserLogs(ctx context.Context, userId int, filter LogFilter, fn func(*
 		return err
 	}
 	count := 0
-	return streamLogs(tx, "logs.id desc", func(log *Log) error {
+	return streamLogs(tx, false, func(log *Log) error {
 		count++
 		log.Id = count
 		log.ChannelName = ""
@@ -617,22 +616,52 @@ func StreamUserLogs(ctx context.Context, userId int, filter LogFilter, fn func(*
 	})
 }
 
-func streamLogs(tx *gorm.DB, order string, fn func(*Log) error) error {
-	rows, err := tx.Model(&Log{}).Order(order).Rows()
-	if err != nil {
+func streamLogs(tx *gorm.DB, byCreatedAt bool, fn func(*Log) error) error {
+	const batchSize = 500
+	// Logs are immutable; this upper ID excludes new inserts during the export.
+	var upperID int
+	if err := tx.Session(&gorm.Session{}).Model(&Log{}).Select("COALESCE(MAX(logs.id), 0)").Scan(&upperID).Error; err != nil {
 		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var log Log
-		if err := LOG_DB.ScanRows(rows, &log); err != nil {
+	if upperID == 0 {
+		return nil
+	}
+	var beforeID int
+	var beforeTime int64
+	for {
+		query := tx.Session(&gorm.Session{}).Model(&Log{}).Where("logs.id <= ?", upperID)
+		if byCreatedAt {
+			query = query.Order("logs.created_at desc, logs.id desc")
+			if beforeID != 0 {
+				query = query.Where("(logs.created_at, logs.id) < (?, ?)", beforeTime, beforeID)
+			}
+		} else {
+			query = query.Order("logs.id desc")
+			if beforeID != 0 {
+				query = query.Where("logs.id < ?", beforeID)
+			}
+		}
+		var logs []Log
+		if err := query.Limit(batchSize).Find(&logs).Error; err != nil {
 			return err
 		}
-		if err := fn(&log); err != nil {
-			return err
+		if len(logs) == 0 {
+			return nil
+		}
+		last := logs[len(logs)-1]
+		beforeID, beforeTime = last.Id, last.CreatedAt
+		for i := range logs {
+			if err := tx.Statement.Context.Err(); err != nil {
+				return err
+			}
+			if err := fn(&logs[i]); err != nil {
+				return err
+			}
+		}
+		if len(logs) < batchSize {
+			return nil
 		}
 	}
-	return rows.Err()
 }
 
 type Stat struct {
