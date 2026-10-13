@@ -165,9 +165,7 @@ type SubscriptionPlan struct {
 	// Allow falling back to wallet balance after subscription quota is exhausted (empty = true)
 	AllowWalletOverflow *bool `json:"allow_wallet_overflow"`
 
-	StripePriceId         string `json:"stripe_price_id" gorm:"type:varchar(128);default:''"`
-	CreemProductId        string `json:"creem_product_id" gorm:"type:varchar(128);default:''"`
-	WaffoPancakeProductId string `json:"waffo_pancake_product_id" gorm:"type:varchar(128);default:''"`
+	StripePriceId string `json:"stripe_price_id" gorm:"type:varchar(128);default:''"`
 
 	// Max purchases per user (0 = unlimited)
 	MaxPurchasePerUser int `json:"max_purchase_per_user" gorm:"type:int;default:0"`
@@ -607,7 +605,7 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		if err != nil {
 			return err
 		}
-		if changed {
+		if changed.PrevUserGroup != "" {
 			upgradeGroup = plan.UpgradeGroup
 		}
 		logUserId = order.UserId
@@ -633,24 +631,24 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 }
 
 // completeSubscriptionOrderTx grants a purchased plan under the caller's transaction.
-func completeSubscriptionOrderTx(tx *gorm.DB, order *SubscriptionOrder, plan *SubscriptionPlan) (bool, error) {
+func completeSubscriptionOrderTx(tx *gorm.DB, order *SubscriptionOrder, plan *SubscriptionPlan) (*UserSubscription, error) {
 	var userRow User
 	if err := lockForUpdate(tx).Select("id").Where("id = ?", order.UserId).First(&userRow).Error; err != nil {
-		return false, err
+		return nil, err
 	}
 	subscription, err := CreateUserSubscriptionFromPlanTx(tx, order.UserId, plan, "order")
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	if err := upsertSubscriptionTopUpTx(tx, order); err != nil {
-		return false, err
+		return nil, err
 	}
 	order.Status = common.TopUpStatusSuccess
 	order.CompleteTime = common.GetTimestamp()
 	if err := tx.Save(order).Error; err != nil {
-		return false, err
+		return nil, err
 	}
-	return subscription.PrevUserGroup != "", nil
+	return subscription, nil
 }
 
 func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {

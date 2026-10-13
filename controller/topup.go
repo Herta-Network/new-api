@@ -5,13 +5,11 @@ import (
 	"maps"
 	"math"
 	"net/http"
-	"strconv"
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/QuantumNous/new-api/pkg/payment"
@@ -20,126 +18,35 @@ import (
 )
 
 func GetTopUpInfo(c *gin.Context) {
-	complianceConfirmed := operation_setting.IsPaymentComplianceConfirmed()
-
 	methods, err := model.ListPaymentMethods(true)
 	if err != nil {
 		common.ApiErrorT(c, "Failed to load payment methods")
 		return
 	}
-	payMethods := make([]map[string]string, 0, len(methods)+3)
-	if complianceConfirmed {
+	confirmed := operation_setting.IsPaymentComplianceConfirmed()
+	available := make([]map[string]any, 0, len(methods))
+	if confirmed {
 		for _, method := range methods {
-			payMethods = append(payMethods, map[string]string{"name": method.Name, "type": method.PublicType(), "icon": method.Icon})
+			available = append(available, map[string]any{"name": method.Name, "type": method.PublicType(), "provider": method.Provider, "icon": method.Icon, "min_topup": paymentMinimum(method.Config.MinTopUp), "topup_enabled": method.Provider != payment.Stripe || method.Config.PriceID != ""})
 		}
 	}
-	enableEpay := complianceConfirmed && len(payMethods) > 0
-
-	// 如果启用了 Stripe 支付，添加到支付方法列表
-	if isStripeTopUpEnabled() {
-		// 检查是否已经包含 Stripe
-		hasStripe := false
-		for _, method := range payMethods {
-			if method["type"] == "stripe" {
-				hasStripe = true
-				break
-			}
-		}
-
-		if !hasStripe {
-			stripeMethod := map[string]string{
-				"name":      "Stripe",
-				"type":      "stripe",
-				"color":     "#635BFF",
-				"min_topup": strconv.Itoa(setting.StripeMinTopUp),
-			}
-			payMethods = append(payMethods, stripeMethod)
-		}
-	}
-
-	// Waffo Pancake is displayed above the standard Waffo gateway.
-	enableWaffoPancake := isWaffoPancakeTopUpEnabled()
-	if enableWaffoPancake {
-		hasWaffoPancake := false
-		for _, method := range payMethods {
-			if method["type"] == model.PaymentMethodWaffoPancake {
-				hasWaffoPancake = true
-				break
-			}
-		}
-
-		if !hasWaffoPancake {
-			payMethods = append(payMethods, map[string]string{
-				"name":      "Waffo Pancake",
-				"type":      model.PaymentMethodWaffoPancake,
-				"color":     "#F97316",
-				"min_topup": strconv.Itoa(setting.WaffoPancakeMinTopUp),
-			})
-		}
-	}
-
-	// 如果启用了 Waffo 支付，添加到支付方法列表
-	enableWaffo := isWaffoTopUpEnabled()
-	if enableWaffo {
-		hasWaffo := false
-		for _, method := range payMethods {
-			if method["type"] == model.PaymentMethodWaffo {
-				hasWaffo = true
-				break
-			}
-		}
-
-		if !hasWaffo {
-			waffoMethod := map[string]string{
-				"name":      "Waffo (Global Payment)",
-				"type":      model.PaymentMethodWaffo,
-				"color":     "#3B82F6",
-				"min_topup": strconv.Itoa(setting.WaffoMinTopUp),
-			}
-			payMethods = append(payMethods, waffoMethod)
-		}
-	}
-
-	data := gin.H{
-		"enable_online_topup":              enableEpay,
-		"enable_stripe_topup":              isStripeTopUpEnabled(),
-		"enable_creem_topup":               isCreemTopUpEnabled(),
-		"enable_waffo_topup":               enableWaffo,
-		"enable_waffo_pancake_topup":       enableWaffoPancake,
-		"enable_redemption":                complianceConfirmed,
-		"payment_compliance_confirmed":     complianceConfirmed,
-		"payment_compliance_terms_version": operation_setting.CurrentComplianceTermsVersion,
-		"waffo_pay_methods": func() any {
-			if enableWaffo {
-				return setting.GetWaffoPayMethods()
-			}
-			return nil
-		}(),
-		"creem_products":                  setting.CreemProducts,
-		"pay_methods":                     payMethods,
-		"min_topup":                       operation_setting.MinTopUp,
+	common.ApiSuccess(c, gin.H{
+		"enable_online_topup": len(available) > 0, "pay_methods": available, "min_topup": getMinTopup(),
+		"enable_redemption": confirmed, "payment_compliance_confirmed": confirmed, "payment_compliance_terms_version": operation_setting.CurrentComplianceTermsVersion,
 		"epay_subscription_exchange_rate": operation_setting.USDExchangeRate,
-		"stripe_min_topup":                setting.StripeMinTopUp,
-		"waffo_min_topup":                 setting.WaffoMinTopUp,
-		"waffo_pancake_min_topup":         setting.WaffoPancakeMinTopUp,
-		"amount_options":                  operation_setting.GetPaymentSetting().AmountOptions,
-		"discount":                        operation_setting.GetPaymentSetting().AmountDiscount,
-		"topup_link":                      common.TopUpLink,
-	}
-	common.ApiSuccess(c, data)
+		"amount_options":                  operation_setting.GetPaymentSetting().AmountOptions, "discount": operation_setting.GetPaymentSetting().AmountDiscount, "topup_link": common.TopUpLink,
+	})
 }
 
-type EpayRequest struct {
+type PaymentRequest struct {
 	Amount        int64  `json:"amount"`
 	PaymentMethod string `json:"payment_method"`
+	SuccessURL    string `json:"success_url,omitempty"`
+	CancelURL     string `json:"cancel_url,omitempty"`
 }
 
-type AmountRequest struct {
-	Amount int64 `json:"amount"`
-}
-
-func getPayMoneyDecimal(amount int64, group string) decimal.Decimal {
-	if math.IsNaN(operation_setting.Price) || math.IsInf(operation_setting.Price, 0) || operation_setting.Price <= 0 {
+func getPayMoneyDecimal(amount int64, group string, price decimal.Decimal) decimal.Decimal {
+	if !price.IsPositive() {
 		return decimal.Zero
 	}
 	dAmount := decimal.NewFromInt(amount)
@@ -159,7 +66,7 @@ func getPayMoneyDecimal(amount int64, group string) decimal.Decimal {
 	}
 
 	dTopupGroupRatio := decimal.NewFromFloat(topupGroupRatio)
-	dPrice := decimal.NewFromFloat(operation_setting.Price)
+	dPrice := price
 	// apply optional preset discount by the original request amount (if configured), default 1.0
 	discount := 1.0
 	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(amount)]; ok {
@@ -279,48 +186,107 @@ func rejectInvalidTopUpQuota(c *gin.Context, userId int, amount int64) bool {
 	return false
 }
 
-func RequestEpay(c *gin.Context) {
+func prepareTopupPayment(c *gin.Context, req PaymentRequest) (service.PaymentCheckout, error) {
+	var input service.PaymentCheckout
+	method, version, config, err := service.LoadPaymentConfiguration(req.PaymentMethod)
+	if err != nil {
+		return input, err
+	}
+	minimum := paymentMinimum(config.MinTopUp)
+	if req.Amount < minimum {
+		return input, common.NewMessage("Top-up amount cannot be less than {{min}}", map[string]any{"min": minimum})
+	}
+	quota, err := validateTopUpQuota(req.Amount)
+	if err != nil {
+		return input, err
+	}
+	group, err := model.GetUserGroup(c.GetInt("id"), true)
+	if err != nil {
+		return input, err
+	}
+	units := req.Amount
+	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
+		units = decimal.NewFromInt(units).Div(decimal.NewFromFloat(common.QuotaPerUnit)).IntPart()
+	}
+	if method.Provider == payment.Stripe {
+		if units > 10000 {
+			return input, common.NewMessage("Top-up amount cannot exceed {{max}}", map[string]any{"max": 10000})
+		}
+		ratio := common.GetTopupGroupRatio(group)
+		if ratio == 0 {
+			ratio = 1
+		}
+		if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 {
+			return input, model.ErrInvalidTopUpQuota
+		}
+		quota, err = validateCreditedQuota(getStripeCreditedQuota(units, group))
+		if err != nil {
+			return input, err
+		}
+	}
+	if err := model.ValidateTopUpQuotaCapacity(c.GetInt("id"), quota); err != nil {
+		return input, err
+	}
+	if req.SuccessURL != "" && common.ValidateRedirectURL(req.SuccessURL) != nil {
+		return input, common.NewMessage("Payment success redirect URL is not in the trusted domain list")
+	}
+	if req.CancelURL != "" && common.ValidateRedirectURL(req.CancelURL) != nil {
+		return input, common.NewMessage("Payment cancel redirect URL is not in the trusted domain list")
+	}
+	unitPrice := decimal.NewFromInt(1)
+	currency := "USD"
+	if method.Provider == payment.Epay {
+		if math.IsNaN(operation_setting.Price) || math.IsInf(operation_setting.Price, 0) {
+			return input, model.ErrInvalidTopUpQuota
+		}
+		unitPrice = decimal.NewFromFloat(operation_setting.Price)
+		currency = "CNY"
+	}
+	if method.Provider == payment.Cryptomus {
+		unitPrice, err = decimal.NewFromString(config.UnitPrice)
+		if err != nil {
+			return input, err
+		}
+	}
+	money, err := payment.RoundMoney(getPayMoneyDecimal(req.Amount, group, unitPrice), currency)
+	if err != nil {
+		return input, common.NewMessage("Payment amount is too low")
+	}
+	input = service.PaymentCheckout{Method: req.PaymentMethod, VersionID: version.ID, UserID: c.GetInt("id"), Money: money, CreditedQuota: quota, TopUpAmount: units, SuccessURL: req.SuccessURL, CancelURL: req.CancelURL}
+	input.Money, err = service.QuotePayment(c.Request.Context(), input)
+	if err != nil {
+		return input, common.NewMessage("Failed to calculate payment amount")
+	}
+	return input, nil
+}
+
+func RequestPayment(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
 	}
-	var req EpayRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	var req PaymentRequest
+	if c.ShouldBindJSON(&req) != nil {
 		paymentError(c, common.NewMessage("Invalid parameters"))
 		return
 	}
-	if req.Amount < getMinTopup() {
-		paymentError(c, common.NewMessage("Top-up amount cannot be less than {{min}}", map[string]any{"min": getMinTopup()}))
-		return
-	}
-	userID := c.GetInt("id")
-	quota, err := validateTopUpQuota(req.Amount)
-	if err == nil {
-		err = model.ValidateTopUpQuotaCapacity(userID, quota)
-	}
+	input, err := prepareTopupPayment(c, req)
 	if err != nil {
 		paymentError(c, err)
 		return
 	}
-	group, err := model.GetUserGroup(userID, true)
-	if err != nil {
-		paymentError(c, common.NewMessage("Failed to get the user group"))
-		return
-	}
-	money, err := payment.RoundCNY(getPayMoneyDecimal(req.Amount, group))
-	if err != nil {
-		paymentError(c, common.NewMessage("Payment amount is too low"))
-		return
-	}
-	amount := req.Amount
-	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
-		amount = decimal.NewFromInt(amount).Div(decimal.NewFromFloat(common.QuotaPerUnit)).IntPart()
-	}
-	result, err := service.StartPayment(c.Request.Context(), service.PaymentCheckout{Method: req.PaymentMethod, UserID: userID, Money: money, CreditedQuota: quota, TopUpAmount: amount})
+	result, err := service.StartPayment(c.Request.Context(), input)
 	if err != nil {
 		paymentError(c, common.NewMessage("Failed to start payment"))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": result.Params, "url": result.URL})
+	paymentResult(c, result)
+}
+func paymentResult(c *gin.Context, result *payment.CheckoutResult) {
+	kind := "url"
+	if len(result.Params) > 0 {
+		kind = "form"
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": result.Params, "url": result.URL, "type": kind})
 }
 
 // tradeNo lock
@@ -366,32 +332,20 @@ func UnlockOrder(tradeNo string) {
 }
 
 func RequestAmount(c *gin.Context) {
-	var req AmountRequest
-	err := c.ShouldBindJSON(&req)
-	if err != nil {
+	if !requirePaymentCompliance(c) {
+		return
+	}
+	var req PaymentRequest
+	if c.ShouldBindJSON(&req) != nil {
 		paymentError(c, common.NewMessage("Invalid parameters"))
 		return
 	}
-
-	if req.Amount < getMinTopup() {
-		paymentError(c, common.NewMessage("Top-up amount cannot be less than {{min}}", map[string]any{"min": getMinTopup()}))
-		return
-	}
-	id := c.GetInt("id")
-	if rejectInvalidTopUpQuota(c, id, req.Amount) {
-		return
-	}
-	group, err := model.GetUserGroup(id, true)
+	input, err := prepareTopupPayment(c, req)
 	if err != nil {
-		paymentError(c, common.NewMessage("Failed to get the user group"))
+		paymentError(c, err)
 		return
 	}
-	payMoney, err := payment.RoundCNY(getPayMoneyDecimal(req.Amount, group))
-	if err != nil {
-		paymentError(c, common.NewMessage("Payment amount is too low"))
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": payMoney.Decimal()})
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": gin.H{"amount": input.Money.Decimal(), "currency": input.Money.Currency}})
 }
 
 func GetUserTopUps(c *gin.Context) {
@@ -465,4 +419,24 @@ func AdminCompleteTopUp(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, nil)
+}
+
+func getStripeCreditedQuota(amount int64, group string) decimal.Decimal {
+	ratio := common.GetTopupGroupRatio(group)
+	if ratio == 0 {
+		ratio = 1
+	}
+	return decimal.NewFromInt(amount).Mul(decimal.NewFromFloat(ratio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit))
+}
+
+func paymentMinimum(methodMinimum int64) int64 {
+	minimum := max(int64(operation_setting.MinTopUp), methodMinimum)
+	if operation_setting.GetQuotaDisplayType() != operation_setting.QuotaDisplayTypeTokens {
+		return minimum
+	}
+	quota, err := common.WalletQuotaFromDecimalStrict(decimal.NewFromInt(minimum).Mul(decimal.NewFromFloat(common.QuotaPerUnit)))
+	if err != nil {
+		return common.MaxWalletQuota
+	}
+	return int64(quota)
 }

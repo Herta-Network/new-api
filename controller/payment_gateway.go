@@ -2,8 +2,10 @@ package controller
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -18,7 +20,20 @@ func ListPaymentMethods(c *gin.Context) {
 		common.ApiErrorT(c, "Failed to load payment methods")
 		return
 	}
-	common.ApiSuccess(c, methods)
+	type item struct {
+		model.PaymentMethodConfig
+		WebhookURL string `json:"webhook_url"`
+	}
+	result := make([]item, 0, len(methods))
+	for _, method := range methods {
+		endpoint := strings.TrimRight(service.GetCallbackAddress(), "/") + "/api/payments/" + method.Provider + "/notify/" + strconv.Itoa(method.VersionID)
+		if method.Provider == payment.Stripe {
+			endpoint = strings.TrimRight(service.GetCallbackAddress(), "/") + "/api/payments/stripe/webhook/" + strconv.Itoa(method.ID)
+		}
+		result = append(result, item{PaymentMethodConfig: method, WebhookURL: endpoint})
+	}
+
+	common.ApiSuccess(c, result)
 }
 
 func SavePaymentMethod(c *gin.Context) {
@@ -75,26 +90,57 @@ func ListPaymentEvents(c *gin.Context) {
 }
 
 func PaymentNotify(c *gin.Context) {
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
-	if err := c.Request.ParseForm(); err != nil {
+	provider := c.Param("provider")
+	identifier := c.Param("version_id")
+	stableStripe := c.Param("method_id") != ""
+	if stableStripe {
+		provider = payment.Stripe
+		identifier = c.Param("method_id")
+	} else if provider == payment.Stripe {
+		c.String(http.StatusNotFound, "fail")
+		return
+	}
+	versionID, err := strconv.Atoi(identifier)
+	if err != nil || versionID <= 0 {
 		c.String(http.StatusBadRequest, "fail")
 		return
 	}
-	params := make(map[string]string, len(c.Request.Form))
-	// Query and body values are considered together: ambiguous signed parameters
-	// must never be silently collapsed to one value.
-	for key, values := range c.Request.Form {
-		if len(values) != 1 {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+	callback := payment.Callback{}
+	if provider == payment.Epay {
+		if err := c.Request.ParseForm(); err != nil {
 			c.String(http.StatusBadRequest, "fail")
 			return
 		}
-		params[key] = values[0]
+		callback.Params = make(map[string]string, len(c.Request.Form))
+		for key, values := range c.Request.Form {
+			if len(values) != 1 {
+				c.String(http.StatusBadRequest, "fail")
+				return
+			}
+			callback.Params[key] = values[0]
+		}
+		if len(callback.Params) == 0 {
+			c.String(http.StatusBadRequest, "fail")
+			return
+		}
+	} else {
+		if c.Request.Method != http.MethodPost {
+			c.String(http.StatusMethodNotAllowed, "fail")
+			return
+		}
+		callback.Body, err = io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.String(http.StatusBadRequest, "fail")
+			return
+		}
+		callback.Signature = c.GetHeader("Stripe-Signature")
 	}
-	if len(params) == 0 {
-		c.String(http.StatusBadRequest, "fail")
-		return
+	if stableStripe {
+		err = service.HandleStripePaymentCallback(c.Request.Context(), versionID, callback, c.ClientIP())
+	} else {
+		err = service.HandlePaymentCallback(c.Request.Context(), provider, versionID, callback, c.ClientIP())
 	}
-	err := service.HandlePaymentCallback(c.Request.Context(), c.Param("order_no"), params, c.ClientIP())
 	if errors.Is(err, payment.ErrInvalidPayment) {
 		c.String(http.StatusBadRequest, "fail")
 		return

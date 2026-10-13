@@ -32,8 +32,9 @@ type PaymentMethodVersion struct {
 
 type PaymentMethodConfig struct {
 	PaymentMethod
-	Config payment.EpayConfig `json:"config"`
-	HasKey bool               `json:"has_key"`
+	Config           payment.Config `json:"config"`
+	HasKey           bool           `json:"has_key"`
+	HasWebhookSecret bool           `json:"has_webhook_secret"`
 }
 
 var ErrPaymentConfigChanged = errors.New("payment configuration changed")
@@ -52,7 +53,7 @@ func ListPaymentMethods(enabledOnly bool) ([]PaymentMethodConfig, error) {
 	result := make([]PaymentMethodConfig, 0, len(methods))
 	for _, method := range methods {
 		item := PaymentMethodConfig{PaymentMethod: method}
-		if !enabledOnly {
+		{
 			var version PaymentMethodVersion
 			if err := DB.First(&version, method.VersionID).Error; err != nil {
 				return nil, err
@@ -62,6 +63,8 @@ func ListPaymentMethods(enabledOnly bool) ([]PaymentMethodConfig, error) {
 			}
 			item.HasKey = item.Config.Key != ""
 			item.Config.Key = ""
+			item.HasWebhookSecret = item.Config.WebhookSecret != ""
+			item.Config.WebhookSecret = ""
 		}
 		result = append(result, item)
 	}
@@ -70,12 +73,12 @@ func ListPaymentMethods(enabledOnly bool) ([]PaymentMethodConfig, error) {
 
 // SavePaymentMethod creates a new immutable config version under the method lock.
 // An empty key retains the previous secret, which is never returned by the API.
-func SavePaymentMethod(method *PaymentMethod, config payment.EpayConfig) error {
+func SavePaymentMethod(method *PaymentMethod, config payment.Config) error {
 	method.Name = strings.TrimSpace(method.Name)
 	config.Endpoint = strings.TrimRight(strings.TrimSpace(config.Endpoint), "/")
 	config.MerchantID = strings.TrimSpace(config.MerchantID)
 	config.PaymentType = strings.TrimSpace(config.PaymentType)
-	if method.Name == "" || len(method.Name) > 128 || len(method.Icon) > 512 || method.Provider != payment.Epay || method.Sort < -100000 || method.Sort > 100000 {
+	if method.Name == "" || len(method.Name) > 128 || len(method.Icon) > 512 || method.Sort < -100000 || method.Sort > 100000 {
 		return errors.New("invalid payment method")
 	}
 	return DB.Transaction(func(tx *gorm.DB) error {
@@ -87,19 +90,29 @@ func SavePaymentMethod(method *PaymentMethod, config payment.EpayConfig) error {
 			if previous.Archived || previous.Provider != method.Provider || previous.VersionID != method.VersionID {
 				return ErrPaymentConfigChanged
 			}
-			if config.Key == "" {
+			if config.Key == "" || config.WebhookSecret == "" {
 				var version PaymentMethodVersion
 				if err := tx.First(&version, previous.VersionID).Error; err != nil {
 					return err
 				}
-				var previousConfig payment.EpayConfig
+				var previousConfig payment.Config
 				if err := common.UnmarshalJsonStr(version.Config, &previousConfig); err != nil {
 					return err
 				}
-				config.Key = previousConfig.Key
+				if config.Key == "" {
+					config.Key = previousConfig.Key
+				}
+				if config.WebhookSecret == "" {
+					config.WebhookSecret = previousConfig.WebhookSecret
+				}
 			}
 		}
-		if _, err := payment.NewEpay(config); err != nil {
+		var err error
+		config, err = payment.NormalizeConfig(method.Provider, config)
+		if method.Enabled && method.Provider == payment.Stripe && config.WebhookSecret == "" {
+			return errors.New("Stripe webhook is required before enabling payments")
+		}
+		if err != nil {
 			return err
 		}
 		encoded, err := common.Marshal(config)
@@ -140,4 +153,28 @@ func GetPaymentMethodVersion(methodID int, requireEnabled bool) (*PaymentMethod,
 		return nil, nil, err
 	}
 	return &method, &version, nil
+}
+
+func GetPaymentCallbackVersion(id int) (*PaymentMethod, *PaymentMethodVersion, error) {
+	var version PaymentMethodVersion
+	if err := DB.First(&version, id).Error; err != nil {
+		return nil, nil, err
+	}
+	var method PaymentMethod
+	if err := DB.First(&method, version.MethodID).Error; err != nil {
+		return nil, nil, err
+	}
+	return &method, &version, nil
+}
+
+func GetPaymentMethodVersions(methodID int) (*PaymentMethod, []PaymentMethodVersion, error) {
+	var method PaymentMethod
+	if err := DB.First(&method, methodID).Error; err != nil {
+		return nil, nil, err
+	}
+	var versions []PaymentMethodVersion
+	if err := DB.Where("method_id = ?", methodID).Order("id DESC").Find(&versions).Error; err != nil {
+		return nil, nil, err
+	}
+	return &method, versions, nil
 }

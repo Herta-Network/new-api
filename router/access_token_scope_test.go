@@ -56,13 +56,10 @@ var accessTokenExemptRoutes = []string{
 	"POST /api/user/auth/logout",
 
 	// Payment callbacks.
-	"POST /api/stripe/webhook",
-	"POST /api/creem/webhook",
-	"POST /api/waffo/webhook",
-	"POST /api/waffo-pancake/webhook/:env",
-	"GET /api/payments/epay/notify/:order_no",
-	"POST /api/payments/epay/notify/:order_no",
+	"GET /api/payments/:provider/notify/:version_id",
+	"POST /api/payments/:provider/notify/:version_id",
 	"GET /api/payments/return/:order_no",
+	"POST /api/payments/stripe/webhook/:method_id",
 
 	// API key authentication (TokenAuthReadOnly).
 	"GET /api/usage/token/",

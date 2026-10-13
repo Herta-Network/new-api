@@ -16,34 +16,70 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { describe, expect, test } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
+import { expect, test, vi } from 'vitest'
 
-import { PAYMENT_TYPES } from '../constants'
-import { requestPaymentAmount } from './use-payment'
+import { api } from '@/lib/api'
 
-describe('payment amount routing', () => {
-  test('uses the dedicated Waffo amount calculator', async () => {
-    const calls: string[] = []
-    const amount = await requestPaymentAmount(120, PAYMENT_TYPES.WAFFO, {
-      regular: async () => {
-        calls.push('regular')
-        return { success: true, data: '1' }
-      },
-      stripe: async () => {
-        calls.push('stripe')
-        return { success: true, data: '2' }
-      },
-      waffo: async (request) => {
-        calls.push(`waffo:${request.amount}`)
-        return { success: true, data: '18.75' }
-      },
-      waffoPancake: async () => {
-        calls.push('pancake')
-        return { success: true, data: '4' }
+import { usePayment, requestPaymentAmount } from './use-payment'
+
+test.each(['epay:1', 'stripe:2', 'cryptomus:3'])(
+  'quotes %s through the shared endpoint with its exact method ID',
+  async (method) => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      data: {
+        message: 'success',
+        data: { amount: '18.75', currency: 'USD' },
       },
     })
-
-    expect(amount).toBe(18.75)
-    expect(calls).toEqual(['waffo:120'])
+    expect(await requestPaymentAmount(120, method)).toEqual({
+      amount: '18.75',
+      currency: 'USD',
+    })
+    expect(post).toHaveBeenCalledWith(
+      '/api/user/amount',
+      { amount: 120, payment_method: method },
+      expect.anything()
+    )
+  }
+)
+test('rejects failed quotes instead of confirming a zero payment', async () => {
+  vi.spyOn(api, 'post').mockResolvedValue({
+    data: { success: false, message: 'Unavailable' },
   })
+  await expect(requestPaymentAmount(10, 'stripe:2')).rejects.toMatchObject({
+    message: 'Unavailable',
+  })
+})
+
+test('keeps the latest quote when an older provider response finishes later', async () => {
+  let finishFirst!: (value: {
+    data: { message: string; data: { amount: string; currency: string } }
+  }) => void
+  const firstResponse = new Promise<{
+    data: { message: string; data: { amount: string; currency: string } }
+  }>((resolve) => {
+    finishFirst = resolve
+  })
+  vi.spyOn(api, 'post')
+    .mockReturnValueOnce(firstResponse as ReturnType<typeof api.post>)
+    .mockResolvedValueOnce({
+      data: { message: 'success', data: { amount: '2.00', currency: 'USD' } },
+    })
+  const { result } = renderHook(() => usePayment())
+  let first!: Promise<boolean>
+  act(() => {
+    first = result.current.calculatePaymentAmount(2, 'epay:1')
+  })
+  await act(async () => {
+    await result.current.calculatePaymentAmount(2, 'cryptomus:2')
+  })
+  await act(async () => {
+    finishFirst({
+      data: { message: 'success', data: { amount: '14.60', currency: 'CNY' } },
+    })
+    await first
+  })
+  expect(result.current.amount).toBe(2)
+  expect(result.current.currency).toBe('USD')
 })

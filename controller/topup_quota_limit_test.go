@@ -2,21 +2,14 @@ package controller
 
 import (
 	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
-
-	"github.com/QuantumNous/new-api/internal/testutil"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func TestTopUpQuotaValidation(t *testing.T) {
@@ -96,77 +89,17 @@ func TestValidateTopUpQuotaReturnsMaximumAmount(t *testing.T) {
 }
 
 func TestRequestAmountRejectsTopUpThatCannotBeSettled(t *testing.T) {
-	oldQuotaPerUnit := common.QuotaPerUnit
-	oldDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType
-	common.QuotaPerUnit = 500000
-	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeUSD
-	t.Cleanup(func() {
-		common.QuotaPerUnit = oldQuotaPerUnit
-		operation_setting.GetGeneralSetting().QuotaDisplayType = oldDisplayType
-	})
-
-	gin.SetMode(gin.TestMode)
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	maxAmount := decimal.NewFromInt(common.MaxWalletQuota).
-		Div(decimal.NewFromFloat(common.QuotaPerUnit)).
-		Floor().IntPart()
-	ctx.Request = httptest.NewRequest(
-		http.MethodPost,
-		"/api/user/amount",
-		strings.NewReader(fmt.Sprintf(`{"amount":%d}`, maxAmount+1)),
-	)
-	ctx.Request.Header.Set("Content-Type", "application/json")
-
-	RequestAmount(ctx)
-
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	assert.JSONEq(t, fmt.Sprintf(`{"message":"error","data":"Top-up amount cannot exceed %d","message_key":"Top-up amount cannot exceed {{max}}","message_params":{"max":%d}}`, maxAmount, maxAmount), recorder.Body.String())
+	f := newPaymentFixture(t)
+	maxAmount := int64(common.MaxWalletQuota) / int64(common.QuotaPerUnit)
+	response := f.request(t, "POST", "/amount", map[string]any{"amount": maxAmount + 1, "payment_method": f.method.PublicType()})
+	assert.JSONEq(t, fmt.Sprintf(`{"message":"error","data":"Top-up amount cannot exceed %d","message_key":"Top-up amount cannot exceed {{max}}","message_params":{"max":%d}}`, maxAmount, maxAmount), response.Body.String())
 }
 
 func TestRequestAmountRejectsTopUpThatWouldOverflowWallet(t *testing.T) {
-	oldQuotaPerUnit := common.QuotaPerUnit
-	oldDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType
-	oldDB := model.DB
-	common.QuotaPerUnit = 500000
-	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeUSD
-
-	db, err := testutil.OpenDB(t, &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}))
-	model.DB = db
-	t.Cleanup(func() {
-		common.QuotaPerUnit = oldQuotaPerUnit
-		operation_setting.GetGeneralSetting().QuotaDisplayType = oldDisplayType
-		model.DB = oldDB
-		sqlDB, dbErr := db.DB()
-		if dbErr == nil {
-			require.NoError(t, sqlDB.Close())
-		}
-	})
-
-	require.NoError(t, model.DB.Create(&model.User{
-		Id:       42,
-		Username: "topup_capacity_user",
-		Quota:    common.MaxWalletQuota - 100_000,
-		Status:   common.UserStatusEnabled,
-	}).Error)
-
-	gin.SetMode(gin.TestMode)
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Set("id", 42)
-	ctx.Request = httptest.NewRequest(
-		http.MethodPost,
-		"/api/user/amount",
-		strings.NewReader(`{"amount":1}`),
-	)
-	ctx.Request.Header.Set("Content-Type", "application/json")
-
-	RequestAmount(ctx)
-
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	assert.JSONEq(t, `{"message":"error","data":"Top-up quota limit exceeded","message_key":"Top-up quota limit exceeded"}`, recorder.Body.String())
+	f := newPaymentFixture(t)
+	require.NoError(t, f.db.Model(&model.User{}).Where("id = ?", 1).Update("quota", common.MaxWalletQuota-50).Error)
+	response := f.request(t, "POST", "/amount", map[string]any{"amount": 1, "payment_method": f.method.PublicType()})
+	assert.JSONEq(t, `{"message":"error","data":"Top-up quota limit exceeded","message_key":"Top-up quota limit exceeded"}`, response.Body.String())
 }
 
 func TestValidateCreditedQuotaRejectsOverflow(t *testing.T) {

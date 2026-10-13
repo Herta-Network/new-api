@@ -111,13 +111,16 @@ export function PaymentMethodsVisualEditor() {
             },
             {
               id: 'merchant',
-              header: t('Epay merchant ID'),
-              cell: (method) => method.config.merchant_id,
+              header: t('Provider'),
+              cell: (method) => method.provider,
             },
             {
               id: 'type',
               header: t('Payment type key'),
-              cell: (method) => method.config.payment_type,
+              cell: (method) =>
+                method.config.payment_type ||
+                method.config.price_id ||
+                method.config.merchant_id,
             },
             {
               id: 'enabled',

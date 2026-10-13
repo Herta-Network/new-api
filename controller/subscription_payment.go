@@ -2,7 +2,6 @@ package controller
 
 import (
 	"math"
-	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -13,16 +12,16 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-type SubscriptionEpayPayRequest struct {
+type SubscriptionPayRequest struct {
 	PlanId        int    `json:"plan_id"`
 	PaymentMethod string `json:"payment_method"`
 }
 
-func SubscriptionRequestEpay(c *gin.Context) {
+func SubscriptionRequestPayment(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
 	}
-	var req SubscriptionEpayPayRequest
+	var req SubscriptionPayRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.PlanId <= 0 {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
@@ -47,20 +46,36 @@ func SubscriptionRequestEpay(c *gin.Context) {
 			return
 		}
 	}
-	rate := operation_setting.USDExchangeRate
+	method, version, _, err := service.LoadPaymentConfiguration(req.PaymentMethod)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	currency := "USD"
+	rate := 1.0
+	if method.Provider == payment.Epay {
+		currency = "CNY"
+		rate = operation_setting.USDExchangeRate
+	}
 	if plan.Currency != "USD" || math.IsNaN(plan.PriceAmount) || math.IsInf(plan.PriceAmount, 0) || math.IsNaN(rate) || math.IsInf(rate, 0) || rate <= 0 {
 		common.ApiErrorT(c, "Invalid payment configuration")
 		return
 	}
-	money, err := payment.RoundCNY(decimal.NewFromFloat(plan.PriceAmount).Mul(decimal.NewFromFloat(rate)))
+	money, err := payment.RoundMoney(decimal.NewFromFloat(plan.PriceAmount).Mul(decimal.NewFromFloat(rate)), currency)
 	if err != nil {
 		common.ApiErrorT(c, "Plan amount is too low")
 		return
 	}
-	result, err := service.StartPayment(c.Request.Context(), service.PaymentCheckout{Method: req.PaymentMethod, UserID: c.GetInt("id"), Money: money, Plan: plan})
+	input := service.PaymentCheckout{Method: req.PaymentMethod, VersionID: version.ID, UserID: c.GetInt("id"), Money: money, Plan: plan}
+	input.Money, err = service.QuotePayment(c.Request.Context(), input)
 	if err != nil {
 		common.ApiErrorT(c, "Failed to start payment")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": result.Params, "url": result.URL})
+	result, err := service.StartPayment(c.Request.Context(), input)
+	if err != nil {
+		common.ApiErrorT(c, "Failed to start payment")
+		return
+	}
+	paymentResult(c, result)
 }

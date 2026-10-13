@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -18,7 +19,7 @@ import (
 	"github.com/Calcium-Ion/go-epay/epay"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
@@ -39,132 +40,11 @@ func confirmPaymentComplianceForTest(t *testing.T) {
 	paymentSetting.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
 }
 
-func TestStripeWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
-	confirmPaymentComplianceForTest(t)
-	originalAPISecret := setting.StripeApiSecret
-	originalWebhookSecret := setting.StripeWebhookSecret
-	originalPriceID := setting.StripePriceId
-	t.Cleanup(func() {
-		setting.StripeApiSecret = originalAPISecret
-		setting.StripeWebhookSecret = originalWebhookSecret
-		setting.StripePriceId = originalPriceID
-	})
-
-	setting.StripeWebhookSecret = ""
-	setting.StripeApiSecret = "sk_test_123"
-	setting.StripePriceId = "price_123"
-	require.False(t, isStripeWebhookEnabled())
-
-	setting.StripeWebhookSecret = "whsec_test"
-	require.True(t, isStripeWebhookEnabled())
-
-	setting.StripePriceId = ""
-	require.False(t, isStripeWebhookEnabled())
-}
-
-func TestCreemWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
-	confirmPaymentComplianceForTest(t)
-	originalAPIKey := setting.CreemApiKey
-	originalProducts := setting.CreemProducts
-	originalWebhookSecret := setting.CreemWebhookSecret
-	t.Cleanup(func() {
-		setting.CreemApiKey = originalAPIKey
-		setting.CreemProducts = originalProducts
-		setting.CreemWebhookSecret = originalWebhookSecret
-	})
-
-	setting.CreemWebhookSecret = ""
-	setting.CreemApiKey = "creem_api_key"
-	setting.CreemProducts = `[{"productId":"prod_123"}]`
-	require.False(t, isCreemWebhookEnabled())
-
-	setting.CreemWebhookSecret = "creem_secret"
-	require.True(t, isCreemWebhookEnabled())
-
-	setting.CreemProducts = "[]"
-	require.False(t, isCreemWebhookEnabled())
-}
-
-func TestWaffoWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
-	confirmPaymentComplianceForTest(t)
-	originalEnabled := setting.WaffoEnabled
-	originalSandbox := setting.WaffoSandbox
-	originalAPIKey := setting.WaffoApiKey
-	originalPrivateKey := setting.WaffoPrivateKey
-	originalPublicCert := setting.WaffoPublicCert
-	originalSandboxAPIKey := setting.WaffoSandboxApiKey
-	originalSandboxPrivateKey := setting.WaffoSandboxPrivateKey
-	originalSandboxPublicCert := setting.WaffoSandboxPublicCert
-	t.Cleanup(func() {
-		setting.WaffoEnabled = originalEnabled
-		setting.WaffoSandbox = originalSandbox
-		setting.WaffoApiKey = originalAPIKey
-		setting.WaffoPrivateKey = originalPrivateKey
-		setting.WaffoPublicCert = originalPublicCert
-		setting.WaffoSandboxApiKey = originalSandboxAPIKey
-		setting.WaffoSandboxPrivateKey = originalSandboxPrivateKey
-		setting.WaffoSandboxPublicCert = originalSandboxPublicCert
-	})
-
-	setting.WaffoEnabled = true
-	setting.WaffoSandbox = false
-	setting.WaffoApiKey = ""
-	setting.WaffoPrivateKey = "private"
-	setting.WaffoPublicCert = "public"
-	require.False(t, isWaffoWebhookEnabled())
-
-	setting.WaffoApiKey = "api"
-	require.True(t, isWaffoWebhookEnabled())
-
-	setting.WaffoEnabled = false
-	require.False(t, isWaffoWebhookEnabled())
-
-	setting.WaffoEnabled = true
-	setting.WaffoSandbox = true
-	setting.WaffoSandboxApiKey = ""
-	setting.WaffoSandboxPrivateKey = "sandbox_private"
-	setting.WaffoSandboxPublicCert = "sandbox_public"
-	require.False(t, isWaffoWebhookEnabled())
-
-	setting.WaffoSandboxApiKey = "sandbox_api"
-	require.True(t, isWaffoWebhookEnabled())
-}
-
-func TestWaffoPancakeWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
-	confirmPaymentComplianceForTest(t)
-	originalMerchantID := setting.WaffoPancakeMerchantID
-	originalPrivateKey := setting.WaffoPancakePrivateKey
-	originalProductID := setting.WaffoPancakeProductID
-	t.Cleanup(func() {
-		setting.WaffoPancakeMerchantID = originalMerchantID
-		setting.WaffoPancakePrivateKey = originalPrivateKey
-		setting.WaffoPancakeProductID = originalProductID
-	})
-
-	// Presence of all three credentials enables the gateway. Webhook public
-	// keys are bundled in the SDK and there is no separate Enabled toggle —
-	// clear any of the three fields to disable.
-	setting.WaffoPancakeMerchantID = ""
-	setting.WaffoPancakePrivateKey = "private"
-	setting.WaffoPancakeProductID = "product"
-	require.False(t, isWaffoPancakeWebhookEnabled())
-
-	setting.WaffoPancakeMerchantID = "merchant"
-	require.True(t, isWaffoPancakeWebhookEnabled())
-
-	setting.WaffoPancakeProductID = ""
-	require.False(t, isWaffoPancakeWebhookEnabled())
-
-	setting.WaffoPancakeProductID = "product"
-	setting.WaffoPancakePrivateKey = ""
-	require.False(t, isWaffoPancakeWebhookEnabled())
-}
-
 type paymentFixture struct {
 	db     *gorm.DB
 	router *gin.Engine
 	method model.PaymentMethod
-	config payment.EpayConfig
+	config payment.Config
 }
 
 func newPaymentFixture(t *testing.T) *paymentFixture {
@@ -186,22 +66,24 @@ func newPaymentFixture(t *testing.T) *paymentFixture {
 		model.InvalidateSubscriptionPlanCache(1)
 	})
 	for range 2 {
-		require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}, &model.PaymentMethod{}, &model.PaymentMethodVersion{}, &model.PaymentOrder{}, &model.PaymentEvent{}, &model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.UserSubscription{}, &model.Log{}))
+		require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}, &model.PaymentMethod{}, &model.PaymentMethodVersion{}, &model.PaymentOrder{}, &model.PaymentEvent{}, &model.PaymentCustomer{}, &model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.UserSubscription{}, &model.Log{}))
 	}
 	require.NoError(t, db.Create(&model.User{Id: 1, Username: "payment-test", Group: "default", Status: common.UserStatusEnabled}).Error)
-	config := payment.EpayConfig{Endpoint: "https://pay.example.com", MerchantID: "10001", Key: "test-merchant-key", PaymentType: "alipay"}
+	config := payment.Config{Endpoint: "https://pay.example.com", MerchantID: "10001", Key: "test-merchant-key", PaymentType: "alipay"}
 	method := model.PaymentMethod{Name: "Alipay", Provider: payment.Epay, Icon: "SiAlipay", Enabled: true}
 	require.NoError(t, model.SavePaymentMethod(&method, config))
 	router := gin.New()
 	router.Use(func(c *gin.Context) { c.Set("id", 1); c.Next() })
-	router.POST("/pay", RequestEpay)
-	router.POST("/subscription/pay", SubscriptionRequestEpay)
+	router.POST("/pay", RequestPayment)
+	router.POST("/amount", RequestAmount)
+	router.POST("/subscription/pay", SubscriptionRequestPayment)
 	router.GET("/info", GetTopUpInfo)
 	router.GET("/methods", ListPaymentMethods)
 	router.POST("/methods", SavePaymentMethod)
 	router.PUT("/methods/:id", SavePaymentMethod)
 	router.DELETE("/methods/:id", DeletePaymentMethod)
-	router.Any("/notify/:order_no", PaymentNotify)
+	router.Any("/notify/:provider/:version_id", PaymentNotify)
+	router.POST("/stripe/webhook/:method_id", PaymentNotify)
 	router.GET("/return/:order_no", PaymentReturn)
 	return &paymentFixture{db: db, router: router, method: method, config: config}
 }
@@ -234,7 +116,7 @@ func (f *paymentFixture) checkout(t *testing.T, subscription bool) map[string]st
 	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result), response.Body.String())
 	require.Equal(t, "success", result.Message, response.Body.String())
 	require.Equal(t, "https://pay.example.com/submit.php", result.URL)
-	require.Equal(t, "https://gateway.example.com/api/payments/epay/notify/"+result.Data["out_trade_no"], result.Data["notify_url"])
+	require.Equal(t, "https://gateway.example.com/api/payments/epay/notify/"+strconv.Itoa(f.method.VersionID), result.Data["notify_url"])
 	return result.Data
 }
 
@@ -257,7 +139,8 @@ func (f *paymentFixture) callback(t *testing.T, checkout map[string]string, chan
 }
 
 func (f *paymentFixture) notify(orderNo string, values url.Values) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodPost, "/notify/"+orderNo, strings.NewReader(values.Encode()))
+	order, _, _ := model.GetPaymentOrder(context.Background(), orderNo)
+	request := httptest.NewRequest(http.MethodPost, "/notify/epay/"+strconv.Itoa(order.VersionID), strings.NewReader(values.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
 	f.router.ServeHTTP(response, request)
@@ -316,7 +199,7 @@ func TestPaymentGatewayRejectsIncorrectPaymentFacts(t *testing.T) {
 	require.Len(t, events, 2)
 	for _, event := range events {
 		assert.Equal(t, model.PaymentEventRejected, event.Status)
-		assert.Equal(t, "amount_mismatch", event.LastError)
+		assert.Equal(t, "verification_failed", event.LastError)
 	}
 	pending := f.callback(t, checkout, map[string]string{"trade_status": "WAIT_BUYER_PAY"})
 	assert.Equal(t, http.StatusOK, f.notify(checkout["out_trade_no"], pending).Code)
@@ -409,11 +292,11 @@ func TestPaymentGatewayDurableRecoveryAfterDatabaseFailure(t *testing.T) {
 	var event model.PaymentEvent
 	require.NoError(t, f.db.First(&event).Error)
 	assert.Equal(t, model.PaymentEventPending, event.Status)
-	assert.Equal(t, "settlement_failed", event.LastError)
+	assert.Equal(t, "verification_unavailable", event.LastError)
 	assert.Equal(t, common.TopUpStatusPending, model.GetTopUpByTradeNo(checkout["out_trade_no"]).Status)
 	require.NoError(t, f.db.Exec(`DROP TRIGGER reject_payment_credit ON users`).Error)
 	require.NoError(t, f.db.Model(&event).Update("next_attempt_at", 0).Error)
-	require.NoError(t, model.RetryPaymentEvents(context.Background()))
+	require.NoError(t, service.RetryPaymentEvents(context.Background()))
 	require.NoError(t, f.db.First(&event).Error)
 	assert.Equal(t, model.PaymentEventCompleted, event.Status)
 	var user model.User

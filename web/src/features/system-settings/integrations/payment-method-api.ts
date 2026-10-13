@@ -22,17 +22,24 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 export interface PaymentMethodData {
   id: number
   name: string
-  provider: 'epay'
+  provider: 'epay' | 'stripe' | 'cryptomus'
   icon: string
   sort: number
   enabled: boolean
   version_id: number
   has_key?: boolean
+  has_webhook_secret?: boolean
+  webhook_url?: string
   config: {
-    endpoint: string
-    merchant_id: string
+    endpoint?: string
+    merchant_id?: string
     key: string
-    payment_type: string
+    payment_type?: string
+    webhook_secret?: string
+    price_id?: string
+    promotion_codes?: boolean
+    unit_price?: string
+    min_topup?: number
   }
 }
 

@@ -42,6 +42,7 @@ interface PaymentConfirmDialogProps {
   onConfirm: () => void
   topupAmount: number
   paymentAmount: number
+  paymentCurrency?: string
   paymentMethod: PaymentMethod | undefined
   calculating: boolean
   processing: boolean
@@ -55,6 +56,7 @@ export function PaymentConfirmDialog({
   onConfirm,
   topupAmount,
   paymentAmount,
+  paymentCurrency,
   paymentMethod,
   calculating,
   processing,
@@ -102,7 +104,7 @@ export function PaymentConfirmDialog({
               <div className='flex items-baseline gap-2'>
                 <span className='text-2xl font-semibold'>
                   {formatCurrency(paymentAmount)}
-                  {paymentMethod?.type.startsWith('epay:') && ' CNY'}
+                  {` ${paymentCurrency || (paymentMethod?.type.startsWith('epay:') ? 'CNY' : '')}`}
                 </span>
                 {hasDiscount && (
                   <span className='text-muted-foreground text-sm line-through'>

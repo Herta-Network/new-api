@@ -10,21 +10,14 @@ import (
 	"github.com/Calcium-Ion/go-epay/epay"
 )
 
-type EpayConfig struct {
-	Endpoint    string `json:"endpoint"`
-	MerchantID  string `json:"merchant_id"`
-	Key         string `json:"key"`
-	PaymentType string `json:"payment_type"`
-}
-
 type epayGateway struct {
-	config EpayConfig
+	config Config
 	client *epay.Client
 }
 
 var protocolIdentifier = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
 
-func NewEpay(config EpayConfig) (Gateway, error) {
+func NewEpay(config Config) (Gateway, error) {
 	endpoint, err := url.Parse(config.Endpoint)
 	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "https" && endpoint.Scheme != "http") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || strings.ContainsAny(config.Endpoint, "&\r\n") {
 		return nil, errors.New("invalid Epay endpoint")
@@ -62,7 +55,8 @@ func (g *epayGateway) StartPayment(_ context.Context, checkout Checkout) (*Check
 	return &CheckoutResult{URL: uri, Params: params}, nil
 }
 
-func (g *epayGateway) ParseCallback(_ context.Context, params map[string]string) (*Notice, error) {
+func (g *epayGateway) ParseCallback(_ context.Context, callback Callback) (*Notice, error) {
+	params := callback.Params
 	verified, err := g.client.Verify(params)
 	if err != nil || !verified.VerifyStatus || params["sign_type"] != "MD5" || params["pid"] != g.config.MerchantID || verified.Type != g.config.PaymentType {
 		return nil, ErrInvalidPayment
@@ -78,5 +72,17 @@ func (g *epayGateway) ParseCallback(_ context.Context, params map[string]string)
 	if value := params["currency"]; value != "" && value != money.Currency {
 		return nil, ErrInvalidPayment
 	}
-	return &Notice{OrderNo: verified.ServiceTradeNo, TradeNo: verified.TradeNo, PaymentType: verified.Type, Money: money, Paid: verified.TradeStatus == epay.StatusTradeSuccess}, nil
+	return &Notice{OrderNo: verified.ServiceTradeNo, TradeNo: verified.TradeNo, PaymentType: verified.Type, Money: money, Subtotal: money.Amount, Paid: verified.TradeStatus == epay.StatusTradeSuccess}, nil
+}
+
+func (g *epayGateway) AccountKey(context.Context) (string, error) {
+	return AccountFingerprint(Epay, g.config.Endpoint, g.config.MerchantID), nil
+}
+func (g *epayGateway) PaymentType() string                                { return g.config.PaymentType }
+func (g *epayGateway) Quote(_ context.Context, c Checkout) (Money, error) { return c.Money, nil }
+func (g *epayGateway) Confirm(_ context.Context, c Checkout, n Notice) (*Notice, error) {
+	if n.OrderNo != c.OrderNo || n.Money != c.Money {
+		return nil, ErrInvalidPayment
+	}
+	return &n, nil
 }

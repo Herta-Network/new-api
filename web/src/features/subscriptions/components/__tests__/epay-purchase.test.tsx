@@ -50,7 +50,8 @@ it('shows the CNY estimate and submits the selected configured payment method', 
         onOpenChange={vi.fn()}
         plan={{ plan }}
         enableOnlineTopUp
-        epayMethods={[
+        paymentMethods={[
+          { type: 'stripe:1', name: 'Unavailable Stripe' },
           { type: 'epay:2', name: 'Merchant A' },
           { type: 'epay:3', name: 'Merchant B' },
         ]}
@@ -61,7 +62,7 @@ it('shows the CNY estimate and submits the selected configured payment method', 
   expect(screen.getByText('Estimated payment: 73 CNY')).toBeVisible()
   await user.click(screen.getByRole('button', { name: 'Pay' }))
   await waitFor(() =>
-    expect(post).toHaveBeenCalledWith('/api/subscription/epay/pay', {
+    expect(post).toHaveBeenCalledWith('/api/subscription/pay', {
       plan_id: 1,
       payment_method: 'epay:2',
     })

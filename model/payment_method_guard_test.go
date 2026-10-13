@@ -94,21 +94,6 @@ func getUserQuotaForPaymentGuardTest(t *testing.T, userID int) int {
 	return user.Quota
 }
 
-func TestRechargeWaffoPancake_RejectsMismatchedPaymentMethod(t *testing.T) {
-	truncateTables(t)
-
-	insertUserForPaymentGuardTest(t, 101, 0)
-	insertTopUpForPaymentGuardTest(t, "waffo-pancake-guard", 101, PaymentProviderStripe)
-
-	err := RechargeWaffoPancake("waffo-pancake-guard")
-	require.Error(t, err)
-
-	topUp := GetTopUpByTradeNo("waffo-pancake-guard")
-	require.NotNil(t, topUp)
-	assert.Equal(t, common.TopUpStatusPending, topUp.Status)
-	assert.Equal(t, 0, getUserQuotaForPaymentGuardTest(t, 101))
-}
-
 func TestUpdatePendingTopUpStatus_RejectsMismatchedPaymentProvider(t *testing.T) {
 	testCases := []struct {
 		name                    string
@@ -120,15 +105,15 @@ func TestUpdatePendingTopUpStatus_RejectsMismatchedPaymentProvider(t *testing.T)
 		{
 			name:                    "stripe expire",
 			tradeNo:                 "stripe-expire-guard",
-			storedPaymentProvider:   PaymentProviderCreem,
+			storedPaymentProvider:   PaymentProviderCryptomus,
 			expectedPaymentProvider: PaymentProviderStripe,
 			targetStatus:            common.TopUpStatusExpired,
 		},
 		{
-			name:                    "waffo failed",
-			tradeNo:                 "waffo-failed-guard",
+			name:                    "epay failed",
+			tradeNo:                 "epay-failed-guard",
 			storedPaymentProvider:   PaymentProviderStripe,
-			expectedPaymentProvider: PaymentProviderWaffo,
+			expectedPaymentProvider: PaymentProviderEpay,
 			targetStatus:            common.TopUpStatusFailed,
 		},
 	}
@@ -172,7 +157,7 @@ func TestExpireSubscriptionOrder_RejectsMismatchedPaymentProvider(t *testing.T) 
 	plan := insertSubscriptionPlanForPaymentGuardTest(t, 401)
 	insertSubscriptionOrderForPaymentGuardTest(t, "sub-expire-guard", 303, plan.Id, PaymentProviderStripe)
 
-	err := ExpireSubscriptionOrder("sub-expire-guard", PaymentProviderCreem)
+	err := ExpireSubscriptionOrder("sub-expire-guard", PaymentProviderCryptomus)
 	require.ErrorIs(t, err, ErrPaymentMethodMismatch)
 
 	order := GetSubscriptionOrderByTradeNo("sub-expire-guard")
@@ -196,19 +181,19 @@ func TestPaymentEventWalletCeilingAndCache(t *testing.T) {
 			useUserCacheMiniRedis(t)
 			user := insertUserForPaymentGuardTest(t, 501, tc.balance)
 			require.NoError(t, populateUserCache(*user))
-			order := PaymentOrder{OrderNo: common.GetUUID(), MethodID: 1, VersionID: 1, Provider: PaymentProviderEpay, AccountKey: "merchant", Business: PaymentBusinessTopUp, UserID: user.Id, Amount: 1000, Currency: "CNY", CreditedQuota: tc.credit, PlanSnapshot: "null", Status: common.TopUpStatusPending}
+			order := PaymentOrder{OrderNo: common.GetUUID(), MethodID: 1, VersionID: 1, Provider: PaymentProviderEpay, AccountKey: "merchant", Business: PaymentBusinessTopUp, UserID: user.Id, Amount: 1000, Currency: "CNY", CreditedQuota: tc.credit, PlanSnapshot: "null", CheckoutSnapshot: "null", Status: common.TopUpStatusPending}
 			require.NoError(t, DB.Create(&order).Error)
 			require.NoError(t, DB.Create(&TopUp{UserId: user.Id, TradeNo: order.OrderNo, Amount: 2, Money: 10, PaymentProvider: PaymentProviderEpay, Status: common.TopUpStatusPending}).Error)
-			event, err := ReceivePaymentEvent(context.Background(), &order, &payment.Notice{OrderNo: order.OrderNo, TradeNo: "TRADE" + order.OrderNo, Money: payment.Money{Amount: 1000, Currency: "CNY"}, Paid: true}, "127.0.0.1")
+			event, err := ReceivePaymentEvent(context.Background(), &order, &payment.Notice{OrderNo: order.OrderNo, TradeNo: "TRADE" + order.OrderNo, Money: payment.Money{Amount: 1000, Currency: "CNY"}, Paid: true, Subtotal: 1000}, "127.0.0.1", 1)
 			require.NoError(t, err)
-			err = ProcessPaymentEvent(context.Background(), event.ID)
+			err = ProcessPaymentEvent(context.Background(), event.ID, &payment.Notice{OrderNo: order.OrderNo, TradeNo: "TRADE" + order.OrderNo, Money: payment.Money{Amount: 1000, Currency: "CNY"}, Subtotal: 1000, Paid: true})
 			wantBalance := tc.balance
 			if tc.reject {
 				require.Error(t, err)
 				assert.Equal(t, common.TopUpStatusPending, getTopUpStatusForPaymentGuardTest(t, order.OrderNo))
 			} else {
 				require.NoError(t, err)
-				require.NoError(t, ProcessPaymentEvent(context.Background(), event.ID))
+				require.NoError(t, ProcessPaymentEvent(context.Background(), event.ID, &payment.Notice{OrderNo: order.OrderNo, TradeNo: "TRADE" + order.OrderNo, Money: payment.Money{Amount: 1000, Currency: "CNY"}, Subtotal: 1000, Paid: true}))
 				wantBalance += tc.credit
 				assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, order.OrderNo))
 			}
@@ -227,7 +212,7 @@ func TestPaymentMethodDoesNotLogMerchantSecret(t *testing.T) {
 	DB = DB.Session(&gorm.Session{Logger: gormlogger.New(log.New(&output, "", 0), gormlogger.Config{LogLevel: gormlogger.Info})})
 	t.Cleanup(func() { DB = previous })
 	method := PaymentMethod{Name: "Secret logging", Provider: payment.Epay, Enabled: true}
-	config := payment.EpayConfig{Endpoint: "https://pay.example.com", MerchantID: "10001", Key: "merchant-secret-must-not-be-logged", PaymentType: "alipay"}
+	config := payment.Config{Endpoint: "https://pay.example.com", MerchantID: "10001", Key: "merchant-secret-must-not-be-logged", PaymentType: "alipay"}
 	require.NoError(t, SavePaymentMethod(&method, config))
 	assert.NotEmpty(t, output.String())
 	assert.NotContains(t, output.String(), config.Key)

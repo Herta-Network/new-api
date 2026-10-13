@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Crown, CalendarClock, Package } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -27,19 +27,14 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
 import { Separator } from '@/components/ui/separator'
+import { submitPaymentForm } from '@/features/wallet/lib/payment'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber, formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { DEFAULT_CURRENCY_CONFIG } from '@/stores/system-config-store'
 
-import {
-  paySubscriptionStripe,
-  paySubscriptionCreem,
-  paySubscriptionEpay,
-  paySubscriptionWaffoPancake,
-  paySubscriptionBalance,
-} from '../../api'
+import { paySubscription, paySubscriptionBalance } from '../../api'
 import { formatDuration, formatResetPeriod } from '../../lib'
 import type { PlanRecord } from '../../types'
 
@@ -52,11 +47,8 @@ interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
   plan: PlanRecord | null
-  enableStripe?: boolean
-  enableCreem?: boolean
-  enableWaffoPancake?: boolean
   enableOnlineTopUp?: boolean
-  epayMethods?: PaymentMethod[]
+  paymentMethods?: PaymentMethod[]
   epayExchangeRate?: number
   purchaseLimit?: number
   purchaseCount?: number
@@ -68,26 +60,31 @@ export function SubscriptionPurchaseDialog(props: Props) {
   const { t, i18n } = useTranslation()
   const { currency } = useSystemConfig()
   const [paying, setPaying] = useState(false)
-  const [selectedEpayMethod, setSelectedEpayMethod] = useState('')
-
-  useEffect(() => {
-    if (props.open && props.epayMethods && props.epayMethods.length > 0) {
-      setSelectedEpayMethod(props.epayMethods[0].type)
-    } else if (!props.open) {
-      setSelectedEpayMethod('')
-    }
-  }, [props.open, props.epayMethods])
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('')
 
   const plan = props.plan?.plan
+  const availableMethods = useMemo(
+    () =>
+      (props.paymentMethods || []).filter(
+        (method) =>
+          !method.type.startsWith('stripe:') || !!plan?.stripe_price_id
+      ),
+    [props.paymentMethods, plan?.stripe_price_id]
+  )
+  useEffect(() => {
+    if (props.open) {
+      setSelectedPaymentMethod((current) =>
+        availableMethods.some((method) => method.type === current)
+          ? current
+          : (availableMethods[0]?.type ?? '')
+      )
+    } else setSelectedPaymentMethod('')
+  }, [props.open, availableMethods])
   if (!plan) return null
 
-  const hasStripe = props.enableStripe && !!plan.stripe_price_id
-  const hasCreem = props.enableCreem && !!plan.creem_product_id
-  const hasWaffoPancake =
-    props.enableWaffoPancake && !!plan.waffo_pancake_product_id
-  const hasEpay =
-    props.enableOnlineTopUp && (props.epayMethods || []).length > 0
-  const hasAnyPayment = hasStripe || hasCreem || hasWaffoPancake || hasEpay
+  const hasPaymentMethods =
+    props.enableOnlineTopUp && availableMethods.length > 0
+  const hasAnyPayment = hasPaymentMethods
   const totalAmount = Number(plan.total_amount || 0)
   const price = Number(plan.price_amount || 0).toFixed(2)
   const quotaPerUnit =
@@ -105,93 +102,21 @@ export function SubscriptionPurchaseDialog(props: Props) {
     (props.purchaseLimit || 0) > 0 &&
     (props.purchaseCount || 0) >= (props.purchaseLimit || 0)
 
-  const handlePayStripe = async () => {
-    setPaying(true)
-    try {
-      const res = await paySubscriptionStripe({ plan_id: plan.id })
-      if (res.message === 'success' && res.data?.pay_link) {
-        window.open(res.data.pay_link, '_blank')
-        toast.success(t('Payment page opened'))
-        props.onOpenChange(false)
-      } else {
-        handleServerError(res, t('Payment request failed'))
-      }
-    } catch (error) {
-      handleServerError(error, t('Payment request failed'))
-    } finally {
-      setPaying(false)
-    }
-  }
-
-  const handlePayCreem = async () => {
-    setPaying(true)
-    try {
-      const res = await paySubscriptionCreem({ plan_id: plan.id })
-      if (res.message === 'success' && res.data?.checkout_url) {
-        window.open(res.data.checkout_url, '_blank')
-        toast.success(t('Payment page opened'))
-        props.onOpenChange(false)
-      } else {
-        handleServerError(res, t('Payment request failed'))
-      }
-    } catch (error) {
-      handleServerError(error, t('Payment request failed'))
-    } finally {
-      setPaying(false)
-    }
-  }
-
-  // In-tab redirect (not window.open) — user-gesture context is lost
-  // across the await, so a popup would be blocked. Same as the wallet hook.
-  const handlePayWaffoPancake = async () => {
-    setPaying(true)
-    try {
-      const res = await paySubscriptionWaffoPancake({ plan_id: plan.id })
-      if (res.message === 'success' && res.data?.checkout_url) {
-        toast.success(t('Redirecting to payment page...'))
-        window.location.href = res.data.checkout_url
-      } else {
-        handleServerError(res, t('Payment request failed'))
-      }
-    } catch (error) {
-      handleServerError(error, t('Payment request failed'))
-    } finally {
-      setPaying(false)
-    }
-  }
-
-  const isSafari =
-    typeof navigator !== 'undefined' &&
-    /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
-
-  const handlePayEpay = async () => {
-    if (!selectedEpayMethod) {
+  const handlePayGateway = async () => {
+    if (!selectedPaymentMethod) {
       toast.error(t('Please select a payment method'))
       return
     }
     setPaying(true)
     try {
-      const res = await paySubscriptionEpay({
+      const res = await paySubscription({
         plan_id: plan.id,
-        payment_method: selectedEpayMethod,
+        payment_method: selectedPaymentMethod,
       })
       if (res.message === 'success' && res.url) {
-        const form = document.createElement('form')
-        form.action = res.url
-        form.method = 'POST'
-        if (!isSafari) {
-          form.target = '_blank'
-        }
-        Object.entries(res.data || {}).forEach(([key, value]) => {
-          const input = document.createElement('input')
-          input.type = 'hidden'
-          input.name = key
-          input.value = String(value)
-          form.appendChild(input)
-        })
-        document.body.appendChild(form)
-        form.submit()
-        document.body.removeChild(form)
+        if (res.type === 'form' && res.data) {
+          submitPaymentForm(res.url, res.data)
+        } else window.location.assign(res.url)
         toast.success(t('Payment initiated'))
         props.onOpenChange(false)
       } else {
@@ -339,65 +264,36 @@ export function SubscriptionPurchaseDialog(props: Props) {
             <p className='text-muted-foreground text-xs'>
               {t('Select payment method')}
             </p>
-            {(hasStripe || hasCreem || hasWaffoPancake) && (
-              <div className='grid grid-cols-2 gap-2 sm:flex'>
-                {hasStripe && (
-                  <Button
-                    variant='outline'
-                    className='flex-1'
-                    onClick={handlePayStripe}
-                    disabled={paying || limitReached}
-                  >
-                    Stripe
-                  </Button>
-                )}
-                {hasCreem && (
-                  <Button
-                    variant='outline'
-                    className='flex-1'
-                    onClick={handlePayCreem}
-                    disabled={paying || limitReached}
-                  >
-                    Creem
-                  </Button>
-                )}
-                {hasWaffoPancake && (
-                  <Button
-                    variant='outline'
-                    className='flex-1'
-                    onClick={handlePayWaffoPancake}
-                    disabled={paying || limitReached}
-                  >
-                    Waffo Pancake
-                  </Button>
-                )}
-              </div>
-            )}
-            {hasEpay && (
+            {hasPaymentMethods && (
               <div className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'>
-                <p className='text-muted-foreground col-span-2 text-sm'>
-                  {t('Estimated payment: {{amount}} CNY', {
-                    amount: formatNumber(
-                      Number(plan.price_amount) * (props.epayExchangeRate ?? 0),
-                      toIntlLocale(i18n.resolvedLanguage || i18n.language)
-                    ),
-                  })}
-                </p>
+                {selectedPaymentMethod.startsWith('epay:') && (
+                  <p className='text-muted-foreground col-span-2 text-sm'>
+                    {t('Estimated payment: {{amount}} CNY', {
+                      amount: formatNumber(
+                        Number(plan.price_amount) *
+                          (props.epayExchangeRate ?? 0),
+                        toIntlLocale(i18n.resolvedLanguage || i18n.language)
+                      ),
+                    })}
+                  </p>
+                )}
                 <Combobox
-                  options={(props.epayMethods || []).map((m) => ({
+                  options={availableMethods.map((m) => ({
                     value: m.type,
                     label: m.name || m.type,
                   }))}
-                  value={selectedEpayMethod}
-                  onValueChange={(v) => v !== null && setSelectedEpayMethod(v)}
+                  value={selectedPaymentMethod}
+                  onValueChange={(v) =>
+                    v !== null && setSelectedPaymentMethod(v)
+                  }
                   disabled={limitReached}
                   className='flex-1'
                 />
                 <Button
-                  onClick={handlePayEpay}
+                  onClick={handlePayGateway}
                   disabled={
                     paying ||
-                    !selectedEpayMethod ||
+                    !selectedPaymentMethod ||
                     !props.epayExchangeRate ||
                     limitReached
                   }

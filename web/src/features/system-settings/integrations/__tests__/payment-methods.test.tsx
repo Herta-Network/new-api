@@ -176,3 +176,58 @@ it('requires confirmation before deleting a method', async () => {
     expect(remove).toHaveBeenCalledWith('/api/option/payment-methods/1')
   )
 })
+
+it.each(['Stripe', 'Cryptomus'] as const)(
+  'creates a %s method with its provider-specific settings',
+  async (provider) => {
+    const post = vi
+      .spyOn(api, 'post')
+      .mockResolvedValue({ data: { success: true } })
+    const user = userEvent.setup()
+    renderMethods()
+    await user.click(screen.getByRole('button', { name: 'Add payment method' }))
+    await screen.findByRole('dialog')
+    await user.type(
+      screen.getByLabelText('Epay secret key'),
+      'previous-provider-secret'
+    )
+    await user.click(screen.getByRole('combobox', { name: 'Provider' }))
+    await user.click(await screen.findByRole('option', { name: provider }))
+    await user.type(screen.getByRole('textbox', { name: 'Name' }), provider)
+    if (provider === 'Stripe') {
+      expect(screen.getByRole('switch', { name: 'Enabled' })).not.toBeChecked()
+      await user.type(
+        screen.getByLabelText('Stripe API secret'),
+        'sk_test_fixture'
+      )
+      await user.type(
+        screen.getByLabelText('Stripe webhook secret'),
+        'whsec_fixture'
+      )
+      await user.type(
+        screen.getByRole('textbox', { name: 'Stripe Price ID (top-up)' }),
+        'price_topup'
+      )
+      await user.click(
+        screen.getByRole('switch', { name: 'Allow promotion codes' })
+      )
+    } else {
+      await user.type(
+        screen.getByRole('textbox', { name: 'Merchant ID' }),
+        'merchant_1'
+      )
+      expect(screen.getByLabelText('API Key')).toHaveValue('')
+      await user.type(screen.getByLabelText('API Key'), 'test_key')
+    }
+    expect(
+      screen.queryByRole('textbox', { name: 'Epay endpoint' })
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith(
+        '/api/option/payment-methods',
+        expect.objectContaining({ provider: provider.toLowerCase() })
+      )
+    )
+  }
+)

@@ -2190,202 +2190,30 @@
     },
     "/api/user/pay": {
       "post": {
-        "summary": "发起易支付",
-        "deprecated": false,
-        "description": "🔐 需要登录（User权限）",
+        "summary": "发起支付",
         "tags": [
           "充值"
         ],
-        "parameters": [],
+        "description": "使用 payment_method（例如 stripe:1、epay:2、cryptomus:3）选择已配置的网关。",
         "responses": {
           "200": {
-            "description": "成功",
-            "headers": {}
+            "description": "支付结果"
           }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
+        }
       }
     },
     "/api/user/amount": {
       "post": {
-        "summary": "获取支付金额",
-        "deprecated": false,
-        "description": "🔐 需要登录（User权限）",
+        "summary": "查询支付金额",
         "tags": [
           "充值"
         ],
-        "parameters": [],
+        "description": "使用 payment_method（例如 stripe:1、epay:2、cryptomus:3）选择已配置的网关。",
         "responses": {
           "200": {
-            "description": "成功",
-            "headers": {}
+            "description": "支付结果"
           }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
-      }
-    },
-    "/api/user/stripe/pay": {
-      "post": {
-        "summary": "发起Stripe支付",
-        "deprecated": false,
-        "description": "🔐 需要登录（User权限）",
-        "tags": [
-          "充值"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "headers": {}
-          }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
-      }
-    },
-    "/api/user/stripe/amount": {
-      "post": {
-        "summary": "获取Stripe支付金额",
-        "deprecated": false,
-        "description": "🔐 需要登录（User权限）",
-        "tags": [
-          "充值"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "headers": {}
-          }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
-      }
-    },
-    "/api/user/creem/pay": {
-      "post": {
-        "summary": "发起Creem支付",
-        "deprecated": false,
-        "description": "🔐 需要登录（User权限）",
-        "tags": [
-          "充值"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "headers": {}
-          }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
-      }
-    },
-    "/api/user/epay/notify": {
-      "get": {
-        "summary": "易支付回调",
-        "deprecated": false,
-        "description": "🔓 无需鉴权（支付回调）",
-        "tags": [
-          "充值"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "headers": {}
-          }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
-      }
-    },
-    "/api/stripe/webhook": {
-      "post": {
-        "summary": "Stripe Webhook",
-        "deprecated": false,
-        "description": "🔓 无需鉴权（Webhook回调）",
-        "tags": [
-          "充值"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "headers": {}
-          }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
-      }
-    },
-    "/api/creem/webhook": {
-      "post": {
-        "summary": "Creem Webhook",
-        "deprecated": false,
-        "description": "🔓 无需鉴权（Webhook回调）",
-        "tags": [
-          "充值"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "headers": {}
-          }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
+        }
       }
     },
     "/api/user/2fa/status": {
@@ -5228,6 +5056,85 @@
             "Combination1243": []
           }
         ]
+      }
+    },
+    "/api/subscription/pay": {
+      "post": {
+        "summary": "订阅支付",
+        "tags": [
+          "充值"
+        ],
+        "description": "使用 payment_method（例如 stripe:1、epay:2、cryptomus:3）选择已配置的网关。",
+        "responses": {
+          "200": {
+            "description": "支付结果"
+          }
+        }
+      }
+    },
+    "/api/payments/{provider}/notify/{version_id}": {
+      "post": {
+        "summary": "支付网关回调",
+        "description": "按配置版本验签，将事件持久化后确认上游支付状态。",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "epay",
+                "cryptomus"
+              ]
+            }
+          },
+          {
+            "name": "version_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "已处理"
+          },
+          "400": {
+            "description": "无效回调"
+          },
+          "503": {
+            "description": "暂时失败，请重试"
+          }
+        }
+      }
+    },
+    "/api/payments/stripe/webhook/{method_id}": {
+      "post": {
+        "summary": "Stripe Webhook",
+        "parameters": [
+          {
+            "name": "method_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "已接收"
+          },
+          "400": {
+            "description": "无效回调"
+          },
+          "503": {
+            "description": "暂时失败，请重试"
+          }
+        }
       }
     }
   },
