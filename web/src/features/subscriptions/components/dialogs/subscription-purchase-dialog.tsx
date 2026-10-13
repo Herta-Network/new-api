@@ -28,7 +28,8 @@ import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
 import { Separator } from '@/components/ui/separator'
 import { useSystemConfig } from '@/hooks/use-system-config'
-import { formatQuota } from '@/lib/format'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber, formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { DEFAULT_CURRENCY_CONFIG } from '@/stores/system-config-store'
 
@@ -56,6 +57,7 @@ interface Props {
   enableWaffoPancake?: boolean
   enableOnlineTopUp?: boolean
   epayMethods?: PaymentMethod[]
+  epayExchangeRate?: number
   purchaseLimit?: number
   purchaseCount?: number
   userQuota?: number
@@ -63,7 +65,7 @@ interface Props {
 }
 
 export function SubscriptionPurchaseDialog(props: Props) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { currency } = useSystemConfig()
   const [paying, setPaying] = useState(false)
   const [selectedEpayMethod, setSelectedEpayMethod] = useState('')
@@ -373,6 +375,14 @@ export function SubscriptionPurchaseDialog(props: Props) {
             )}
             {hasEpay && (
               <div className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'>
+                <p className='text-muted-foreground col-span-2 text-sm'>
+                  {t('Estimated payment: {{amount}} CNY', {
+                    amount: formatNumber(
+                      Number(plan.price_amount) * (props.epayExchangeRate ?? 0),
+                      toIntlLocale(i18n.resolvedLanguage || i18n.language)
+                    ),
+                  })}
+                </p>
                 <Combobox
                   options={(props.epayMethods || []).map((m) => ({
                     value: m.type,
@@ -385,7 +395,12 @@ export function SubscriptionPurchaseDialog(props: Props) {
                 />
                 <Button
                   onClick={handlePayEpay}
-                  disabled={paying || !selectedEpayMethod || limitReached}
+                  disabled={
+                    paying ||
+                    !selectedEpayMethod ||
+                    !props.epayExchangeRate ||
+                    limitReached
+                  }
                 >
                   {t('Pay')}
                 </Button>

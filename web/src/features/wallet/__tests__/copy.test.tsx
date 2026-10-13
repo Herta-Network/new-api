@@ -125,3 +125,23 @@ it.each([
     expect(screen.getByPlaceholderText('Minimum 1')).toBeVisible()
   }
 )
+
+it('labels the Epay amount in CNY independently of the display currency', async () => {
+  const { PaymentConfirmDialog } =
+    await import('../components/dialogs/payment-confirm-dialog')
+  render(
+    <I18nextProvider i18n={i18n}>
+      <PaymentConfirmDialog
+        open
+        onOpenChange={vi.fn()}
+        onConfirm={vi.fn()}
+        topupAmount={2}
+        paymentAmount={14.6}
+        calculating={false}
+        processing={false}
+        paymentMethod={{ type: 'epay:7', name: 'Alipay' }}
+      />
+    </I18nextProvider>
+  )
+  expect(screen.getByText('14.6 CNY')).toBeVisible()
+})

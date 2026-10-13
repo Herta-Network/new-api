@@ -167,66 +167,6 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 	})
 }
 
-// RechargeEpay 原子完成易支付订单：订单行锁、状态校验、成功更新与用户额度增加
-// 在同一个事务内完成，因此同一订单的并发/重复回调（包括多实例部署下）最多充值一次。
-// alreadyDone=true 表示订单此前已完成，本次为幂等重复回调。
-// 进程内的 LockOrder 只是优化，正确性由本函数的数据库行锁保证。
-func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (alreadyDone bool, err error) {
-	if tradeNo == "" {
-		return false, errors.New("payment order number not provided")
-	}
-
-	refCol := `"trade_no"`
-
-	var quotaToAdd int
-	topUp := &TopUp{}
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
-			return ErrTopUpNotFound
-		}
-		if topUp.PaymentProvider != PaymentProviderEpay {
-			return ErrPaymentMethodMismatch
-		}
-		if topUp.Status == common.TopUpStatusSuccess {
-			alreadyDone = true
-			return nil
-		}
-		if topUp.Status != common.TopUpStatusPending {
-			return ErrTopUpStatusInvalid
-		}
-		if actualPaymentMethod != "" && topUp.PaymentMethod != actualPaymentMethod {
-			topUp.PaymentMethod = actualPaymentMethod
-		}
-		var quotaErr error
-		quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(
-			decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
-		)
-		if quotaErr != nil || quotaToAdd <= 0 {
-			return ErrInvalidTopUpQuota
-		}
-		topUp.CompleteTime = common.GetTimestamp()
-		topUp.Status = common.TopUpStatusSuccess
-		if err := tx.Save(topUp).Error; err != nil {
-			return err
-		}
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
-	})
-	if err != nil {
-		if !errors.Is(err, ErrTopUpNotFound) && !errors.Is(err, ErrPaymentMethodMismatch) && !errors.Is(err, ErrTopUpStatusInvalid) {
-			common.SysError(common.LogText("epay topup failed: %s", err.Error()))
-		}
-		return false, err
-	}
-	if alreadyDone {
-		return true, nil
-	}
-	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, common.LogText("epay topup"))
-
-	common.SysLog(common.LogText("Epay top-up succeeded trade_no=%s user_id=%d quota_to_add=%d money=%.2f", topUp.TradeNo, topUp.UserId, quotaToAdd, topUp.Money))
-	RecordTopupLog(topUp.UserId, common.NewMessage("Online top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}", map[string]any{"quota": logger.FormatQuota(quotaToAdd), "amount": fmt.Sprintf("%f", topUp.Money)}), callerIp, topUp.PaymentMethod, PaymentProviderEpay)
-	return false, nil
-}
-
 func Recharge(referenceId string, customerId string, callerIp string) (err error) {
 	if referenceId == "" {
 		return errors.New("payment order number not provided")
@@ -441,6 +381,11 @@ func SearchAllTopUps(keyword string, pageInfo *common.PageInfo) (topups []*TopUp
 func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	if tradeNo == "" {
 		return common.NewMessage("Order number not provided")
+	}
+
+	topUp := GetTopUpByTradeNo(tradeNo)
+	if topUp != nil && topUp.PaymentProvider == PaymentProviderEpay {
+		return CompleteGatewayOrderManually(tradeNo, callerIp)
 	}
 
 	refCol := `"trade_no"`

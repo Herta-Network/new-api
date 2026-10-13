@@ -71,9 +71,7 @@ interface SubscriptionPlansCardProps {
 }
 
 function getEpayMethods(payMethods: PaymentMethod[] = []): PaymentMethod[] {
-  return payMethods.filter(
-    (m) => m?.type && m.type !== 'stripe' && m.type !== 'creem'
-  )
+  return payMethods.filter((m) => m.type.startsWith('epay:'))
 }
 
 function getBillingPreferenceLabel(
@@ -648,6 +646,7 @@ export function SubscriptionPlansCard({
         enableWaffoPancake={enableWaffoPancake}
         enableOnlineTopUp={enableOnlineTopUp}
         epayMethods={epayMethods}
+        epayExchangeRate={topupInfo?.epay_subscription_exchange_rate}
         userQuota={userQuota}
         onPurchaseSuccess={onPurchaseSuccess}
         purchaseLimit={

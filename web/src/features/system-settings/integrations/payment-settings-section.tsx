@@ -97,13 +97,6 @@ function isHttpOriginUrl(value: string) {
 }
 
 const paymentSchema = z.object({
-  PayAddress: z.string().refine((value) => {
-    const trimmed = value.trim()
-    if (!trimmed) return true
-    return /^https?:\/\//.test(trimmed)
-  }, 'Provide a valid callback URL starting with http:// or https://'),
-  EpayId: z.string(),
-  EpayKey: z.string(),
   Price: z.coerce.number().min(0),
   MinTopUp: z.coerce.number().min(0),
   CustomCallbackAddress: z
@@ -112,15 +105,6 @@ const paymentSchema = z.object({
       isHttpOriginUrl,
       'Enter only a top-level callback domain, for example https://api.example.com, without any path.'
     ),
-  PayMethods: z.string().superRefine((value, ctx) => {
-    const error = getJsonError(value)
-    if (error) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: error,
-      })
-    }
-  }),
   AmountOptions: z.string().superRefine((value, ctx) => {
     const error = getJsonError(value, (parsed) => Array.isArray(parsed))
     if (error) {
@@ -240,7 +224,6 @@ export function PaymentSettingsSection({
     [initialFormValues]
   )
 
-  const [payMethodsVisualMode, setPayMethodsVisualMode] = React.useState(true)
   const [amountOptionsVisualMode, setAmountOptionsVisualMode] =
     React.useState(true)
   const [amountDiscountVisualMode, setAmountDiscountVisualMode] =
@@ -354,7 +337,6 @@ export function PaymentSettingsSection({
     mode: 'onChange', // Enable real-time validation
     defaultValues: {
       ...initialFormValues,
-      PayMethods: formatJsonForEditor(initialFormValues.PayMethods),
       AmountOptions: formatJsonForEditor(initialFormValues.AmountOptions),
       AmountDiscount: formatJsonForEditor(initialFormValues.AmountDiscount),
       CreemProducts: formatJsonForEditor(initialFormValues.CreemProducts),
@@ -411,7 +393,6 @@ export function PaymentSettingsSection({
     initialRef.current = parsedDefaults
     form.reset({
       ...parsedDefaults,
-      PayMethods: formatJsonForEditor(parsedDefaults.PayMethods),
       AmountOptions: formatJsonForEditor(parsedDefaults.AmountOptions),
       AmountDiscount: formatJsonForEditor(parsedDefaults.AmountDiscount),
       CreemProducts: formatJsonForEditor(parsedDefaults.CreemProducts),
@@ -420,13 +401,9 @@ export function PaymentSettingsSection({
 
   const onSubmit = async (values: PaymentFormValues) => {
     const sanitized = {
-      PayAddress: removeTrailingSlash(values.PayAddress),
-      EpayId: values.EpayId.trim(),
-      EpayKey: values.EpayKey.trim(),
       Price: values.Price,
       MinTopUp: values.MinTopUp,
       CustomCallbackAddress: removeTrailingSlash(values.CustomCallbackAddress),
-      PayMethods: values.PayMethods.trim(),
       AmountOptions: values.AmountOptions.trim(),
       AmountDiscount: values.AmountDiscount.trim(),
       StripeApiSecret: values.StripeApiSecret.trim(),
@@ -462,15 +439,11 @@ export function PaymentSettingsSection({
     }
 
     const initial = {
-      PayAddress: removeTrailingSlash(initialRef.current.PayAddress),
-      EpayId: initialRef.current.EpayId.trim(),
-      EpayKey: initialRef.current.EpayKey.trim(),
       Price: initialRef.current.Price,
       MinTopUp: initialRef.current.MinTopUp,
       CustomCallbackAddress: removeTrailingSlash(
         initialRef.current.CustomCallbackAddress
       ),
-      PayMethods: initialRef.current.PayMethods.trim(),
       AmountOptions: initialRef.current.AmountOptions.trim(),
       AmountDiscount: initialRef.current.AmountDiscount.trim(),
       StripeApiSecret: initialRef.current.StripeApiSecret.trim(),
@@ -510,18 +483,6 @@ export function PaymentSettingsSection({
 
     const updates: Array<{ key: string; value: string | number | boolean }> = []
 
-    if (sanitized.PayAddress !== initial.PayAddress) {
-      updates.push({ key: 'PayAddress', value: sanitized.PayAddress })
-    }
-
-    if (sanitized.EpayId !== initial.EpayId) {
-      updates.push({ key: 'EpayId', value: sanitized.EpayId })
-    }
-
-    if (sanitized.EpayKey && sanitized.EpayKey !== initial.EpayKey) {
-      updates.push({ key: 'EpayKey', value: sanitized.EpayKey })
-    }
-
     if (sanitized.Price !== initial.Price) {
       updates.push({ key: 'Price', value: sanitized.Price })
     }
@@ -535,13 +496,6 @@ export function PaymentSettingsSection({
         key: 'CustomCallbackAddress',
         value: sanitized.CustomCallbackAddress,
       })
-    }
-
-    if (
-      normalizeJsonForComparison(sanitized.PayMethods) !==
-      normalizeJsonForComparison(initial.PayMethods)
-    ) {
-      updates.push({ key: 'PayMethods', value: sanitized.PayMethods })
     }
 
     if (
@@ -953,68 +907,6 @@ export function PaymentSettingsSection({
                   />
                 </div>
 
-                <FormField
-                  control={form.control}
-                  name='PayMethods'
-                  render={({ field }) => (
-                    <FormItem>
-                      <div className='mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-                        <FormLabel>{t('Payment methods')}</FormLabel>
-                        <Button
-                          type='button'
-                          variant='outline'
-                          size='sm'
-                          onClick={() =>
-                            setPayMethodsVisualMode(!payMethodsVisualMode)
-                          }
-                          className='w-full sm:w-auto'
-                        >
-                          {payMethodsVisualMode ? (
-                            <>
-                              <Code2 className='mr-2 h-3 w-3' />
-                              {t('JSON Editor')}
-                            </>
-                          ) : (
-                            <>
-                              <Eye className='mr-2 h-3 w-3' />
-                              {t('Visual Editor')}
-                            </>
-                          )}
-                        </Button>
-                      </div>
-                      <FormControl>
-                        {payMethodsVisualMode ? (
-                          <PaymentMethodsVisualEditor
-                            value={field.value}
-                            onChange={field.onChange}
-                          />
-                        ) : (
-                          <JsonCodeEditor
-                            value={field.value}
-                            onChange={field.onChange}
-                            name={field.name}
-                            onBlur={field.onBlur}
-                            textareaRef={field.ref}
-                            placeholder={t(
-                              '[{"name":"支付宝","type":"alipay","icon":"SiAlipay"}]'
-                            )}
-                            heightClassName='h-40 min-h-40 max-h-40'
-                            aria-invalid={Boolean(
-                              form.formState.errors.PayMethods
-                            )}
-                          />
-                        )}
-                      </FormControl>
-                      <FormDescription>
-                        {t(
-                          'Configured as PayMethods JSON. The type value decides which payment flow is used: stripe for Stripe, waffo_pancake for Waffo Pancake, and other values are sent to Epay as the type parameter.'
-                        )}
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
                 <div className='grid gap-6 md:grid-cols-2 md:items-start'>
                   <FormField
                     control={form.control}
@@ -1140,121 +1032,27 @@ export function PaymentSettingsSection({
             </TabsContent>
 
             <TabsContent value='epay' className={paymentTabContentClassName}>
-              <div className='space-y-4'>
-                <div>
-                  <h3 className='text-lg font-medium'>{t('Epay Gateway')}</h3>
-                  <p className='text-muted-foreground text-sm'>
-                    {t('Configuration for Epay payment integration')}
-                  </p>
-                </div>
-
-                <Alert>
-                  <ShieldAlert className='h-4 w-4' />
-                  <AlertTitle>{t('Epay safety reminder')}</AlertTitle>
-                  <AlertDescription>
-                    {t(
-                      'Epay is a payment protocol, not a specific official website. Verify the provider yourself and do not trust random third-party Epay deployments.'
-                    )}
-                  </AlertDescription>
-                </Alert>
-
-                <div className='grid gap-6 md:grid-cols-2'>
-                  <FormField
-                    control={form.control}
-                    name='PayAddress'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('Epay endpoint')}</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder={t('https://pay.example.com')}
-                            {...field}
-                            onChange={(event) =>
-                              field.onChange(event.target.value)
-                            }
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          {t('Base address provided by your Epay service')}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name='CustomCallbackAddress'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('Callback address')}</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder={t('https://gateway.example.com')}
-                            {...field}
-                            onChange={(event) =>
-                              field.onChange(event.target.value)
-                            }
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          {t(
-                            'Only enter the site origin, for example https://api.example.com. Do not include any path such as /api/user/epay/notify. Leave blank to use the server address.'
-                          )}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-
-                <div className='grid gap-6 md:grid-cols-2'>
-                  <FormField
-                    control={form.control}
-                    name='EpayId'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('Epay merchant ID')}</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder='10001'
-                            autoComplete='off'
-                            {...field}
-                            onChange={(event) =>
-                              field.onChange(event.target.value)
-                            }
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name='EpayKey'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('Epay secret key')}</FormLabel>
-                        <FormControl>
-                          <Input
-                            type='password'
-                            placeholder={t('Enter new key to update')}
-                            autoComplete='new-password'
-                            {...field}
-                            onChange={(event) =>
-                              field.onChange(event.target.value)
-                            }
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          {t('Leave blank unless rotating the secret')}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
+              <div className='space-y-6'>
+                <PaymentMethodsVisualEditor />
+                <FormField
+                  control={form.control}
+                  name='CustomCallbackAddress'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Callback address')}</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder='https://gateway.example.com'
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t('Leave blank to use the server address.')}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </div>
             </TabsContent>
 

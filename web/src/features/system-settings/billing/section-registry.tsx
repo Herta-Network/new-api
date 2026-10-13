@@ -134,13 +134,9 @@ const BILLING_SECTIONS = [
     build: (settings: BillingSettings) => (
       <PaymentSettingsSection
         defaultValues={{
-          PayAddress: settings.PayAddress,
-          EpayId: settings.EpayId,
-          EpayKey: settings.EpayKey,
           Price: settings.Price,
           MinTopUp: settings.MinTopUp,
           CustomCallbackAddress: settings.CustomCallbackAddress,
-          PayMethods: settings.PayMethods,
           AmountOptions: settings['payment_setting.amount_options'],
           AmountDiscount: settings['payment_setting.amount_discount'],
           StripeApiSecret: settings.StripeApiSecret,

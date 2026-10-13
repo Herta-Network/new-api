@@ -60,12 +60,9 @@ var accessTokenExemptRoutes = []string{
 	"POST /api/creem/webhook",
 	"POST /api/waffo/webhook",
 	"POST /api/waffo-pancake/webhook/:env",
-	"GET /api/user/epay/notify",
-	"POST /api/user/epay/notify",
-	"GET /api/subscription/epay/notify",
-	"POST /api/subscription/epay/notify",
-	"GET /api/subscription/epay/return",
-	"POST /api/subscription/epay/return",
+	"GET /api/payments/epay/notify/:order_no",
+	"POST /api/payments/epay/notify/:order_no",
+	"GET /api/payments/return/:order_no",
 
 	// API key authentication (TokenAuthReadOnly).
 	"GET /api/usage/token/",

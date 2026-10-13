@@ -86,8 +86,6 @@ func SetApiRouter(router *gin.Engine) {
 			userRoute.POST("/passkey/login/begin", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.PasskeyLoginBegin)
 			userRoute.POST("/passkey/login/finish", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.PasskeyLoginFinish)
 			//userRoute.POST("/tokenlog", middleware.CriticalRateLimit(), controller.TokenLog)
-			userRoute.POST("/epay/notify", anonymousRequestBodyLimit, controller.EpayNotify)
-			userRoute.GET("/epay/notify", controller.EpayNotify)
 			userRoute.GET("/groups", controller.GetUserGroups)
 
 			selfRoute := userRoute.Group("/")
@@ -205,14 +203,18 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		// Subscription payment callbacks (no auth)
-		apiRouter.POST("/subscription/epay/notify", anonymousRequestBodyLimit, controller.SubscriptionEpayNotify)
-		apiRouter.GET("/subscription/epay/notify", controller.SubscriptionEpayNotify)
-		apiRouter.GET("/subscription/epay/return", controller.SubscriptionEpayReturn)
-		apiRouter.POST("/subscription/epay/return", anonymousRequestBodyLimit, controller.SubscriptionEpayReturn)
+		apiRouter.GET("/payments/epay/notify/:order_no", controller.PaymentNotify)
+		apiRouter.POST("/payments/epay/notify/:order_no", anonymousRequestBodyLimit, controller.PaymentNotify)
+		apiRouter.GET("/payments/return/:order_no", controller.PaymentReturn)
 		optionRoute := apiRouter.Group("/option")
 		optionRoute.Use(middleware.RootAuth())
 		{
 			optionRoute.GET("/", controller.GetOptions)
+			optionRoute.GET("/payment-methods", controller.ListPaymentMethods)
+			optionRoute.POST("/payment-methods", controller.SavePaymentMethod)
+			optionRoute.PUT("/payment-methods/:id", controller.SavePaymentMethod)
+			optionRoute.DELETE("/payment-methods/:id", controller.DeletePaymentMethod)
+			optionRoute.GET("/payment-events", controller.ListPaymentEvents)
 			optionRoute.GET("/request_policy", controller.GetRequestPolicy)
 			optionRoute.PATCH("/request_policy", controller.UpdateRequestPolicy)
 			optionRoute.PUT("/", controller.UpdateOption)

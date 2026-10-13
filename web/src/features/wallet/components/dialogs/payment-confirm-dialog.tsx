@@ -102,6 +102,7 @@ export function PaymentConfirmDialog({
               <div className='flex items-baseline gap-2'>
                 <span className='text-2xl font-semibold'>
                   {formatCurrency(paymentAmount)}
+                  {paymentMethod?.type.startsWith('epay:') && ' CNY'}
                 </span>
                 {hasDiscount && (
                   <span className='text-muted-foreground text-sm line-through'>
