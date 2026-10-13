@@ -254,6 +254,10 @@ export async function fetchLogsByCategory(
       columnFilters,
       isAdmin,
     })
+    if (config.cursor !== undefined) {
+      params.pagination = 'cursor'
+      params.cursor = config.cursor
+    }
     return isAdmin ? await getAllLogs(params) : await getUserLogs(params)
   }
 
@@ -267,6 +271,9 @@ export async function fetchLogsByCategory(
 
   const paramsWithFilter = {
     ...baseParams,
+    ...(config.cursor !== undefined
+      ? { pagination: 'cursor' as const, cursor: config.cursor }
+      : {}),
     ...(logCategory === 'drawing'
       ? { mj_id: searchParams.filter as string | undefined }
       : {}),

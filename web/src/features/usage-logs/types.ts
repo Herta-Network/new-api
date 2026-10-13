@@ -425,6 +425,8 @@ export interface TaskArtifactsResponse {
 // ============================================================================
 
 export interface GetLogsParams {
+  pagination?: 'cursor'
+  cursor?: string
   p?: number
   page_size?: number
   type?: number
@@ -444,7 +446,9 @@ export interface GetLogsResponse {
   message?: string
   data?: {
     items: UsageLog[] | MidjourneyLog[] | TaskLog[]
-    total: number
+    total?: number
+    next_cursor?: string
+    previous_cursor?: string
     page: number
     page_size: number
   }
@@ -487,6 +491,8 @@ export interface GetMidjourneyLogsParams {
 // ============================================================================
 
 export interface GetTaskLogsParams {
+  pagination?: 'cursor'
+  cursor?: string
   p?: number
   page_size?: number
   channel_id?: string
@@ -503,6 +509,7 @@ export interface GetTaskLogsParams {
  * Configuration for fetching logs by category
  */
 export interface FetchLogsConfig {
+  cursor?: string
   logCategory: LogCategory
   isAdmin: boolean
   page: number

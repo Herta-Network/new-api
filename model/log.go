@@ -504,6 +504,10 @@ func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int
 		return nil, 0, err
 	}
 
+	return logs, total, fillLogChannelNames(context.Background(), logs)
+}
+
+func fillLogChannelNames(ctx context.Context, logs []*Log) error {
 	channelIds := types.NewSet[int]()
 	for _, log := range logs {
 		if log.ChannelId != 0 {
@@ -531,8 +535,8 @@ func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int
 			}
 		} else {
 			// Bulk query channels from DB
-			if err = DB.Table("channels").Select("id, name").Where("id IN ?", channelIds.Items()).Find(&channels).Error; err != nil {
-				return logs, total, err
+			if err := DB.WithContext(ctx).Table("channels").Select("id, name").Where("id IN ?", channelIds.Items()).Find(&channels).Error; err != nil {
+				return err
 			}
 		}
 		channelMap := make(map[int]string, len(channels))
@@ -544,7 +548,7 @@ func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int
 		}
 	}
 
-	return logs, total, err
+	return nil
 }
 
 const logSearchCountLimit = 10000

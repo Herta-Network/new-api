@@ -208,6 +208,9 @@ export type DataTablePageProps<TData> = {
 
   /** Minimal previous/next pagination for narrow feature layouts. */
   compactPagination?: boolean
+  cursorPagination?: React.ComponentProps<
+    typeof DataTablePagination<TData>
+  >['cursor']
 
   /**
    * Render pagination via `PageFooterPortal` (sticks to page footer).
@@ -399,6 +402,7 @@ function renderPagination<TData>(
     <DataTablePagination
       table={props.table}
       compact={props.compactPagination}
+      cursor={props.cursorPagination}
     />
   )
 

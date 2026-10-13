@@ -9,10 +9,9 @@ import (
 
 // PerfMetric stores aggregated relay performance metrics for the model square.
 type PerfMetric struct {
-	Id             int    `json:"id" gorm:"primaryKey"`
-	ModelName      string `json:"model_name" gorm:"size:128;uniqueIndex:idx_perf_model_group_bucket,priority:1"`
-	Group          string `json:"group" gorm:"column:group;size:64;uniqueIndex:idx_perf_model_group_bucket,priority:2"`
-	BucketTs       int64  `json:"bucket_ts" gorm:"uniqueIndex:idx_perf_model_group_bucket,priority:3;index:idx_perf_bucket_ts"`
+	ModelName      string `json:"model_name" gorm:"size:128;primaryKey"`
+	Group          string `json:"group" gorm:"column:group;size:64;primaryKey"`
+	BucketTs       int64  `json:"bucket_ts" gorm:"primaryKey;autoIncrement:false;index:idx_perf_bucket_ts"`
 	RequestCount   int64  `json:"-" gorm:"not null;default:0"`
 	SuccessCount   int64  `json:"-" gorm:"not null;default:0"`
 	TotalLatencyMs int64  `json:"-" gorm:"not null;default:0"`
@@ -30,7 +29,7 @@ func UpsertPerfMetric(metric *PerfMetric) error {
 	if metric == nil || metric.RequestCount == 0 {
 		return nil
 	}
-	return upsertPerfMetrics(DB, []PerfMetric{*metric})
+	return DB.Transaction(func(tx *gorm.DB) error { return upsertPerfMetrics(tx, []PerfMetric{*metric}) })
 }
 
 func SavePerfMetricBatch(batch StatisticsBatch, metrics []PerfMetric) error {
@@ -41,7 +40,10 @@ func SavePerfMetricBatch(batch StatisticsBatch, metrics []PerfMetric) error {
 }
 
 func upsertPerfMetrics(db *gorm.DB, metrics []PerfMetric) error {
-	return db.Omit("id").Clauses(clause.OnConflict{
+	if err := ensurePerfMetricPartitions(db, metrics); err != nil {
+		return err
+	}
+	return db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "model_name"}, {Name: "group"}, {Name: "bucket_ts"}},
 		DoUpdates: clause.Assignments(map[string]any{
 			"request_count":    gorm.Expr("perf_metrics.request_count + EXCLUDED.request_count"),
@@ -144,13 +146,6 @@ func GetRecentPerfMetricSuccessBuckets(modelNames []string, startTs int64, endTs
 		Select("model_name, bucket_ts, request_count, success_count").Where("sample_rank <= ?", limit).
 		Order("model_name, bucket_ts DESC").Find(&buckets).Error
 	return buckets, err
-}
-
-func DeletePerfMetricsBefore(cutoffTs int64) error {
-	if cutoffTs <= 0 {
-		return nil
-	}
-	return DB.Where("bucket_ts < ?", cutoffTs).Delete(&PerfMetric{}).Error
 }
 
 func PerfMetricStartTime(hours int) int64 {

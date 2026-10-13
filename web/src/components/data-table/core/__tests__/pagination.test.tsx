@@ -23,7 +23,7 @@ import {
 } from '@tanstack/react-table'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 
 import { DataTablePagination } from '../pagination'
 
@@ -64,4 +64,72 @@ it('shows a valid empty page with navigation disabled', () => {
 it('keeps page size selection available in the default layout', () => {
   render(<Fixture />)
   expect(screen.getByRole('combobox')).toBeVisible()
+})
+
+function CursorFixture(props: {
+  page: number
+  next: boolean
+  previous: boolean
+  busy?: boolean
+  compact?: boolean
+  onChange?: (page: number) => void
+}) {
+  const table = useReactTable({
+    data: rows,
+    columns: [{ accessorKey: 'id' }],
+    getCoreRowModel: getCoreRowModel(),
+    manualPagination: true,
+    pageCount: -1,
+    state: { pagination: { pageIndex: props.page, pageSize: 20 } },
+    onPaginationChange: (updater) => {
+      const next =
+        typeof updater === 'function'
+          ? updater({ pageIndex: props.page, pageSize: 20 })
+          : updater
+      props.onChange?.(next.pageIndex)
+    },
+  })
+  return (
+    <DataTablePagination
+      table={table}
+      compact={props.compact}
+      cursor={{
+        hasNextPage: props.next,
+        hasPreviousPage: props.previous,
+        isFetching: props.busy ?? false,
+      }}
+    />
+  )
+}
+
+it('uses cursor boundaries without displaying an invented total or last page', async () => {
+  const user = userEvent.setup()
+  const onChange = vi.fn()
+  const view = render(
+    <CursorFixture page={0} next previous={false} onChange={onChange} />
+  )
+  expect(screen.queryByText('Total:')).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: 'Go to last page' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: 'Go to previous page' })
+  ).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Go to next page' }))
+  expect(onChange).toHaveBeenLastCalledWith(1)
+  view.rerender(
+    <CursorFixture page={1} next={false} previous onChange={onChange} />
+  )
+  expect(screen.getByRole('button', { name: 'Go to next page' })).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Go to previous page' }))
+  expect(onChange).toHaveBeenLastCalledWith(0)
+})
+
+it('disables cursor navigation while a page request is pending on mobile', () => {
+  render(<CursorFixture page={2} next previous busy compact />)
+  expect(screen.getByRole('button', { name: 'Go to next page' })).toBeDisabled()
+  expect(
+    screen.getByRole('button', { name: 'Go to previous page' })
+  ).toBeDisabled()
+  expect(screen.queryByText('Total:')).not.toBeInTheDocument()
 })

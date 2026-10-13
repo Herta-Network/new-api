@@ -56,7 +56,6 @@ func TestMain(m *testing.M) {
 		&SubscriptionOrder{},
 		&UserSubscription{},
 		&UserOAuthBinding{},
-		&PerfMetric{},
 		&StatisticsWriteCheckpoint{},
 		&QuotaBatch{},
 		&QuotaBatchReceipt{},
@@ -68,6 +67,9 @@ func TestMain(m *testing.M) {
 		panic("failed to migrate: " + err.Error())
 	}
 
+	if err := MigratePerfMetrics(db); err != nil {
+		panic(err)
+	}
 	code := m.Run()
 	if err := cleanup(); err != nil {
 		panic(err)

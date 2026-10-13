@@ -49,12 +49,12 @@ const (
 const TaskRefundLegacyCutoff int64 = 1771718400 // 2026-02-22 00:00:00 UTC
 
 type Task struct {
-	ID         int64                 `json:"id" gorm:"primaryKey;autoIncrement;index:idx_tasks_unfinished_id,where:status <> 'SUCCESS' AND status <> 'FAILURE';index:idx_tasks_unfinished_submit_id,priority:2"`
+	ID         int64                 `json:"id" gorm:"primaryKey;autoIncrement;index:idx_tasks_unfinished_id,where:status <> 'SUCCESS' AND status <> 'FAILURE';index:idx_tasks_unfinished_submit_id,priority:2;index:idx_tasks_user_id_id,priority:2"`
 	CreatedAt  int64                 `json:"created_at" gorm:"index"`
 	UpdatedAt  int64                 `json:"updated_at"`
 	TaskID     string                `json:"task_id" gorm:"type:varchar(191);index"` // 第三方id，不一定有/ song id\ Task id
 	Platform   constant.TaskPlatform `json:"platform" gorm:"type:varchar(30);index"` // 平台
-	UserId     int                   `json:"user_id" gorm:"index"`
+	UserId     int                   `json:"user_id" gorm:"index:idx_tasks_user_id_id,priority:1"`
 	Group      string                `json:"group" gorm:"type:varchar(50)"` // 修正计费用
 	ChannelId  int                   `json:"channel_id" gorm:"index"`
 	Quota      int                   `json:"quota"`

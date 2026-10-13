@@ -40,6 +40,8 @@ export const DEFAULT_LOG_STATS: LogStatistics = {
  * Default empty logs data
  */
 export const DEFAULT_LOGS_DATA = {
+  next_cursor: '',
+  previous_cursor: '',
   items: [],
   total: 0,
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -205,4 +206,69 @@ func TestLogExportKeysetReleasesConnectionAndPreservesOrder(t *testing.T) {
 			assert.ErrorIs(t, StreamUserLogs(ctx, 1, filter, consume), context.Canceled)
 		})
 	}
+}
+
+func TestCursorPagesPreserveOrderingOwnershipAndBoundaries(t *testing.T) {
+	db, err := testutil.OpenDB(t, &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&Task{}, &Channel{}))
+	logDB, err := testutil.OpenDB(t, &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, logDB.AutoMigrate(&Log{}))
+	require.NoError(t, db.Create(&Channel{Id: 9, Name: "primary"}).Error)
+	previousMemory := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() { common.MemoryCacheEnabled = previousMemory })
+	oldDB, oldLog := DB, LOG_DB
+	DB, LOG_DB = db, logDB
+	t.Cleanup(func() { DB, LOG_DB = oldDB, oldLog })
+	rows := []Log{{UserId: 1, CreatedAt: 30, RequestId: "a", ChannelId: 9, Other: `{"admin_info":{"marker":"private-marker"},"root_info":{"node_name":"private-node"}}`}, {UserId: 2, CreatedAt: 40, RequestId: "foreign"}, {UserId: 1, CreatedAt: 20, RequestId: "b"}, {UserId: 1, CreatedAt: 30, RequestId: "c"}, {UserId: 1, CreatedAt: 10, RequestId: "d"}}
+	require.NoError(t, logDB.Create(&rows).Error)
+	ctx := context.Background()
+	first, err := GetLogCursorPage(ctx, 1, false, LogFilter{}, "", 2)
+	require.NoError(t, err)
+	require.Len(t, first.Items, 2)
+	assert.Equal(t, []string{"d", "c"}, []string{first.Items[0].RequestId, first.Items[1].RequestId})
+	assert.Empty(t, first.PreviousCursor)
+	require.NotEmpty(t, first.NextCursor)
+	require.NoError(t, logDB.Create(&Log{UserId: 1, CreatedAt: 5, RequestId: "new"}).Error)
+	second, err := GetLogCursorPage(ctx, 1, false, LogFilter{}, first.NextCursor, 2)
+	require.NoError(t, err)
+	require.Len(t, second.Items, 2)
+	assert.Equal(t, []string{"b", "a"}, []string{second.Items[0].RequestId, second.Items[1].RequestId})
+	assert.Equal(t, 3, second.Items[0].Id)
+	assert.NotContains(t, second.Items[1].Other, "private-marker")
+	assert.NotContains(t, second.Items[1].Other, "private-node")
+	assert.Empty(t, second.Items[1].ChannelName)
+	assert.Empty(t, second.NextCursor)
+	previous, err := GetLogCursorPage(ctx, 1, false, LogFilter{}, second.PreviousCursor, 2)
+	require.NoError(t, err)
+	assert.Equal(t, first.Items, previous.Items)
+	_, err = GetLogCursorPage(ctx, 2, false, LogFilter{}, first.NextCursor, 2)
+	require.Error(t, err)
+	_, err = GetLogCursorPage(ctx, 1, false, LogFilter{}, first.NextCursor, 3)
+	require.Error(t, err)
+	for _, invalid := range []string{"invalid", strings.Repeat("a", 513)} {
+		_, err = GetLogCursorPage(ctx, 1, false, LogFilter{}, invalid, 2)
+		require.Error(t, err)
+	}
+	admin, err := GetLogCursorPage(ctx, 1, true, LogFilter{}, "", 3)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"foreign", "c", "a"}, []string{admin.Items[0].RequestId, admin.Items[1].RequestId, admin.Items[2].RequestId})
+	assert.Equal(t, "primary", admin.Items[2].ChannelName)
+	next, err := GetLogCursorPage(ctx, 1, true, LogFilter{}, admin.NextCursor, 3)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"b", "d", "new"}, []string{next.Items[0].RequestId, next.Items[1].RequestId, next.Items[2].RequestId})
+
+	tasks := []Task{{TaskID: "own-a", UserId: 1, Status: TaskStatusInProgress, Data: []byte(`{"large":"snapshot"}`)}, {TaskID: "foreign", UserId: 2, Status: TaskStatusInProgress}, {TaskID: "own-b", UserId: 1, Status: TaskStatusInProgress}, {TaskID: "completed", UserId: 1, Status: TaskStatusSuccess}}
+	require.NoError(t, db.Create(&tasks).Error)
+	filter := SyncTaskQueryParams{Status: string(TaskStatusInProgress)}
+	taskPage, err := GetTaskCursorPage(ctx, 1, false, filter, "", 1)
+	require.NoError(t, err)
+	assert.Equal(t, "own-b", taskPage.Items[0].TaskID)
+	taskPage, err = GetTaskCursorPage(ctx, 1, false, filter, taskPage.NextCursor, 1)
+	require.NoError(t, err)
+	assert.Equal(t, "own-a", taskPage.Items[0].TaskID)
+	assert.Empty(t, taskPage.Items[0].Data)
+	assert.Empty(t, taskPage.NextCursor)
 }

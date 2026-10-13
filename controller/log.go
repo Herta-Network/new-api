@@ -56,6 +56,20 @@ func limitLogTimeRange(startTimestamp int64, endTimestamp int64) (int64, error) 
 
 func GetAllLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
+	if c.Query("pagination") == "cursor" {
+		page, err := model.GetLogCursorPage(c.Request.Context(), c.GetInt("id"), true, logFilterFromQuery(c, true), c.Query("cursor"), pageInfo.GetPageSize())
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if c.GetInt("role") < common.RoleRootUser {
+			model.FormatAdminLogs(page.Items)
+		} else {
+			model.FormatRootLogs(page.Items)
+		}
+		common.ApiSuccess(c, page)
+		return
+	}
 	logs, total, err := model.GetAllLogs(logFilterFromQuery(c, true), pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
@@ -82,6 +96,15 @@ func GetUserLogs(c *gin.Context) {
 			return
 		}
 		filter.StartTimestamp = startTimestamp
+	}
+	if c.Query("pagination") == "cursor" {
+		page, err := model.GetLogCursorPage(c.Request.Context(), c.GetInt("id"), false, filter, c.Query("cursor"), pageInfo.GetPageSize())
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		common.ApiSuccess(c, page)
+		return
 	}
 	logs, total, err := model.GetUserLogs(c.GetInt("id"), filter, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {

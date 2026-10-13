@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/internal/testutil"
@@ -238,7 +240,8 @@ func TestQuotaDataBatchRetryPreservesPendingAndNewSamples(t *testing.T) {
 func TestStatisticsBatchReplayIsAppliedOnce(t *testing.T) {
 	db, err := testutil.OpenDB(t, &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&PerfMetric{}, &StatisticsWriteCheckpoint{}))
+	require.NoError(t, db.AutoMigrate(&StatisticsWriteCheckpoint{}))
+	require.NoError(t, MigratePerfMetrics(db))
 	previous := DB
 	DB = db
 	t.Cleanup(func() { DB = previous })
@@ -261,7 +264,8 @@ func TestStatisticsBatchReplayIsAppliedOnce(t *testing.T) {
 func TestStatisticsBatchRollsBackEveryChunk(t *testing.T) {
 	db, err := testutil.OpenDB(t, &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&PerfMetric{}, &StatisticsWriteCheckpoint{}))
+	require.NoError(t, db.AutoMigrate(&StatisticsWriteCheckpoint{}))
+	require.NoError(t, MigratePerfMetrics(db))
 	previous := DB
 	DB = db
 	t.Cleanup(func() { DB = previous })
@@ -286,4 +290,64 @@ func TestStatisticsBatchRollsBackEveryChunk(t *testing.T) {
 	var total int64
 	require.NoError(t, db.Model(&PerfMetric{}).Select("SUM(request_count)").Scan(&total).Error)
 	assert.EqualValues(t, 501, total)
+}
+
+func TestPerfMetricPartitionsPruneMonthsAndKeepBoundaryRows(t *testing.T) {
+	db, err := testutil.OpenDB(t, &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, MigratePerfMetrics(db))
+	previous := DB
+	DB = db
+	t.Cleanup(func() { DB = previous })
+	january := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+	february := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC).Unix()
+	march := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC).Unix()
+	for _, timestamp := range []int64{january, february, february + 3600, march} {
+		require.NoError(t, UpsertPerfMetric(&PerfMetric{ModelName: "partition-test", Group: "a", BucketTs: timestamp, RequestCount: 1}))
+	}
+	require.NoError(t, MigratePerfMetrics(db))
+	var physical []string
+	require.NoError(t, db.Raw("SELECT DISTINCT tableoid::regclass::text FROM perf_metrics ORDER BY 1").Scan(&physical).Error)
+	assert.Len(t, physical, 3)
+	// Dimensional uniqueness still applies across retry and initialization.
+	require.Error(t, db.Create(&PerfMetric{ModelName: "partition-test", Group: "a", BucketTs: january, RequestCount: 1}).Error)
+	require.NoError(t, UpsertPerfMetric(&PerfMetric{ModelName: "partition-test", Group: "a", BucketTs: march, RequestCount: 2}))
+	require.NoError(t, DeletePerfMetricsBefore(february+3600))
+	var exists bool
+	require.NoError(t, db.Raw("SELECT to_regclass('perf_metrics_2026_01') IS NOT NULL").Scan(&exists).Error)
+	assert.False(t, exists, "fully expired months are dropped, not row-deleted")
+	var remaining []PerfMetric
+	require.NoError(t, db.Order("bucket_ts").Find(&remaining).Error)
+	require.Len(t, remaining, 2)
+	assert.Equal(t, february+3600, remaining[0].BucketTs)
+	assert.EqualValues(t, 3, remaining[1].RequestCount)
+	// Two independent writers can create and upsert the same missing month.
+	var writers sync.WaitGroup
+	failures := make(chan error, 2)
+	start := make(chan struct{})
+	for range 2 {
+		writers.Go(func() {
+			<-start
+			failures <- UpsertPerfMetric(&PerfMetric{ModelName: "concurrent", Group: "a", BucketTs: january, RequestCount: 1})
+		})
+	}
+	close(start)
+	writers.Wait()
+	close(failures)
+	for err := range failures {
+		require.NoError(t, err)
+	}
+	var concurrent PerfMetric
+	require.NoError(t, db.Where("model_name = ?", "concurrent").First(&concurrent).Error)
+	assert.EqualValues(t, 2, concurrent.RequestCount)
+	// Late samples create the missing month and still obey the next cleanup.
+	require.NoError(t, UpsertPerfMetric(&PerfMetric{ModelName: "partition-test", Group: "a", BucketTs: january, RequestCount: 1}))
+	require.NoError(t, DeletePerfMetricsBefore(february+3600))
+	var count int64
+	require.NoError(t, db.Model(&PerfMetric{}).Count(&count).Error)
+	assert.EqualValues(t, 2, count)
+	var plans []string
+	require.NoError(t, db.Raw("EXPLAIN SELECT * FROM perf_metrics WHERE bucket_ts >= ? AND bucket_ts < ?", february, march).Scan(&plans).Error)
+	assert.Contains(t, strings.Join(plans, "\n"), "perf_metrics_2026_02")
+	assert.NotContains(t, strings.Join(plans, "\n"), "perf_metrics_2026_03")
 }

@@ -184,7 +184,8 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 			require.NoError(t, db.Migrator().DropTable(&model.PerfMetric{}))
-			require.NoError(t, db.AutoMigrate(&model.PerfMetric{}, &model.StatisticsWriteCheckpoint{}))
+			require.NoError(t, db.AutoMigrate(&model.StatisticsWriteCheckpoint{}))
+			require.NoError(t, model.MigratePerfMetrics(db))
 			versionQuery := "SELECT version()"
 
 			var version string
@@ -354,7 +355,8 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 func TestPerformanceFlushRetryIncludesSamplesArrivingDuringFailure(t *testing.T) {
 	db, err := testutil.OpenDB(t, &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.PerfMetric{}, &model.StatisticsWriteCheckpoint{}))
+	require.NoError(t, db.AutoMigrate(&model.StatisticsWriteCheckpoint{}))
+	require.NoError(t, model.MigratePerfMetrics(db))
 	previousDB, previousWriter, previousPending := model.DB, metricWriter, pendingMetrics
 	model.DB = db
 	metricWriter = model.StatisticsBatch{WriterID: common.GetUUID()}

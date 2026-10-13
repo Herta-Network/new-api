@@ -297,7 +297,6 @@ func migrateDB() error {
 		&SubscriptionPreConsumeRecord{},
 		&CustomOAuthProvider{},
 		&UserOAuthBinding{},
-		&PerfMetric{},
 		&StatisticsWriteCheckpoint{},
 		&QuotaBatch{},
 		&QuotaBatchReceipt{},
@@ -309,6 +308,9 @@ func migrateDB() error {
 		&UserAccessToken{},
 	)
 	if err != nil {
+		return err
+	}
+	if err := MigratePerfMetrics(DB); err != nil {
 		return err
 	}
 	if err := InitializeUserAuthVersions(); err != nil {

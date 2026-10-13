@@ -59,6 +59,7 @@ function UsageLogsContent() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const params = route.useParams()
+  const currentSearch = route.useSearch()
   const activeCategory: UsageLogsSectionId =
     params.section && isUsageLogsSectionId(params.section)
       ? params.section
@@ -112,9 +113,14 @@ function UsageLogsContent() {
     (scope: string) => {
       if (scope === 'all' || scope === 'self') {
         setViewScope(scope as LogsViewScope)
+        void navigate({
+          to: '/usage-logs/$section',
+          params: { section: activeCategory },
+          search: { ...currentSearch, page: 1, cursor: undefined },
+        })
       }
     },
-    [setViewScope]
+    [setViewScope, navigate, activeCategory, currentSearch]
   )
 
   const pageMeta =

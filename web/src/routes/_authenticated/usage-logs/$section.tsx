@@ -27,15 +27,19 @@ import {
 
 const logTypeValues = ['0', '1', '2', '3', '4', '5', '6', '7'] as const
 const logTypeSearchSchema = z
-  .preprocess((value) => {
-    if (value == null || value === '') return undefined
-    return Array.isArray(value) ? value : [value]
-  }, z.array(z.enum(logTypeValues)).optional())
+  .preprocess(
+    (value) => {
+      if (value == null || value === '') return undefined
+      return Array.isArray(value) ? value : [value]
+    },
+    z.array(z.enum(logTypeValues)).optional()
+  )
   .catch([])
 
 const usageLogsSearchSchema = z.object({
-  page: z.number().optional().catch(1),
-  pageSize: z.number().optional().catch(undefined),
+  cursor: z.string().max(512).optional().catch(undefined),
+  page: z.number().int().min(1).max(1000000).optional().catch(1),
+  pageSize: z.number().int().min(1).max(100).optional().catch(undefined),
   type: logTypeSearchSchema.optional(),
   filter: z.string().optional().catch(''),
   model: z.string().optional().catch(''),

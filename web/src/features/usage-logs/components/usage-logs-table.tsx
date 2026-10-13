@@ -18,8 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
-import type { ColumnDef } from '@tanstack/react-table'
-import { useCallback } from 'react'
+import type {
+  ColumnDef,
+  OnChangeFn,
+  PaginationState,
+} from '@tanstack/react-table'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -45,7 +49,7 @@ import {
 import { shouldShowBillingSource } from '../lib/billing-source'
 import { useColumnsByCategory } from '../lib/columns'
 import { parseLogOther } from '../lib/format'
-import { fetchLogsByCategory } from '../lib/utils'
+import { fetchLogsByCategory, getDefaultTimeRange } from '../lib/utils'
 import type { LogCategory } from '../types'
 import { CommonLogsFilterBar } from './common-logs-filter-bar'
 import { TaskLogsFilterBar } from './task-logs-filter-bar'
@@ -97,6 +101,18 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   } = useLogsViewScope()
   const isMobile = useMediaQuery('(max-width: 640px)')
   const searchParams = route.useSearch()
+  const navigate = route.useNavigate()
+  const cursorEnabled = logCategory !== 'drawing'
+  const [defaultTimeRange] = useState(getDefaultTimeRange)
+  const effectiveSearchParams =
+    !searchParams.startTime && !searchParams.endTime
+      ? {
+          ...searchParams,
+          startTime: defaultTimeRange.start.getTime(),
+          endTime: defaultTimeRange.end.getTime(),
+        }
+      : searchParams
+
   const userId = useAuthStore((state) => state.auth.user?.id)
   const { data: showBillingSource = false } = useQuery({
     queryKey: ['usage-log-billing-source', isAdmin, userId],
@@ -125,12 +141,27 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const {
     columnFilters,
     onColumnFiltersChange,
-    pagination,
-    onPaginationChange,
+    pagination: urlPagination,
+    onPaginationChange: onUrlPaginationChange,
     ensurePageInRange,
   } = useTableUrlState({
     search: route.useSearch(),
-    navigate: route.useNavigate(),
+    navigate: (options) =>
+      navigate({
+        ...options,
+        search: (previous) => {
+          let next = previous
+          if (typeof options.search === 'function') {
+            next = options.search(previous)
+          } else if (options.search !== true) {
+            next = options.search
+          }
+          return {
+            ...next,
+            ...(cursorEnabled ? { page: 1, cursor: undefined } : {}),
+          }
+        },
+      }),
     pagination: { defaultPage: 1, defaultPageSize: isMobile ? 20 : 100 },
     globalFilter: { enabled: false },
     columnFilters: [
@@ -160,11 +191,17 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     ],
   })
 
+  const pagination =
+    cursorEnabled && !searchParams.cursor
+      ? { ...urlPagination, pageIndex: 0 }
+      : urlPagination
+
   const { data, isLoading, isFetching } = useQuery({
     queryKey: [
       'logs',
       logCategory,
       viewAccess,
+      userId,
       pagination.pageIndex + 1,
       pagination.pageSize,
       columnFilters,
@@ -177,7 +214,8 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
         isAdmin,
         page: pagination.pageIndex + 1,
         pageSize: pagination.pageSize,
-        searchParams,
+        searchParams: effectiveSearchParams,
+        cursor: cursorEnabled ? (searchParams.cursor ?? '') : undefined,
         columnFilters,
       })
 
@@ -190,13 +228,41 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     placeholderData: (previousData, previousQuery) => {
       if (
         previousQuery?.queryKey[1] === logCategory &&
-        previousQuery.queryKey[2] === viewAccess
+        previousQuery.queryKey[2] === viewAccess &&
+        previousQuery.queryKey[3] === userId
       ) {
         return previousData
       }
       return undefined
     },
   })
+
+  const onPaginationChange: OnChangeFn<PaginationState> = (updater) => {
+    if (!cursorEnabled) {
+      onUrlPaginationChange(updater)
+      return
+    }
+    if (isFetching) return
+    const next = typeof updater === 'function' ? updater(pagination) : updater
+    if (next.pageSize !== pagination.pageSize) {
+      onUrlPaginationChange({ ...next, pageIndex: 0 })
+      return
+    }
+    let cursor: string | undefined
+    if (
+      next.pageIndex !== 0 ||
+      (pagination.pageIndex === 1 && data?.previous_cursor)
+    ) {
+      cursor =
+        next.pageIndex > pagination.pageIndex
+          ? data?.next_cursor
+          : data?.previous_cursor
+      if (!cursor) return
+    }
+    void navigate({
+      search: { ...effectiveSearchParams, page: next.pageIndex + 1, cursor },
+    })
+  }
 
   const logs = data?.items || []
   const columns = useColumnsByCategory(
@@ -221,8 +287,9 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     onColumnFiltersChange,
     manualPagination: true,
     manualFiltering: true,
-    totalCount: data?.total || 0,
-    ensurePageInRange,
+    totalCount: cursorEnabled ? undefined : data?.total || 0,
+    pageCount: cursorEnabled ? -1 : undefined,
+    ensurePageInRange: cursorEnabled ? undefined : ensurePageInRange,
   })
 
   const isCommon = logCategory === 'common'
@@ -231,6 +298,15 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     <DataTablePage
       table={table}
       compactPagination={isMobile && isCommon}
+      cursorPagination={
+        cursorEnabled
+          ? {
+              hasNextPage: Boolean(data?.next_cursor),
+              hasPreviousPage: pagination.pageIndex > 0,
+              isFetching,
+            }
+          : undefined
+      }
       columns={columns as ColumnDef<Record<string, unknown>>[]}
       isLoading={isLoadingData}
       isFetching={isFetching}
