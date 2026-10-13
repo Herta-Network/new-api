@@ -13,7 +13,7 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 - **Databases**: PostgreSQL >= 18 for both the primary database and the optional separate log database
 - **Cache**: Redis (go-redis) + in-memory cache
 - **Auth**: Browser sessions, API tokens and personal access tokens, JWT, WebAuthn/Passkeys, TOTP, OAuth/OIDC; Casbin authorization in `service/authz/`
-- **Extensions**: JavaScript task plugins executed by moejs; Electron desktop wrapper
+- **Extensions**: JavaScript task plugins executed by moejs
 - **Frontend package manager**: Bun (preferred over npm/yarn/pnpm)
 
 ## Architecture
@@ -22,7 +22,7 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 - `relaykit/` is an independent Go module for protocol DTOs and conversions; transport, authentication, database access, and billing stay in the host.
 - `tokenkit/` is an independent Go module for text and image token counting and estimation; request parsing, file loading, and billing stay in the host.
 - JavaScript task plugins live in `plugins/tasks/`, run through `pkg/jsplugin/`, and integrate with host task polling and settlement.
-- `web/` is the React frontend (see `web/AGENTS.md`); `electron/` is the desktop wrapper.
+- `web/` is the React frontend (see `web/AGENTS.md`).
 
 ## Internationalization (i18n)
 

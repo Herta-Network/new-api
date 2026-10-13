@@ -281,7 +281,6 @@ bun run dev -- --port 5173
 | [relaykit/](./relaykit/README.md) | 可独立构建的协议 DTO 与转换 Go 模块 |
 | [plugins/tasks/](./plugins/tasks/) | JavaScript 任务插件；编写方式与宿主边界见 [Task Plugin API v1](./docs/plugin-api/v1.md) |
 | `web/` | Web 控制台，参阅[前端开发约定](./web/AGENTS.md) |
-| [electron/](./electron/README.md) | 桌面封装与打包 |
 
 贡献前请阅读 [AGENTS.md](./AGENTS.md)。按改动范围执行检查：Go 模块使用 `make test`；前端在 `web/` 下运行 `bun run typecheck`、`bun run lint`、`bun run test` 和 `bun run build`。修改 RelayKit 后还必须在 `relaykit/` 下执行 `GOWORK=off go build ./...`。
 
