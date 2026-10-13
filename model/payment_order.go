@@ -31,12 +31,14 @@ type PaymentOrder struct {
 	Currency               string  `json:"currency" gorm:"type:varchar(3);not null"`
 	CheckoutID             *string `json:"checkout_id" gorm:"type:varchar(128)"`
 	CheckoutSnapshot       string  `json:"-" gorm:"type:jsonb"`
+	CheckoutResult         *string `json:"-" gorm:"type:jsonb"`
 	PaidAmount             int64   `json:"paid_amount"`
 	ParentOrderNo          string  `json:"parent_order_no,omitempty" gorm:"type:varchar(64);index"`
 	ProviderSubscriptionID string  `json:"provider_subscription_id,omitempty" gorm:"type:varchar(128);index"`
 	PeriodStart            int64   `json:"period_start"`
 	PeriodEnd              int64   `json:"period_end"`
-	UserSubscriptionID     int     `json:"user_subscription_id"`
+	UserSubscriptionID     int     `json:"user_subscription_id" gorm:"index"`
+	RenewalStopped         bool    `json:"renewal_stopped"`
 	CreditedQuota          int     `json:"credited_quota"`
 	PlanSnapshot           string  `json:"-" gorm:"type:jsonb"`
 	Status                 string  `json:"status" gorm:"type:varchar(16);not null"`
@@ -66,6 +68,40 @@ func CreatePaymentOrder(ctx context.Context, order *PaymentOrder, topUp *TopUp, 
 		} else if order.Business == PaymentBusinessSubscription {
 			if subscription == nil || subscription.TradeNo != order.OrderNo || subscription.UserId != order.UserID {
 				return errors.New("invalid subscription snapshot")
+			}
+			var user User
+			if err := lockForUpdate(tx).Select("id").First(&user, order.UserID).Error; err != nil {
+				return err
+			}
+			var plan SubscriptionPlan
+			if err := common.UnmarshalJsonStr(order.PlanSnapshot, &plan); err != nil {
+				return err
+			}
+			if plan.Id != subscription.PlanId {
+				return errors.New("invalid plan snapshot")
+			}
+			if plan.MaxPurchasePerUser > 0 {
+				pending := tx.Model(&SubscriptionOrder{}).Select("trade_no").Where("user_id = ? AND plan_id = ? AND purchase_reserved = ? AND status = ?", order.UserID, plan.Id, true, common.TopUpStatusPending)
+				var existing PaymentOrder
+				err := tx.Where("order_no IN (?)", pending).Order("created_at ASC, order_no ASC").First(&existing).Error
+				if err == nil {
+					if existing.MethodID != order.MethodID {
+						return common.NewMessage("A payment for this plan is pending. Continue with the original payment method.")
+					}
+					*order = existing
+					return nil
+				}
+				if !errors.Is(err, gorm.ErrRecordNotFound) {
+					return err
+				}
+				count, err := countSubscriptionPurchases(tx, order.UserID, plan.Id)
+				if err != nil {
+					return err
+				}
+				if count >= int64(plan.MaxPurchasePerUser) {
+					return common.NewMessage("Purchase limit for this plan has been reached")
+				}
+				subscription.PurchaseReserved = true
 			}
 			if err := tx.Create(subscription).Error; err != nil {
 				return err
@@ -143,15 +179,21 @@ func completePaymentOrderTx(tx *gorm.DB, order *PaymentOrder) (*paymentSettlemen
 		if plan.Id != subscription.PlanId {
 			return nil, errors.New("invalid plan snapshot")
 		}
-		if order.ParentOrderNo != "" {
-			plan.MaxPurchasePerUser = 0
-		}
+		// Capacity is allocated before checkout. Once paid, fulfill the agreed
+		// snapshot, including late payments after a provider closed the checkout.
+		plan.MaxPurchasePerUser = 0
 		subscription.Money = actualMoney
 		granted, err := completeSubscriptionOrderTx(tx, &subscription, &plan)
 		if err != nil {
 			return nil, err
 		}
 		order.UserSubscriptionID = granted.Id
+		if order.ParentOrderNo != "" {
+			granted.Source = "renewal"
+			if err := tx.Model(granted).Update("source", granted.Source).Error; err != nil {
+				return nil, err
+			}
+		}
 		if order.PeriodEnd > order.PeriodStart && order.PeriodStart > 0 {
 			granted.StartTime = order.PeriodStart
 			granted.EndTime = order.PeriodEnd
@@ -227,11 +269,16 @@ func GetPaymentCustomer(account string, userID int) string {
 	return customer.CustomerID
 }
 
-func BindPaymentCheckout(ctx context.Context, orderNo, checkoutID string) error {
-	if checkoutID == "" {
-		return nil
+func BindPaymentCheckout(ctx context.Context, orderNo string, checkout *payment.CheckoutResult) error {
+	encoded, err := common.Marshal(checkout)
+	if err != nil {
+		return err
 	}
-	result := DB.WithContext(ctx).Model(&PaymentOrder{}).Where("order_no = ? AND (checkout_id IS NULL OR checkout_id = ?)", orderNo, checkoutID).Update("checkout_id", checkoutID)
+	updates := map[string]any{"checkout_result": string(encoded)}
+	if checkout.CheckoutID != "" {
+		updates["checkout_id"] = checkout.CheckoutID
+	}
+	result := DB.WithContext(ctx).Model(&PaymentOrder{}).Where("order_no = ? AND (checkout_id IS NULL OR checkout_id = ?)", orderNo, checkout.CheckoutID).Updates(updates)
 	if result.Error != nil {
 		return result.Error
 	}

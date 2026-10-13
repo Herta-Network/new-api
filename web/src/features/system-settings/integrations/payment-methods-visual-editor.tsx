@@ -42,9 +42,16 @@ const PaymentMethodDialog = lazy(() =>
   }))
 )
 
+const PaymentEventsDialog = lazy(() =>
+  import('./payment-events-dialog').then((module) => ({
+    default: module.PaymentEventsDialog,
+  }))
+)
+
 export function PaymentMethodsVisualEditor() {
   const { t } = useTranslation()
   const client = useQueryClient()
+  const [eventsOpen, setEventsOpen] = useState(false)
   const [editing, setEditing] = useState<PaymentMethodData | null | undefined>()
   const [deleting, setDeleting] = useState<PaymentMethodData | null>(null)
   const methods = useQuery({
@@ -75,13 +82,22 @@ export function PaymentMethodsVisualEditor() {
     <div className='space-y-4'>
       <div className='flex items-center justify-between gap-3'>
         <h3 className='font-medium'>{t('Payment methods')}</h3>
-        <Button
-          type='button'
-          variant='outline'
-          onClick={() => setEditing(null)}
-        >
-          {t('Add payment method')}
-        </Button>
+        <div className='flex flex-wrap gap-2'>
+          <Button
+            type='button'
+            variant='outline'
+            onClick={() => setEventsOpen(true)}
+          >
+            {t('Payment events')}
+          </Button>
+          <Button
+            type='button'
+            variant='outline'
+            onClick={() => setEditing(null)}
+          >
+            {t('Add payment method')}
+          </Button>
+        </div>
       </div>
       <p className='text-muted-foreground text-sm'>
         {t(
@@ -142,6 +158,11 @@ export function PaymentMethodsVisualEditor() {
             },
           ]}
         />
+      )}
+      {eventsOpen && (
+        <Suspense fallback={<LoadingState />}>
+          <PaymentEventsDialog onOpenChange={setEventsOpen} />
+        </Suspense>
       )}
       {editing !== undefined && (
         <Suspense fallback={<LoadingState />}>

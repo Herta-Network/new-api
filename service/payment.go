@@ -129,11 +129,34 @@ func StartPayment(ctx context.Context, input PaymentCheckout) (*payment.Checkout
 	if err := model.CreatePaymentOrder(ctx, order, topUp, subscription); err != nil {
 		return nil, err
 	}
+	if order.OrderNo != checkout.OrderNo {
+		if order.CheckoutResult != nil {
+			var result payment.CheckoutResult
+			if err := common.UnmarshalJsonStr(*order.CheckoutResult, &result); err != nil {
+				return nil, err
+			}
+			return &result, nil
+		}
+		// Resume the exact checkout snapshot even after a configuration change or
+		// an interrupted provider request. Provider order IDs remain idempotent.
+		checkout = payment.Checkout{}
+		if err := common.UnmarshalJsonStr(order.CheckoutSnapshot, &checkout); err != nil {
+			return nil, err
+		}
+		_, reservedVersion, err := model.GetPaymentCallbackVersion(order.VersionID)
+		if err != nil {
+			return nil, err
+		}
+		gw, err = payment.Open(order.Provider, reservedVersion.Config)
+		if err != nil {
+			return nil, err
+		}
+	}
 	result, err := gw.StartPayment(ctx, checkout)
 	if err != nil {
 		return nil, err
 	}
-	if err := model.BindPaymentCheckout(ctx, order.OrderNo, result.CheckoutID); err != nil {
+	if err := model.BindPaymentCheckout(ctx, order.OrderNo, result); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -225,23 +248,23 @@ func ProcessPaymentEvent(ctx context.Context, id int64) error {
 	}
 	order, _, err := model.GetPaymentOrder(ctx, event.OrderNo)
 	if err != nil {
-		return err
+		return model.FailPaymentEvent(ctx, id, err)
 	}
 	_, version, err := model.GetPaymentCallbackVersion(event.VersionID)
 	if err != nil {
-		return err
+		return model.FailPaymentEvent(ctx, id, err)
 	}
 	gw, err := payment.Open(order.Provider, version.Config)
 	if err != nil {
-		return err
+		return model.FailPaymentEvent(ctx, id, err)
 	}
 	var notice payment.Notice
 	var checkout payment.Checkout
 	if err := common.UnmarshalJsonStr(event.Payload, &notice); err != nil {
-		return err
+		return model.FailPaymentEvent(ctx, id, err)
 	}
 	if err := common.UnmarshalJsonStr(order.CheckoutSnapshot, &checkout); err != nil {
-		return err
+		return model.FailPaymentEvent(ctx, id, err)
 	}
 	if order.CheckoutID != nil {
 		checkout.CheckoutID = *order.CheckoutID

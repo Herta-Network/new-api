@@ -424,13 +424,24 @@ export function UserSubscriptionsDialog(props: Props) {
               : t('Confirm delete')
           }
           desc={
-            confirmAction.type === 'invalidate'
-              ? t(
-                  'After invalidating, this subscription will be immediately deactivated. Historical records are not affected. Continue?'
-                )
-              : t(
-                  'Deleting will permanently remove this subscription record (including benefit details). Continue?'
-                )
+            confirmAction.type === 'invalidate' ? (
+              <div className='space-y-2'>
+                <p>
+                  {t(
+                    'After invalidating, this subscription will be immediately deactivated. Historical records are not affected. Continue?'
+                  )}
+                </p>
+                <p>
+                  {t(
+                    'For Stripe subscriptions, this also stops future entitlement grants. Cancel recurring billing in Stripe to stop further charges.'
+                  )}
+                </p>
+              </div>
+            ) : (
+              t(
+                'Deleting will permanently remove this subscription record (including benefit details). Continue?'
+              )
+            )
           }
           handleConfirm={handleConfirmAction}
           destructive={confirmAction.type === 'delete'}

@@ -66,7 +66,7 @@ func newPaymentFixture(t *testing.T) *paymentFixture {
 		model.InvalidateSubscriptionPlanCache(1)
 	})
 	for range 2 {
-		require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}, &model.PaymentMethod{}, &model.PaymentMethodVersion{}, &model.PaymentOrder{}, &model.PaymentEvent{}, &model.PaymentCustomer{}, &model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.UserSubscription{}, &model.Log{}))
+		require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}, &model.PaymentMethod{}, &model.PaymentMethodVersion{}, &model.PaymentOrder{}, &model.PaymentEvent{}, &model.PaymentEventAction{}, &model.PaymentCustomer{}, &model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.UserSubscription{}, &model.Log{}))
 	}
 	require.NoError(t, db.Create(&model.User{Id: 1, Username: "payment-test", Group: "default", Status: common.UserStatusEnabled}).Error)
 	config := payment.Config{Endpoint: "https://pay.example.com", MerchantID: "10001", Key: "test-merchant-key", PaymentType: "alipay"}

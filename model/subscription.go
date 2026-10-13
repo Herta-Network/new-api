@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/cachex"
+	"github.com/QuantumNous/new-api/pkg/payment"
 	"github.com/samber/hot"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -211,16 +212,17 @@ func (p *SubscriptionPlan) NormalizeDefaults() {
 // Subscription order (payment -> webhook -> create UserSubscription)
 type SubscriptionOrder struct {
 	Id     int     `json:"id"`
-	UserId int     `json:"user_id" gorm:"index"`
-	PlanId int     `json:"plan_id" gorm:"index"`
+	UserId int     `json:"user_id" gorm:"index;index:idx_subscription_reserved,priority:1,where:purchase_reserved AND status = 'pending'"`
+	PlanId int     `json:"plan_id" gorm:"index;index:idx_subscription_reserved,priority:2"`
 	Money  float64 `json:"money"`
 
-	TradeNo         string `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod   string `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider string `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	Status          string `json:"status"`
-	CreateTime      int64  `json:"create_time"`
-	CompleteTime    int64  `json:"complete_time"`
+	TradeNo          string `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod    string `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider  string `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	Status           string `json:"status"`
+	CreateTime       int64  `json:"create_time"`
+	CompleteTime     int64  `json:"complete_time"`
+	PurchaseReserved bool   `json:"-"`
 
 	ProviderPayload string `json:"provider_payload" gorm:"type:text"`
 }
@@ -409,16 +411,26 @@ func getSubscriptionPlanByIdTx(tx *gorm.DB, id int) (*SubscriptionPlan, error) {
 }
 
 func CountUserSubscriptionsByPlan(userId int, planId int) (int64, error) {
+	return countSubscriptionPurchases(DB, userId, planId)
+}
+
+// The user row must be locked when this count is used to allocate a purchase.
+// Pending checkouts reserve capacity across gateways and wallet/admin grants.
+func countSubscriptionPurchases(tx *gorm.DB, userId int, planId int) (int64, error) {
 	if userId <= 0 || planId <= 0 {
 		return 0, errors.New("invalid userId or planId")
 	}
 	var count int64
-	if err := DB.Model(&UserSubscription{}).
-		Where("user_id = ? AND plan_id = ?", userId, planId).
+	if err := tx.Model(&UserSubscription{}).
+		Where("user_id = ? AND plan_id = ? AND source <> ?", userId, planId, "renewal").
 		Count(&count).Error; err != nil {
 		return 0, err
 	}
-	return count, nil
+	var pending int64
+	if err := tx.Model(&SubscriptionOrder{}).Where("user_id = ? AND plan_id = ? AND purchase_reserved = ? AND status = ?", userId, planId, true, common.TopUpStatusPending).Count(&pending).Error; err != nil {
+		return 0, err
+	}
+	return count + pending, nil
 }
 
 func getUserGroupByIdTx(tx *gorm.DB, userId int) (string, error) {
@@ -490,10 +502,8 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 		return nil, errors.New("invalid user id")
 	}
 	if plan.MaxPurchasePerUser > 0 {
-		var count int64
-		if err := tx.Model(&UserSubscription{}).
-			Where("user_id = ? AND plan_id = ?", userId, plan.Id).
-			Count(&count).Error; err != nil {
+		count, err := countSubscriptionPurchases(tx, userId, plan.Id)
+		if err != nil {
 			return nil, err
 		}
 		if count >= int64(plan.MaxPurchasePerUser) {
@@ -939,6 +949,26 @@ func AdminInvalidateUserSubscription(userSubscriptionId int) (*common.Message, e
 	downgradeGroup := ""
 	var userId int
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		// Lock the durable payment series before its entitlement, matching renewal
+		// settlement lock order. Deleting an entitlement never deletes this state.
+		var paymentOrder PaymentOrder
+		err := tx.Where("user_subscription_id = ?", userSubscriptionId).First(&paymentOrder).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if err == nil && paymentOrder.Provider == payment.Stripe {
+			root := paymentOrder.OrderNo
+			if paymentOrder.ParentOrderNo != "" {
+				root = paymentOrder.ParentOrderNo
+			}
+			var series PaymentOrder
+			if err := lockForUpdate(tx).Where("order_no = ?", root).First(&series).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&series).Update("renewal_stopped", true).Error; err != nil {
+				return err
+			}
+		}
 		var sub UserSubscription
 		if err := lockForUpdate(tx).
 			Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {

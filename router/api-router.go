@@ -201,6 +201,8 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.PUT("/payment-methods/:id", controller.SavePaymentMethod)
 			optionRoute.DELETE("/payment-methods/:id", controller.DeletePaymentMethod)
 			optionRoute.GET("/payment-events", controller.ListPaymentEvents)
+			optionRoute.GET("/payment-events/:id", controller.GetPaymentEvent)
+			optionRoute.POST("/payment-events/:id/review", middleware.CriticalRateLimit(), controller.ReviewPaymentEvent)
 			optionRoute.GET("/request_policy", controller.GetRequestPolicy)
 			optionRoute.PATCH("/request_policy", controller.UpdateRequestPolicy)
 			optionRoute.PUT("/", controller.UpdateOption)

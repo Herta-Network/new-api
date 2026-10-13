@@ -35,17 +35,6 @@ func SubscriptionRequestPayment(c *gin.Context) {
 		common.ApiErrorT(c, "Subscription plan is not enabled")
 		return
 	}
-	if plan.MaxPurchasePerUser > 0 {
-		count, err := model.CountUserSubscriptionsByPlan(c.GetInt("id"), plan.Id)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		if count >= int64(plan.MaxPurchasePerUser) {
-			common.ApiErrorT(c, "Purchase limit for this plan has been reached")
-			return
-		}
-	}
 	method, version, _, err := service.LoadPaymentConfiguration(req.PaymentMethod)
 	if err != nil {
 		common.ApiError(c, err)
@@ -74,6 +63,10 @@ func SubscriptionRequestPayment(c *gin.Context) {
 	}
 	result, err := service.StartPayment(c.Request.Context(), input)
 	if err != nil {
+		if message, ok := err.(*common.Message); ok {
+			common.ApiError(c, message)
+			return
+		}
 		common.ApiErrorT(c, "Failed to start payment")
 		return
 	}

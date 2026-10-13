@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/payment"
@@ -19,11 +21,12 @@ const (
 	PaymentEventRejected  = "rejected"
 	PaymentEventIgnored   = "ignored"
 	PaymentEventReview    = "review"
+	PaymentEventResolved  = "resolved"
 )
 
 // Payload contains only normalized authenticated facts, never signatures or keys.
 type PaymentEvent struct {
-	ID                int64  `json:"id"`
+	ID                int64  `json:"id" gorm:"index:idx_payment_event_status,priority:2"`
 	EventKey          string `json:"-" gorm:"type:varchar(64);not null;uniqueIndex"`
 	OrderNo           string `json:"order_no" gorm:"type:varchar(64);not null;index"`
 	SettlementOrderNo string `json:"settlement_order_no" gorm:"type:varchar(64)"`
@@ -34,13 +37,66 @@ type PaymentEvent struct {
 	Amount            int64  `json:"amount"`
 	Currency          string `json:"currency" gorm:"type:varchar(3)"`
 	Paid              bool   `json:"paid"`
-	Status            string `json:"status" gorm:"type:varchar(16);not null"`
+	Status            string `json:"status" gorm:"type:varchar(16);not null;index:idx_payment_event_status,priority:1"`
 	Attempts          int    `json:"attempts"`
 	NextAttemptAt     int64  `json:"next_attempt_at" gorm:"index:idx_payment_event_retry,where:status = 'pending'"`
 	LastError         string `json:"last_error" gorm:"type:varchar(64)"`
 	CreatedAt         int64  `json:"created_at"`
 	CompletedAt       int64  `json:"completed_at"`
 	CallerIP          string `json:"-" gorm:"type:varchar(64)"`
+	Revision          int64  `json:"revision"`
+}
+
+// PaymentEventAction is an append-only decision record, committed with the
+// event transition in the primary database, independently of log retention.
+type PaymentEventAction struct {
+	ID         int64  `json:"id"`
+	EventID    int64  `json:"event_id" gorm:"index;not null"`
+	ActorID    int    `json:"actor_id"`
+	Action     string `json:"action" gorm:"type:varchar(16)"`
+	Reason     string `json:"reason" gorm:"type:varchar(500)"`
+	FromStatus string `json:"from_status" gorm:"type:varchar(16)"`
+	ToStatus   string `json:"to_status" gorm:"type:varchar(16)"`
+	CreatedAt  int64  `json:"created_at"`
+}
+
+var ErrPaymentEventConflict = errors.New("payment event changed")
+var ErrPaymentEventAction = errors.New("invalid payment event action")
+
+func ReviewPaymentEvent(ctx context.Context, id, revision int64, actorID int, action, reason string) error {
+	reason = strings.TrimSpace(reason)
+	if actorID <= 0 || id <= 0 || revision < 0 || reason == "" || utf8.RuneCountInString(reason) > 500 || strings.ContainsRune(reason, 0) {
+		return ErrPaymentEventAction
+	}
+	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var event PaymentEvent
+		if err := lockForUpdate(tx).First(&event, id).Error; err != nil {
+			return err
+		}
+		if event.Revision != revision || event.Status == PaymentEventCompleted {
+			return ErrPaymentEventConflict
+		}
+		record := PaymentEventAction{EventID: id, ActorID: actorID, Action: action, Reason: reason, FromStatus: event.Status, CreatedAt: common.GetTimestamp()}
+		switch action {
+		case "retry":
+			event.Status, event.CompletedAt, event.NextAttemptAt = PaymentEventPending, 0, 0
+			event.LastError = ""
+		case "hold":
+			event.Status, event.LastError = PaymentEventReview, "manual_review"
+			event.CompletedAt = common.GetTimestamp()
+		case "resolve":
+			event.Status = PaymentEventResolved
+			event.CompletedAt = common.GetTimestamp()
+		default:
+			return ErrPaymentEventAction
+		}
+		event.Revision++
+		record.ToStatus = event.Status
+		if err := tx.Save(&event).Error; err != nil {
+			return err
+		}
+		return tx.Create(&record).Error
+	})
 }
 
 func ReceivePaymentEvent(ctx context.Context, order *PaymentOrder, notice *payment.Notice, callerIP string, versionID int) (*PaymentEvent, error) {
@@ -67,11 +123,19 @@ func ReceivePaymentEvent(ctx context.Context, order *PaymentOrder, notice *payme
 }
 
 func FailPaymentEvent(ctx context.Context, id int64, cause error) error {
-	updates := map[string]any{"attempts": gorm.Expr("attempts + 1"), "last_error": "verification_unavailable", "next_attempt_at": common.GetTimestamp() + 30}
+	updates := map[string]any{"attempts": gorm.Expr("attempts + 1"), "revision": gorm.Expr("revision + 1"), "last_error": "verification_unavailable", "next_attempt_at": common.GetTimestamp() + 30}
 	if errors.Is(cause, payment.ErrInvalidPayment) {
 		updates["status"] = PaymentEventRejected
 		updates["last_error"] = "verification_failed"
 		updates["completed_at"] = common.GetTimestamp()
+	} else if errors.Is(cause, gorm.ErrRecordNotFound) {
+		updates["status"], updates["last_error"] = PaymentEventReview, "record_missing"
+		updates["completed_at"] = common.GetTimestamp()
+	} else {
+		// Bound automated attempts; further retries require an explicit operator
+		// decision. Only stable reason codes are stored, never provider errors.
+		updates["status"] = gorm.Expr("CASE WHEN attempts >= 11 THEN ? ELSE status END", PaymentEventReview)
+		updates["last_error"] = gorm.Expr("CASE WHEN attempts >= 11 THEN ? ELSE ? END", "retry_exhausted", "verification_unavailable")
 	}
 	if err := DB.WithContext(ctx).Model(&PaymentEvent{}).Where("id = ? AND status = ?", id, PaymentEventPending).Updates(updates).Error; err != nil {
 		return err
@@ -99,6 +163,7 @@ func ProcessPaymentEvent(ctx context.Context, id int64, confirmed *payment.Notic
 			return payment.ErrInvalidPayment
 		}
 		event.Attempts++
+		event.Revision++
 		event.CompletedAt = common.GetTimestamp()
 		event.TradeNo = confirmed.TradeNo
 		event.Amount = confirmed.Money.Amount
@@ -139,11 +204,7 @@ func ProcessPaymentEvent(ctx context.Context, id int64, confirmed *payment.Notic
 			if parent.ProviderSubscriptionID != confirmed.SubscriptionID {
 				return payment.ErrInvalidPayment
 			}
-			var previous UserSubscription
-			if err := tx.First(&previous, parent.UserSubscriptionID).Error; err != nil {
-				return err
-			}
-			if previous.Status == "cancelled" {
+			if parent.RenewalStopped {
 				event.Status = PaymentEventReview
 				event.LastError = "subscription_cancelled"
 				return tx.Save(&event).Error
@@ -221,6 +282,7 @@ func renewalPaymentOrderTx(tx *gorm.DB, parent *PaymentOrder, notice *payment.No
 	order.OrderNo = orderNo
 	order.ParentOrderNo = parent.OrderNo
 	order.CheckoutID = nil
+	order.CheckoutResult = nil
 	order.ProviderTradeNo = nil
 	order.Status = common.TopUpStatusPending
 	order.CompletedAt = 0

@@ -286,6 +286,7 @@ func migrateDB() error {
 		&PaymentMethodVersion{},
 		&PaymentOrder{},
 		&PaymentEvent{},
+		&PaymentEventAction{},
 		&PaymentCustomer{},
 		&QuotaData{},
 		&Task{},

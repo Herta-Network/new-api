@@ -45,10 +45,10 @@ type Checkout struct {
 	OrderNo        string `json:"order_no"`
 	Subject        string `json:"subject"`
 	Money          Money  `json:"money"`
-	NotifyURL      string `json:"-"`
-	ReturnURL      string `json:"-"`
-	CancelURL      string `json:"-"`
-	Email          string `json:"-"`
+	NotifyURL      string `json:"notify_url,omitempty"`
+	ReturnURL      string `json:"return_url,omitempty"`
+	CancelURL      string `json:"cancel_url,omitempty"`
+	Email          string `json:"email,omitempty"`
 	CustomerID     string `json:"customer_id,omitempty"`
 	CheckoutID     string `json:"checkout_id,omitempty"`
 	PriceID        string `json:"price_id,omitempty"`
