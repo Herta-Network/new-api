@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "rsbuild dev",
     "build": "rsbuild build",
-    "build:check": "tsgo -b && rsbuild build",
-    "typecheck": "tsgo -b",
+    "build:check": "bun run typecheck && rsbuild build",
+    "typecheck": "bun run icons:generate && tsgo -b",
     "lint": "oxlint -c .oxlintrc.json .",
     "lint:fix": "oxlint -c .oxlintrc.json . --fix",
     "lint:plugins": "cd ../plugins && oxlint -c .oxlintrc.json .",
@@ -21,7 +21,8 @@
     "copyright:check": "node scripts/add-copyright.mjs --check",
     "copyright": "node scripts/add-copyright.mjs",
     "i18n:sync": "node scripts/sync-i18n.mjs",
-    "knip": "knip"
+    "knip": "knip",
+    "icons:generate": "bun scripts/generate-react-icons.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

@@ -188,7 +188,7 @@ test('first install shows source on demand and disables repeat submission until 
       screen.getByRole('button', { name: 'Install and enable' })
     ).toBeEnabled()
   )
-  expect(screen.getByText('const')).toHaveClass('tok-keyword')
+  expect(await screen.findByText('const')).toHaveClass('tok-keyword')
   expect(screen.getByText('"demo"')).toHaveClass('tok-string')
   expect(screen.getByText('// comment')).toHaveClass('tok-comment')
   expect(screen.getByText('42')).toHaveClass('tok-number')

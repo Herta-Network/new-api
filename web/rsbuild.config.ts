@@ -6,9 +6,12 @@ import { pluginReact } from '@rsbuild/plugin-react'
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss'
 import { tanstackRouter } from '@tanstack/router-plugin/rspack'
 
+import { generateReactIcons } from './scripts/generate-react-icons'
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig(({ envMode }) => {
+  generateReactIcons(__dirname)
   const env = loadEnv({ mode: envMode, prefixes: ['VITE_'] })
   const serverUrl =
     process.env.VITE_REACT_APP_SERVER_URL ||
@@ -72,6 +75,12 @@ export default defineConfig(({ envMode }) => {
       proxy: devProxy,
     },
     output: {
+      copy: [
+        {
+          from: path.join(__dirname, '.generated/react-icons/LICENSE.txt'),
+          to: 'react-icons.LICENSE.txt',
+        },
+      ],
       // Production optimizations
       minify: isProd,
       target: 'web',

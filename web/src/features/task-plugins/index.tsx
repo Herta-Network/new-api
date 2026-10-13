@@ -18,11 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CircleHelp, Upload } from 'lucide-react'
-import { useState } from 'react'
+import { useState, lazy } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { DeferredDialog } from '@/components/deferred-dialog'
 import { SectionPageLayout } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -41,10 +42,19 @@ import {
   setTaskPluginEnabledOption,
 } from './api'
 import { MarketplacePanel } from './components/marketplace-panel'
-import { PluginDetailSheet } from './components/plugin-detail-sheet'
 import { PluginsTable } from './components/plugins-table'
-import { UploadDialog } from './components/upload-dialog'
 import type { TaskPluginListItem } from './types'
+
+const PluginDetailSheet = lazy(() =>
+  import('./components/plugin-detail-sheet').then((module) => ({
+    default: module.PluginDetailSheet,
+  }))
+)
+const UploadDialog = lazy(() =>
+  import('./components/upload-dialog').then((module) => ({
+    default: module.UploadDialog,
+  }))
+)
 
 export function TaskPlugins() {
   const { t } = useTranslation()
@@ -156,18 +166,25 @@ export function TaskPlugins() {
           </Tabs>
         </SectionPageLayout.Content>
       </SectionPageLayout>
-      <PluginDetailSheet
-        key={detail?.meta.key ?? ''}
-        plugin={detail}
-        onOpenChange={(open) => {
-          if (!open) setDetail(null)
-        }}
-      />
-      <UploadDialog
-        open={uploadOpen}
-        onOpenChange={setUploadOpen}
-        initialKey={uploadKey ?? undefined}
-      />
+      <DeferredDialog
+        open={Boolean(detail)}
+        onOpenChange={(open) => !open && setDetail(null)}
+      >
+        <PluginDetailSheet
+          key={detail?.meta.key ?? ''}
+          plugin={detail}
+          onOpenChange={(open) => {
+            if (!open) setDetail(null)
+          }}
+        />
+      </DeferredDialog>
+      <DeferredDialog open={uploadOpen} onOpenChange={setUploadOpen}>
+        <UploadDialog
+          open={uploadOpen}
+          onOpenChange={setUploadOpen}
+          initialKey={uploadKey ?? undefined}
+        />
+      </DeferredDialog>
       <ConfirmDialog
         open={confirmDisable}
         onOpenChange={setConfirmDisable}

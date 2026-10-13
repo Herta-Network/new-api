@@ -47,12 +47,16 @@ import {
   PluginSourceFetchError,
 } from '../lib/plugin-url'
 import type { MarketplacePlugin, MarketplaceSource } from '../types'
-import { JavaScriptViewer } from './javascript-viewer'
 import { MarketplaceCapabilities } from './marketplace-capabilities'
 import { PluginIcon } from './plugin-icon'
 import { PluginIntegrityCheck } from './plugin-integrity-check'
 import { SourceDiff } from './source-diff'
 
+const JavaScriptViewer = lazy(() =>
+  import('./javascript-viewer').then((module) => ({
+    default: module.JavaScriptViewer,
+  }))
+)
 const PluginChangelogPanel = lazy(() =>
   import('./plugin-changelog-panel').then((module) => ({
     default: module.PluginChangelogPanel,
@@ -206,10 +210,12 @@ function MarketplaceInstallContent(
   if (installMutation.isPending) confirmLabel = t('Installing...')
 
   const sourcePreview = sourceQuery.data ? (
-    <JavaScriptViewer
-      value={sourceQuery.data.text}
-      className='bg-muted/30 h-[min(22rem,35vh)] min-w-0 overflow-hidden rounded-lg border text-xs'
-    />
+    <Suspense fallback={<LoadingState />}>
+      <JavaScriptViewer
+        value={sourceQuery.data.text}
+        className='bg-muted/30 h-[min(22rem,35vh)] min-w-0 overflow-hidden rounded-lg border text-xs'
+      />
+    </Suspense>
   ) : null
 
   const sourceStatus = (

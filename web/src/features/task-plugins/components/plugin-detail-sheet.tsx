@@ -1,6 +1,24 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { RotateCcw, X } from 'lucide-react'
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -28,24 +46,6 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-/*
-Copyright (C) 2023-2026 QuantumNous
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as
-published by the Free Software Foundation, either version 3 of the
-License, or (at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-For commercial licensing, please contact support@quantumnous.com
-*/
 import { handleServerError } from '@/lib/handle-server-error'
 import { resolveLocalizedText } from '@/lib/localized-text'
 
@@ -55,13 +55,23 @@ import {
   getTaskPluginVersions,
 } from '../api'
 import type { TaskPluginListItem } from '../types'
-import { JavaScriptViewer } from './javascript-viewer'
 import { PluginIcon } from './plugin-icon'
 import { PluginMetadataCard } from './plugin-metadata-card'
 import { PluginModelList } from './plugin-model-list'
-import { PluginSandbox } from './plugin-sandbox'
 import { SourceDiff } from './source-diff'
 import { UsageSchemaTable } from './usage-schema-table'
+
+const PluginSandbox = lazy(() =>
+  import('./plugin-sandbox').then((module) => ({
+    default: module.PluginSandbox,
+  }))
+)
+
+const JavaScriptViewer = lazy(() =>
+  import('./javascript-viewer').then((module) => ({
+    default: module.JavaScriptViewer,
+  }))
+)
 
 type PluginDetailSheetProps = {
   plugin: TaskPluginListItem | null
@@ -267,10 +277,12 @@ function PluginDetailContent(props: { plugin: TaskPluginListItem }) {
         <TabsContent value='source' className={panelClassName}>
           {detailState ??
             (detail?.source ? (
-              <JavaScriptViewer
-                value={detail.source}
-                className='bg-muted/20 h-full min-h-48 overflow-hidden rounded-lg border'
-              />
+              <Suspense fallback={<LoadingState />}>
+                <JavaScriptViewer
+                  value={detail.source}
+                  className='bg-muted/20 h-full min-h-48 overflow-hidden rounded-lg border'
+                />
+              </Suspense>
             ) : (
               <EmptyState title={t('No source available')} />
             ))}
@@ -359,7 +371,11 @@ function PluginDetailContent(props: { plugin: TaskPluginListItem }) {
           keepMounted={sandboxVisited}
           className={panelClassName}
         >
-          {sandboxVisited && <PluginSandbox pluginKey={key} />}
+          {sandboxVisited && (
+            <Suspense fallback={<LoadingState />}>
+              <PluginSandbox pluginKey={key} />
+            </Suspense>
+          )}
         </TabsContent>
       </Tabs>
     </SheetContent>

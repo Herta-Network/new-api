@@ -20,30 +20,17 @@ import i18n from 'i18next'
 import LanguageDetector from 'i18next-browser-languagedetector'
 import { initReactI18next } from 'react-i18next'
 
+import { languageBackend } from './language-backend'
 import { convertDetectedLanguage } from './languages'
 import en from './locales/en.json'
-import fr from './locales/fr.json'
-import ja from './locales/ja.json'
-import ru from './locales/ru.json'
-import vi from './locales/vi.json'
-import zhTW from './locales/zh-TW.json'
-import zhCN from './locales/zh.json'
 
-export const resources = {
-  en,
-  zhCN,
-  fr,
-  ru,
-  ja,
-  vi,
-  zhTW,
-} as const
-
-i18n
+export const i18nReady = i18n
+  .use(languageBackend)
   .use(LanguageDetector)
   .use(initReactI18next)
   .init({
-    resources,
+    resources: { en },
+    partialBundledLanguages: true,
     fallbackLng: 'en',
     supportedLngs: ['en', 'zhCN', 'fr', 'ru', 'ja', 'vi', 'zhTW'],
     load: 'currentOnly',

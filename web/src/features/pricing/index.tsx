@@ -16,25 +16,29 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, lazy } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { DeferredDialog } from '@/components/deferred-dialog'
 import { PublicLayout } from '@/components/layout'
 import { PageTransition } from '@/components/page-transition'
 
-import {
-  LoadingSkeleton,
-  EmptyState,
-  SearchBar,
-  PricingTable,
-  PricingSidebar,
-  PricingToolbar,
-  ModelCardGrid,
-  ModelDetailsDrawer,
-} from './components'
+import { EmptyState } from './components/empty-state'
+import { LoadingSkeleton } from './components/loading-skeleton'
+import { ModelCardGrid } from './components/model-card-grid'
+import { PricingSidebar } from './components/pricing-sidebar'
+import { PricingTable } from './components/pricing-table'
+import { PricingToolbar } from './components/pricing-toolbar'
+import { SearchBar } from './components/search-bar'
 import { EXCLUDED_GROUPS, VIEW_MODES } from './constants'
 import { useFilters } from './hooks/use-filters'
 import { usePricingData } from './hooks/use-pricing-data'
+
+const ModelDetailsDrawer = lazy(() =>
+  import('./components/model-details').then((module) => ({
+    default: module.ModelDetailsDrawer,
+  }))
+)
 
 export function Pricing() {
   const { t } = useTranslation()
@@ -261,26 +265,31 @@ export function Pricing() {
           </div>
 
           {selectedModel && (
-            <ModelDetailsDrawer
-              open={Boolean(selectedModel)}
-              onOpenChange={(open) => {
-                if (!open) setSelectedModelName(null)
-              }}
-              model={selectedModel}
-              groupRatio={groupRatio || {}}
-              usableGroup={usableGroup || {}}
-              endpointMap={
-                (endpointMap as Record<
-                  string,
-                  { path?: string; method?: string }
-                >) || {}
-              }
-              autoGroups={autoGroups || []}
-              priceRate={priceRate ?? 1}
-              usdExchangeRate={usdExchangeRate ?? 1}
-              tokenUnit={tokenUnit}
-              showRechargePrice={showRechargePrice}
-            />
+            <DeferredDialog
+              open
+              onOpenChange={(open) => !open && setSelectedModelName(null)}
+            >
+              <ModelDetailsDrawer
+                open={Boolean(selectedModel)}
+                onOpenChange={(open) => {
+                  if (!open) setSelectedModelName(null)
+                }}
+                model={selectedModel}
+                groupRatio={groupRatio || {}}
+                usableGroup={usableGroup || {}}
+                endpointMap={
+                  (endpointMap as Record<
+                    string,
+                    { path?: string; method?: string }
+                  >) || {}
+                }
+                autoGroups={autoGroups || []}
+                priceRate={priceRate ?? 1}
+                usdExchangeRate={usdExchangeRate ?? 1}
+                tokenUnit={tokenUnit}
+                showRechargePrice={showRechargePrice}
+              />
+            </DeferredDialog>
           )}
         </PageTransition>
       </div>

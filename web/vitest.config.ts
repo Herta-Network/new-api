@@ -21,7 +21,11 @@ import { fileURLToPath } from 'node:url'
 
 import { defineConfig } from 'vitest/config'
 
+import { generateReactIcons } from './scripts/generate-react-icons'
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+generateReactIcons(__dirname)
 
 export default defineConfig({
   resolve: {
