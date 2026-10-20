@@ -422,6 +422,9 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		statusCode := http.StatusInternalServerError
 		if resp != nil {
 			statusCode = resp.StatusCode
+			if statusCode == http.StatusTooManyRequests {
+				service.NoteUpstreamRateLimit(c, info.ChannelId, resp.Header)
+			}
 			if resp.Body != nil {
 				_ = resp.Body.Close()
 			}
@@ -506,6 +509,9 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 
 	if upID := resp.Header.Get(common2.RequestIdKey); upID != "" {
 		c.Set(common2.UpstreamRequestIdKey, upID)
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		service.NoteUpstreamRateLimit(c, info.ChannelId, resp.Header)
 	}
 
 	_ = req.Body.Close()

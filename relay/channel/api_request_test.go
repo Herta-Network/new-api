@@ -2,11 +2,18 @@ package channel
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -215,5 +222,63 @@ func TestToWebSocketURL(t *testing.T) {
 		"ws://127.0.0.1:3000/backend-api/codex/responses": "ws://127.0.0.1:3000/backend-api/codex/responses",
 	} {
 		assert.Equal(t, want, toWebSocketURL(input), input)
+	}
+}
+
+// An upstream 429 seen by doRequest cools the failed attempt's channel for the
+// requested model once ProcessChannelError handles the failure.
+func TestUpstreamRateLimitCoolsTheFailedChannel(t *testing.T) {
+	service.InitHttpClient()
+	gin.SetMode(gin.TestMode)
+	previousErrorLog := constant.ErrorLogEnabled
+	constant.ErrorLogEnabled = false
+	t.Cleanup(func() { constant.ErrorLogEnabled = previousErrorLog })
+	const channelID = 951
+
+	for i, tc := range []struct {
+		name         string
+		status       int
+		multiKey     bool
+		channelTest  bool
+		otherChannel bool
+		wantCooling  bool
+	}{
+		{name: "a 429 cools the channel for the model", status: http.StatusTooManyRequests, wantCooling: true},
+		{name: "other failures leave the channel alone", status: http.StatusInternalServerError},
+		{name: "a multi-key channel is left alone", status: http.StatusTooManyRequests, multiKey: true},
+		{name: "a channel test is left alone", status: http.StatusTooManyRequests, channelTest: true},
+		{name: "a 429 is not attributed to another channel", status: http.StatusTooManyRequests, otherChannel: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Retry-After", "120")
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, `{"error":{"message":"rate limited"}}`)
+			}))
+			defer upstream.Close()
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			modelName := fmt.Sprintf("rate-limit-relay-%d", i)
+			info := &relaycommon.RelayInfo{OriginModelName: modelName, ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channelID}}
+			req, err := http.NewRequest(http.MethodPost, upstream.URL, strings.NewReader("{}"))
+			require.NoError(t, err)
+
+			resp, err := doRequest(ctx, req, info)
+			require.NoError(t, err)
+			apiErr := service.RelayErrorHandler(ctx, resp, false)
+			require.Equal(t, tc.status, apiErr.StatusCode)
+			failed := types.ChannelError{ChannelId: channelID, IsMultiKey: tc.multiKey}
+			if tc.otherChannel {
+				failed.ChannelId = channelID + 1
+			}
+			relayInfo := info
+			if tc.channelTest {
+				relayInfo = nil
+			}
+			service.ProcessChannelError(ctx, failed, apiErr, relayInfo)
+
+			assert.Equal(t, tc.wantCooling, model.IsChannelRateLimited(channelID, modelName))
+			assert.False(t, model.IsChannelRateLimited(channelID+1, modelName))
+		})
 	}
 }

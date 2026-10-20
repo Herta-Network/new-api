@@ -125,6 +125,7 @@ func GetRandomSatisfiedChannel(
 		return GetChannel(group, model, retry, filters)
 	}
 
+	cooling := rateLimitedChannels(model)
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
 
@@ -166,6 +167,24 @@ func GetRandomSatisfiedChannel(
 		retry = len(uniquePriorities) - 1
 	}
 	targetPriority := int64(sortedUniquePriorities[retry])
+
+	// Set aside channels cooling down after a 429 for this model. When every
+	// candidate is cooling, selection proceeds as if none were, so a cooldown
+	// never fails a request on its own.
+	if len(cooling) > 0 {
+		var ready []int
+		var readyPriorities []int64
+		for _, channelId := range channels {
+			if !cooling[channelId] {
+				ready = append(ready, channelId)
+				readyPriorities = append(readyPriorities, channelsIDM[channelId].GetPriority())
+			}
+		}
+		if len(ready) > 0 {
+			channels = ready
+			targetPriority = readyPriorityLevel(targetPriority, readyPriorities)
+		}
+	}
 
 	// get the priority for the given retry number
 	var sumWeight = 0

@@ -144,6 +144,22 @@ func GetChannel(
 			retry = len(priorities) - 1
 		}
 		targetPriority := priorities[retry]
+		// Like the memory cache, set aside channels cooling down after a 429
+		// unless every candidate is cooling.
+		if cooling := rateLimitedChannels(model); len(cooling) > 0 {
+			var ready []Ability
+			var readyPriorities []int64
+			for _, ability := range abilities {
+				if !cooling[ability.ChannelId] {
+					ready = append(ready, ability)
+					readyPriorities = append(readyPriorities, lo.FromPtr(ability.Priority))
+				}
+			}
+			if len(ready) > 0 {
+				abilities = ready
+				targetPriority = readyPriorityLevel(targetPriority, readyPriorities)
+			}
+		}
 		abilities = lo.Filter(abilities, func(ability Ability, _ int) bool {
 			return ability.Priority == nil && targetPriority == 0 || ability.Priority != nil && *ability.Priority == targetPriority
 		})

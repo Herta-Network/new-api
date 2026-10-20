@@ -278,3 +278,35 @@ func TestRequestPolicyEventsReachLogAdminInfo(t *testing.T) {
 	AppendRelayLogAdminInfo(untouched, nil, other)
 	assert.NotContains(t, other.Snapshot()["admin_info"], "request_policy", "requests without decisions do not carry an empty record")
 }
+
+func TestUpstreamRateLimitCooldown(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name   string
+		header map[string]string
+		want   time.Duration
+	}{
+		{name: "Retry-After in seconds", header: map[string]string{"Retry-After": "30"}, want: 30 * time.Second},
+		{name: "Retry-After as an HTTP date", header: map[string]string{"Retry-After": now.Add(45 * time.Second).Format(http.TimeFormat)}, want: 45 * time.Second},
+		{name: "retry-after-ms wins over Retry-After", header: map[string]string{"Retry-After-Ms": "1500", "Retry-After": "30"}, want: 1500 * time.Millisecond},
+		{name: "an unusable retry-after-ms falls back to Retry-After", header: map[string]string{"Retry-After-Ms": "0", "Retry-After": "30"}, want: 30 * time.Second},
+		{name: "Retry-After wins over reset headers", header: map[string]string{"Retry-After": "5", "X-Ratelimit-Reset-Tokens": "6m0s"}, want: 5 * time.Second},
+		{name: "OpenAI reset durations use the later bucket", header: map[string]string{"X-Ratelimit-Reset-Requests": "120ms", "X-Ratelimit-Reset-Tokens": "6m0s"}, want: 6 * time.Minute},
+		{name: "Anthropic reset times", header: map[string]string{"Anthropic-Ratelimit-Tokens-Reset": now.Add(20 * time.Second).Format(time.RFC3339)}, want: 20 * time.Second},
+		{name: "reset as Unix seconds", header: map[string]string{"X-Ratelimit-Reset": fmt.Sprint(now.Add(90 * time.Second).Unix())}, want: 90 * time.Second},
+		{name: "reset as Unix milliseconds", header: map[string]string{"X-Ratelimit-Reset": fmt.Sprint(now.Add(90 * time.Second).UnixMilli())}, want: 90 * time.Second},
+		{name: "reset as delay seconds", header: map[string]string{"Ratelimit-Reset": "12"}, want: 12 * time.Second},
+		{name: "no wait uses the default", header: map[string]string{}, want: defaultUpstreamRateLimitCooldown},
+		{name: "unusable values use the default", header: map[string]string{"Retry-After": "soon", "Retry-After-Ms": "NaN", "X-Ratelimit-Reset": "NaN"}, want: defaultUpstreamRateLimitCooldown},
+		{name: "a date in the past uses the default", header: map[string]string{"Retry-After": now.Add(-time.Minute).Format(http.TimeFormat)}, want: defaultUpstreamRateLimitCooldown},
+		{name: "long waits are capped", header: map[string]string{"Retry-After": "86400"}, want: maxUpstreamRateLimitCooldown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			header := http.Header{}
+			for name, value := range tc.header {
+				header.Set(name, value)
+			}
+			assert.Equal(t, tc.want, upstreamRateLimitCooldown(header, now))
+		})
+	}
+}

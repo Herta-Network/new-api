@@ -276,8 +276,9 @@ type ChannelSelectError struct {
 
 // SelectChannelForRequest resolves the channel for one attempt with the rules
 // shared by the HTTP distributor and the Responses WebSocket relay: a pinned
-// channel wins, then session affinity (first attempt only), then a random
-// eligible channel; every candidate must satisfy the request's channel
+// channel wins, then session affinity (first attempt only, unless its channel
+// is cooling down after a 429), then a random eligible channel that prefers
+// channels not cooling down; every candidate must satisfy the request's channel
 // filters. The group the channel was chosen from is returned for auto-group
 // callers. The caller still applies SetupContextForSelectedChannel.
 func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam) (*model.Channel, string, *ChannelSelectError) {
@@ -317,7 +318,19 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 			if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled {
 				affinitySatisfied, _ = model.ChannelSatisfiesFilters(preferred, modelName, constraints.Filters)
 			}
-			if affinitySatisfied {
+			routedAround := false
+			if affinitySatisfied && RequestPolicy(c).SessionMode != "strict" && model.IsChannelRateLimited(preferred.Id, modelName) {
+				// The bound channel is cooling down after a 429, so this
+				// request goes to a ready channel. The binding is not
+				// cleared; a successful request rebinds it as usual. If every
+				// candidate is cooling, the binding is used as before. Strict
+				// sessions never move.
+				alternative, alternativeGroup, err := CacheGetRandomSatisfiedChannel(retry)
+				if err == nil && alternative != nil && !model.IsChannelRateLimited(alternative.Id, modelName) {
+					channel, selectGroup, routedAround = alternative, alternativeGroup, true
+				}
+			}
+			if affinitySatisfied && !routedAround {
 				if usingGroup == "auto" {
 					userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 					for _, g := range GetRequestAutoGroups(c, userGroup) {
@@ -337,7 +350,7 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 					MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
 				}
 			}
-			if !affinityUsable && !ShouldKeepChannelAffinityOnChannelDisabled() {
+			if !affinityUsable && !routedAround && !ShouldKeepChannelAffinityOnChannelDisabled() {
 				ClearCurrentChannelAffinityCache(c)
 			}
 			if !affinityUsable && RequestPolicy(c).SessionMode == "strict" {

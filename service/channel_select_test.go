@@ -2,10 +2,17 @@ package service
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -182,4 +189,58 @@ func TestSharedType61IdentityFilterContainsAllCandidateKeys(t *testing.T) {
 	assert.Equal(t, "alpha", filters[0].TaskPluginKey)
 	assert.Equal(t, []string{"alpha", "beta"}, filters[0].TaskPluginKeys)
 	assert.Empty(t, filters[0].TaskPluginChannelTypes)
+}
+
+// A session bound to a channel cooling down after a 429 is served by a ready
+// channel and keeps its binding; strict sessions and an all-cooling candidate
+// set stay on the bound channel.
+func TestSelectChannelForRequestRoutesAffinityAroundRateLimitCooldown(t *testing.T) {
+	const bound, other = 2201, 2202
+	for _, tc := range []struct {
+		name    string
+		mode    string
+		cooling []int
+		want    int
+	}{
+		{name: "a ready bound channel is used", mode: "prefer", want: bound},
+		{name: "a cooling bound channel is routed around", mode: "prefer", cooling: []int{bound}, want: other},
+		{name: "strict sessions stay on the bound channel", mode: "strict", cooling: []int{bound}, want: bound},
+		{name: "every candidate cooling keeps the bound channel", mode: "prefer", cooling: []int{bound, other}, want: bound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupChannelSelectAutoGroupsTest(t)
+			modelName := "affinity-cooldown-" + strings.ReplaceAll(tc.name, " ", "-")
+			createChannelSelectAutoGroupsChannel(t, db, bound, "default", modelName)
+			createChannelSelectAutoGroupsChannel(t, db, other, "default", modelName)
+			model.InitChannelCache()
+
+			setting := operation_setting.GetChannelAffinitySetting()
+			previous := *setting
+			t.Cleanup(func() { *setting = previous })
+			rule := operation_setting.ChannelAffinityRule{
+				Name: "rate-limit-session", ModelRegex: []string{"^" + modelName + "$"}, SessionMode: tc.mode,
+				KeySources: []operation_setting.ChannelAffinityKeySource{{Type: "request_header", Key: "X-Session"}},
+			}
+			setting.Enabled, setting.Rules = true, []operation_setting.ChannelAffinityRule{rule}
+			cacheKey := buildChannelAffinityCacheKeySuffix(rule, modelName, "default", "session-1")
+			cache := getChannelAffinityCache()
+			require.NoError(t, cache.SetWithTTL(cacheKey, bound, time.Minute))
+			t.Cleanup(func() { _, err := cache.DeleteMany([]string{cacheKey}); assert.NoError(t, err) })
+			for _, id := range tc.cooling {
+				model.RecordChannelRateLimit(id, modelName, 2*time.Minute)
+			}
+
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			c.Request.Header.Set("X-Session", "session-1")
+			channel, _, selectErr := SelectChannelForRequest(c, modelName, &RetryParam{Ctx: c, TokenGroup: "default", ModelName: modelName, Retry: common.GetPointer(0)})
+			require.Nil(t, selectErr)
+			require.NotNil(t, channel)
+			assert.Equal(t, tc.want, channel.Id)
+			cached, found, err := cache.Get(cacheKey)
+			require.NoError(t, err)
+			assert.True(t, found)
+			assert.Equal(t, bound, cached, "a cooldown does not move or drop the session binding")
+		})
+	}
 }

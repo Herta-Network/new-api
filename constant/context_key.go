@@ -44,6 +44,9 @@ const (
 	// request, which differs from the base URL for absolute Advanced Custom routes
 	// and for adaptors that build official endpoints themselves.
 	ContextKeyUpstreamRequestOrigin ContextKey = "upstream_request_origin"
+	// ContextKeyUpstreamRateLimit carries the cooldown an upstream 429 asked
+	// for until the failed attempt is processed.
+	ContextKeyUpstreamRateLimit ContextKey = "upstream_rate_limit"
 
 	ContextKeyAutoGroup           ContextKey = "auto_group"
 	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"

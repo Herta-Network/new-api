@@ -1,7 +1,9 @@
 package model
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -135,5 +137,74 @@ func TestModelModifierNamesRouteWithAndWithoutMemoryCache(t *testing.T) {
 		selected, err = GetRandomSatisfiedChannel("default", "deepseek-pro@effort:max", 0, nil)
 		require.NoError(t, err)
 		assert.Nil(t, selected, "memory cache %v", memoryCache)
+	}
+}
+
+// A 429 cooldown sets one channel aside for one model on both cache paths.
+// Channels A, B and C sit on priority levels 10, 5 and 0 of the same group.
+func TestRateLimitedChannelsAreSkippedOnBothCachePaths(t *testing.T) {
+	truncateTables(t)
+	originalMemoryCache, originalNow := common.MemoryCacheEnabled, channelRateLimitNow
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled, channelRateLimitNow = originalMemoryCache, originalNow
+		require.NoError(t, getChannelRateLimitCache().Purge())
+		InitChannelCache()
+	})
+	const a, b, c = 940001, 940002, 940003
+	for _, fixture := range []struct {
+		id       int
+		priority int64
+		models   string
+	}{
+		{a, 10, "cool-model,other-model"},
+		{b, 5, "cool-model,other-model"},
+		{c, 0, "cool-model"},
+	} {
+		priority := fixture.priority
+		channel := Channel{Id: fixture.id, Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Name: "rate-limit", Models: fixture.models, Group: "default", Priority: &priority}
+		require.NoError(t, channel.Insert())
+	}
+	type cooldown struct {
+		channel  int
+		duration time.Duration
+	}
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name      string
+		cooldowns []cooldown
+		elapsed   time.Duration
+		model     string
+		retry     int
+		want      int
+	}{
+		{name: "no cooldown keeps the top level", model: "cool-model", want: a},
+		{name: "a cooling channel hands over to the next level", cooldowns: []cooldown{{a, 30 * time.Second}}, model: "cool-model", want: b},
+		{name: "the retry after a 429 still moves down one level", cooldowns: []cooldown{{a, 30 * time.Second}}, model: "cool-model", retry: 1, want: b},
+		{name: "a cooling level falls to the nearest lower ready level", cooldowns: []cooldown{{b, 30 * time.Second}}, model: "cool-model", retry: 1, want: c},
+		{name: "without a lower ready level the nearest higher one is used", cooldowns: []cooldown{{c, 30 * time.Second}}, model: "cool-model", retry: 2, want: b},
+		{name: "every candidate cooling keeps the usual choice", cooldowns: []cooldown{{a, 30 * time.Second}, {b, 30 * time.Second}, {c, 30 * time.Second}}, model: "cool-model", want: a},
+		{name: "a cooldown covers only its model", cooldowns: []cooldown{{a, 30 * time.Second}}, model: "other-model", want: a},
+		{name: "the channel returns when the cooldown ends", cooldowns: []cooldown{{a, 30 * time.Second}}, elapsed: 30 * time.Second, model: "cool-model", want: a},
+		{name: "a shorter cooldown does not cut a longer one", cooldowns: []cooldown{{a, time.Minute}, {a, 10 * time.Second}}, elapsed: 30 * time.Second, model: "cool-model", want: b},
+	} {
+		for _, memoryCache := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/memory=%v", tc.name, memoryCache), func(t *testing.T) {
+				common.MemoryCacheEnabled = memoryCache
+				InitChannelCache()
+				require.NoError(t, getChannelRateLimitCache().Purge())
+				now := start
+				channelRateLimitNow = func() time.Time { return now }
+				for _, limit := range tc.cooldowns {
+					RecordChannelRateLimit(limit.channel, "cool-model", limit.duration)
+				}
+				now = now.Add(tc.elapsed)
+
+				selected, err := GetRandomSatisfiedChannel("default", tc.model, tc.retry, nil)
+				require.NoError(t, err)
+				require.NotNil(t, selected)
+				assert.Equal(t, tc.want, selected.Id)
+			})
+		}
 	}
 }
