@@ -60,12 +60,18 @@ import {
 } from '@/lib/server-error-message'
 import { truncateText } from '@/lib/utils'
 
-import { getCodexUsage, updateChannelBalance } from '../api'
+import {
+  getCodexUsage,
+  getOpenCodeGoUsage,
+  updateChannelBalance,
+  type OpenCodeGoUsage,
+} from '../api'
 import {
   CHANNEL_STATUS_CONFIG,
   CHANNEL_TYPE_TASK_PLUGIN,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
+  CHANNEL_TYPE_OPENCODE_GO,
   MODEL_FETCHABLE_TYPES,
 } from '../constants'
 import {
@@ -98,6 +104,7 @@ import {
   CodexUsageDialog,
   type CodexUsageDialogData,
 } from './dialogs/codex-usage-dialog'
+import { OpenCodeGoUsageDialog } from './dialogs/opencode-go-usage-dialog'
 import { NumericSpinnerInput } from './numeric-spinner-input'
 
 function parseIonetMeta(otherInfo: string | null | undefined): null | {
@@ -353,6 +360,9 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   const [codexUsageOpen, setCodexUsageOpen] = useState(false)
   const [codexUsageResponse, setCodexUsageResponse] =
     useState<CodexUsageDialogData | null>(null)
+  const [openCodeGoUsageOpen, setOpenCodeGoUsageOpen] = useState(false)
+  const [openCodeGoUsage, setOpenCodeGoUsage] =
+    useState<OpenCodeGoUsage | null>(null)
   const currencyLabel = getCurrencyLabel()
   const tokenSuffix = currencyLabel === 'Tokens' ? ' Tokens' : ''
   const withSuffix = (value: string) =>
@@ -437,11 +447,36 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     channel.type === CHANNEL_TYPE_VLLM || channel.type === CHANNEL_TYPE_SGLANG
   const inferenceStatusLabel =
     channel.type === CHANNEL_TYPE_SGLANG ? t('SGLang status') : t('vLLM status')
+  const isOpenCodeGoChannel = channel.type === CHANNEL_TYPE_OPENCODE_GO
+  const opensDialog = isInferenceChannel || isOpenCodeGoChannel
+
+  const loadOpenCodeGoUsage = async () => {
+    if (isUpdating) {
+      return
+    }
+    setIsUpdating(true)
+    try {
+      const res = await getOpenCodeGoUsage(channel.id)
+      if (!res.success || !res.data) {
+        throw createServerError(res, t('Failed to fetch usage'))
+      }
+      setOpenCodeGoUsage(res.data)
+      setOpenCodeGoUsageOpen(true)
+    } catch (error) {
+      handleServerError(error, t('Failed to fetch usage'))
+    } finally {
+      setIsUpdating(false)
+    }
+  }
 
   const handleClickUpdate = async () => {
     if (isInferenceChannel) {
       setCurrentRow(channel)
       setOpen('inference-status')
+      return
+    }
+    if (isOpenCodeGoChannel) {
+      await loadOpenCodeGoUsage()
       return
     }
     if (isUpdating) {
@@ -497,6 +532,8 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     remainingBadgeLabel = t('Updating...')
   } else if (sensitiveVisible && channel.type === 57) {
     remainingBadgeLabel = t('Account Info')
+  } else if (sensitiveVisible && isOpenCodeGoChannel) {
+    remainingBadgeLabel = t('Usage')
   } else if (sensitiveVisible && isInferenceChannel) {
     remainingBadgeLabel = inferenceStatusLabel
   }
@@ -505,11 +542,13 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     remainingTooltipLabel = maskedRemainingLabel
   } else if (channel.type === 57) {
     remainingTooltipLabel = t('Click to view Codex usage')
+  } else if (isOpenCodeGoChannel) {
+    remainingTooltipLabel = t('Click to view OpenCode Go usage')
   } else if (isInferenceChannel) {
     remainingTooltipLabel = inferenceStatusLabel
   }
   let remainingBadgeVariant: StatusBadgeProps['variant'] = variant
-  if (channel.type === 57 || isInferenceChannel) {
+  if (channel.type === 57 || isInferenceChannel || isOpenCodeGoChannel) {
     remainingBadgeVariant = 'info'
   } else if (isUpdating) {
     remainingBadgeVariant = 'neutral'
@@ -522,7 +561,7 @@ export function BalanceCell({ channel }: { channel: Channel }) {
       copyable={false}
       showDot={false}
       className='cursor-pointer'
-      onClick={isInferenceChannel ? undefined : handleClickUpdate}
+      onClick={opensDialog ? undefined : handleClickUpdate}
     />
   )
 
@@ -549,7 +588,7 @@ export function BalanceCell({ channel }: { channel: Channel }) {
         <Tooltip>
           <TooltipTrigger
             render={
-              isInferenceChannel ? (
+              opensDialog ? (
                 <Button
                   variant='ghost'
                   size='sm'
@@ -566,7 +605,7 @@ export function BalanceCell({ channel }: { channel: Channel }) {
           />
           <TooltipContent>
             <p>{remainingTooltipLabel}</p>
-            {channel.type !== 57 && !isInferenceChannel && (
+            {channel.type !== 57 && !opensDialog && (
               <p>{t('Click to update balance')}</p>
             )}
           </TooltipContent>
@@ -598,6 +637,18 @@ export function BalanceCell({ channel }: { channel: Channel }) {
             setIsUpdating(false)
           }
         }}
+        isRefreshing={isUpdating}
+      />
+      <OpenCodeGoUsageDialog
+        open={openCodeGoUsageOpen}
+        onOpenChange={setOpenCodeGoUsageOpen}
+        channelLabel={
+          sensitiveVisible
+            ? `${channel.name} (#${channel.id})`
+            : `${SENSITIVE_MASK} (#${SENSITIVE_MASK})`
+        }
+        usage={openCodeGoUsage}
+        onRefresh={loadOpenCodeGoUsage}
         isRefreshing={isUpdating}
       />
       {rawBalanceResponse !== null && (

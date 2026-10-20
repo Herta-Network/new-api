@@ -55,7 +55,6 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
@@ -70,12 +69,11 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { Progress } from '@/components/ui/progress'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import dayjs from '@/lib/dayjs'
-import { formatDateTimeStr, formatTimestampToDate } from '@/lib/format'
+import { formatDateTimeStr } from '@/lib/format'
 import { createServerError, getServerMessage } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
@@ -84,6 +82,8 @@ import {
   resetCodexUsage,
   type CodexResetCreditsResponse,
 } from '../../api'
+import { formatDurationSeconds } from '../../lib/rate-limit-window'
+import { RateLimitWindow } from '../rate-limit-window'
 
 type CodexRateLimitWindow = {
   used_percent?: number
@@ -165,16 +165,6 @@ type CodexUsageDialogProps = {
   isRefreshing?: boolean
 }
 
-function clampPercent(value: unknown): number {
-  const v = Number(value)
-  return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0
-}
-
-function formatUnixSeconds(unixSeconds: unknown): string {
-  const v = Number(unixSeconds)
-  return Number.isFinite(v) && v > 0 ? formatTimestampToDate(v) : '-'
-}
-
 function formatIsoTimestamp(value: unknown): string {
   if (typeof value !== 'string' || value.trim() === '') {
     return '-'
@@ -184,29 +174,6 @@ function formatIsoTimestamp(value: unknown): string {
     return value
   }
   return formatDateTimeStr(d.toDate())
-}
-
-function formatDurationSeconds(
-  seconds: unknown,
-  t: (key: string) => string
-): string {
-  const s = Number(seconds)
-  if (!Number.isFinite(s) || s <= 0) {
-    return '-'
-  }
-
-  const total = Math.floor(s)
-  const hours = Math.floor(total / 3600)
-  const minutes = Math.floor((total % 3600) / 60)
-  const secs = total % 60
-
-  if (hours > 0) {
-    return `${hours}${t('h')} ${minutes}${t('m')}`
-  }
-  if (minutes > 0) {
-    return `${minutes}${t('m')} ${secs}${t('s')}`
-  }
-  return `${secs}${t('s')}`
 }
 
 function formatTimeLeftUntil(
@@ -387,17 +354,6 @@ function getResetCreditStatusBadge(
   )
 }
 
-function windowLabel(windowData?: CodexRateLimitWindow | null) {
-  const percent = clampPercent(windowData?.used_percent)
-  let variant: StatusBadgeProps['variant'] = 'info'
-  if (percent >= 95) {
-    variant = 'danger'
-  } else if (percent >= 80) {
-    variant = 'warning'
-  }
-  return { percent, variant }
-}
-
 function getUsageStatusBadge(
   rateLimit: CodexRateLimit | undefined,
   t: (key: string) => string
@@ -417,111 +373,6 @@ function getUsageStatusBadge(
 
 function formatLabelValue(label: string, value: string) {
   return label.endsWith('：') ? `${label}${value}` : `${label} ${value}`
-}
-
-const percentTextClassName: Record<
-  NonNullable<StatusBadgeProps['variant']>,
-  string
-> = {
-  success: 'text-success',
-  warning: 'text-warning',
-  danger: 'text-destructive',
-  info: 'text-info',
-  neutral: 'text-muted-foreground',
-  purple: 'text-chart-4',
-  amber: 'text-warning',
-  blue: 'text-chart-1',
-  cyan: 'text-chart-2',
-  green: 'text-success',
-  grey: 'text-muted-foreground',
-  indigo: 'text-chart-1',
-  'light-blue': 'text-info',
-  'light-green': 'text-emerald-500 dark:text-emerald-300',
-  lime: 'text-chart-3',
-  orange: 'text-warning',
-  pink: 'text-chart-5',
-  red: 'text-destructive',
-  teal: 'text-chart-2',
-  violet: 'text-chart-4',
-  yellow: 'text-warning',
-}
-
-type RateLimitWindowProps = {
-  title: string
-  window?: CodexRateLimitWindow | null
-}
-
-function RateLimitWindow(props: RateLimitWindowProps) {
-  const { t } = useTranslation()
-  const hasData =
-    !!props.window &&
-    typeof props.window === 'object' &&
-    Object.keys(props.window).length > 0
-  const { percent, variant } = windowLabel(props.window)
-
-  return (
-    <Card size='sm' className='gap-0 py-0'>
-      <CardHeader className='p-3 pb-2'>
-        <div className='flex items-start justify-between gap-3'>
-          <div className='min-w-0'>
-            <CardTitle className='text-sm font-semibold'>
-              {props.title}
-            </CardTitle>
-            <CardDescription className='mt-1 text-xs'>
-              {t('Window:')}{' '}
-              {hasData
-                ? formatDurationSeconds(props.window?.limit_window_seconds, t)
-                : '-'}
-            </CardDescription>
-          </div>
-          <div className='shrink-0 text-right'>
-            <div
-              className={cn(
-                'text-xl leading-none font-semibold tabular-nums',
-                percentTextClassName[variant ?? 'neutral']
-              )}
-            >
-              {hasData ? `${percent}%` : '-'}
-            </div>
-            <div className='text-muted-foreground mt-1 text-[11px]'>
-              {t('Used')}
-            </div>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className='p-3 pt-0'>
-        {hasData ? (
-          <Progress
-            value={percent}
-            aria-label={`${props.title} usage: ${percent}%`}
-            className='mt-1'
-          />
-        ) : (
-          <div className='text-muted-foreground mt-1 text-sm'>-</div>
-        )}
-        <div className='mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2'>
-          <div className='min-w-0'>
-            <div className='text-muted-foreground text-[11px]'>
-              {t('Reset at:')}
-            </div>
-            <div className='break-all tabular-nums'>
-              {hasData ? formatUnixSeconds(props.window?.reset_at) : '-'}
-            </div>
-          </div>
-          <div className='min-w-0 sm:text-right'>
-            <div className='text-muted-foreground text-[11px]'>
-              {t('Resets in:')}
-            </div>
-            <div className='tabular-nums'>
-              {hasData
-                ? formatDurationSeconds(props.window?.reset_after_seconds, t)
-                : '-'}
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  )
 }
 
 function RateLimitWindowGrid(props: {

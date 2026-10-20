@@ -132,3 +132,73 @@ func TestSGLangRerankRejectsMalformedResults(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenCodeGoChannelRoutesEachModelToItsEndpoint(t *testing.T) {
+	const base = "https://opencode.ai/inference/go"
+	tests := []struct {
+		requestPath string
+		format      types.RelayFormat
+		model       string
+		stream      bool
+		wantURL     string
+	}{
+		{requestPath: "/v1/chat/completions", format: types.RelayFormatOpenAI, model: "glm-5.3", wantURL: base + "/v1/chat/completions"},
+		{requestPath: "/v1/chat/completions", format: types.RelayFormatOpenAI, model: "gpt-6-luna", wantURL: base + "/v1/responses"},
+		{requestPath: "/v1/chat/completions", format: types.RelayFormatOpenAI, model: "claude-haiku-5-5", wantURL: base + "/v1/messages"},
+		{requestPath: "/v1/chat/completions", format: types.RelayFormatOpenAI, model: "gemini-4-argon-contributor", stream: true, wantURL: base + "/v1/models/gemini-4-argon-contributor:streamGenerateContent?alt=sse"},
+		{requestPath: "/v1/responses", format: types.RelayFormatOpenAIResponses, model: "grok-4.7", wantURL: base + "/v1/responses"},
+		{requestPath: "/v1/responses", format: types.RelayFormatOpenAIResponses, model: "kimi-k3", wantURL: base + "/v1/chat/completions"},
+		{requestPath: "/v1/messages", format: types.RelayFormatClaude, model: "qwen3.8-max", wantURL: base + "/v1/messages"},
+		{requestPath: "/v1/messages", format: types.RelayFormatClaude, model: "minimax-m3", wantURL: base + "/v1/messages"},
+		{requestPath: "/v1/messages", format: types.RelayFormatClaude, model: "muse-spark-1.3-contributor", wantURL: base + "/v1/responses"},
+		{requestPath: "/v1/messages", format: types.RelayFormatClaude, model: "deepseek-v4-pro", wantURL: base + "/v1/chat/completions"},
+		{requestPath: "/v1beta/models/gemini-4-argon-contributor:generateContent", format: types.RelayFormatGemini, model: "gemini-4-argon-contributor", wantURL: base + "/v1/models/gemini-4-argon-contributor:generateContent"},
+		{requestPath: "/v1beta/models/gemini-4-argon-contributor:streamGenerateContent?alt=sse", format: types.RelayFormatGemini, model: "gemini-4-argon-contributor", stream: true, wantURL: base + "/v1/models/gemini-4-argon-contributor:streamGenerateContent?alt=sse"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.requestPath+" "+tt.model, func(t *testing.T) {
+			info := &relaycommon.RelayInfo{
+				ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeOpenCodeGo, ChannelBaseUrl: base, ApiKey: "go-key", UpstreamModelName: tt.model},
+				RequestURLPath:  tt.requestPath,
+				RelayFormat:     tt.format,
+				OriginModelName: tt.model,
+				IsStream:        tt.stream,
+			}
+			info.ChannelOtherSettings.AdvancedCustom = common.GetAdvancedCustomPreset(constant.ChannelTypeOpenCodeGo)
+			adaptor := &advancedcustom.Adaptor{}
+			adaptor.Init(info)
+			url, err := adaptor.GetRequestURL(info)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantURL, url)
+		})
+	}
+}
+
+func TestOpenCodeGoChannelRequestHeaders(t *testing.T) {
+	apiType, ok := common.ChannelType2APIType(constant.ChannelTypeOpenCodeGo)
+	require.True(t, ok)
+	assert.Equal(t, "advanced_custom", relay.GetAdaptor(apiType).GetChannelName())
+	assert.Equal(t, "https://opencode.ai/inference/go", constant.GetChannelBaseURL(constant.ChannelTypeOpenCodeGo))
+	assert.ElementsMatch(t,
+		[]constant.EndpointType{constant.EndpointTypeOpenAI, constant.EndpointTypeOpenAIResponse, constant.EndpointTypeAnthropic, constant.EndpointTypeGemini},
+		common.GetEndpointTypesByChannelType(constant.ChannelTypeOpenCodeGo, "gpt-6-luna"))
+
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeOpenCodeGo, ChannelBaseUrl: "https://opencode.ai/inference/go", ApiKey: "go-key"},
+		RequestURLPath:  "/v1/messages",
+		RelayFormat:     types.RelayFormatClaude,
+		OriginModelName: "claude-haiku-5-5",
+	}
+	info.ChannelOtherSettings.AdvancedCustom = common.GetAdvancedCustomPreset(constant.ChannelTypeOpenCodeGo)
+	adaptor := &advancedcustom.Adaptor{}
+	adaptor.Init(info)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	c.Request.Header.Set("User-Agent", "claude-cli/2.1.0")
+	c.Request.Header.Set("X-Claude-Code-Session-Id", "cc-session")
+	headers := http.Header{}
+	require.NoError(t, adaptor.SetupRequestHeader(c, &headers, info))
+	assert.Equal(t, "Bearer go-key", headers.Get("Authorization"))
+	assert.Equal(t, "claude-cli/2.1.0", headers.Get("User-Agent"))
+	assert.Regexp(t, `^newapi_[0-9a-f]{32}$`, headers.Get("X-Opencode-Session"))
+}

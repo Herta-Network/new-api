@@ -112,6 +112,29 @@ export type CodexUsageResponse = {
 
 export type CodexResetCreditsResponse = CodexUsageResponse
 
+export type OpenCodeGoUsageWindow = {
+  status?: string
+  used_percent?: number
+  limit_window_seconds?: number
+  reset_at?: number
+  reset_after_seconds?: number
+}
+
+export type OpenCodeGoUsage = {
+  five_hour?: OpenCodeGoUsageWindow
+  weekly?: OpenCodeGoUsageWindow
+  monthly?: OpenCodeGoUsageWindow
+  limit_reached?: boolean
+}
+
+export type OpenCodeGoUsageResponse = {
+  success: boolean
+  message?: string
+  message_key?: string
+  message_params?: Record<string, unknown>
+  data?: OpenCodeGoUsage
+}
+
 export type CodexUsageResetResponse = CodexUsageResponse
 
 export type CodexCredentialRefreshResponse = {
@@ -399,6 +422,16 @@ export async function getCodexUsage(
 ): Promise<CodexUsageResponse> {
   const res = await api.get(
     `/api/channel/${channelId}/codex/usage`,
+    channelActionConfig({ disableDuplicate: true })
+  )
+  return res.data
+}
+
+export async function getOpenCodeGoUsage(
+  channelId: number
+): Promise<OpenCodeGoUsageResponse> {
+  const res = await api.get(
+    `/api/channel/${channelId}/opencode-go/usage`,
     channelActionConfig({ disableDuplicate: true })
   )
   return res.data

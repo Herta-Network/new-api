@@ -38,6 +38,8 @@ export const CHANNEL_TYPE_VLLM = 62
 
 export const CHANNEL_TYPE_SGLANG = 63
 
+export const CHANNEL_TYPE_OPENCODE_GO = 64
+
 export const CHANNEL_TYPES = {
   0: 'Unknown',
   1: 'OpenAI',
@@ -99,6 +101,7 @@ export const CHANNEL_TYPES = {
   61: 'Task Plugin',
   62: 'vLLM',
   63: 'SGLang',
+  64: 'OpenCode Go',
 } as const
 
 export type ChannelProviderPresentation = {
@@ -182,6 +185,10 @@ export const CHANNEL_PROVIDER_PRESENTATION: Partial<
   },
   62: { descriptionKey: 'Connect to self-hosted models served by vLLM' },
   63: { descriptionKey: 'Connect to self-hosted models served by SGLang' },
+  64: {
+    descriptionKey:
+      'Access open coding models with an OpenCode Go subscription',
+  },
 } satisfies Record<
   Exclude<keyof typeof CHANNEL_TYPES, 0 | typeof CHANNEL_TYPE_TASK_PLUGIN>,
   ChannelProviderPresentation
@@ -189,8 +196,8 @@ export const CHANNEL_PROVIDER_PRESENTATION: Partial<
 
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
   1, 14, 24, 33, 43, 3, 41, 17, 45, 25, 26, 23, 48, 60, 58, 59, 61, 42, 34, 20,
-  4, 62, 40, 27, 15, 46, 18, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 22, 21,
-  44, 2, 5, 36, 50, 51, 52, 53, 54, 55, 56,
+  4, 62, 40, 27, 15, 46, 18, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 64, 22,
+  21, 44, 2, 5, 36, 50, 51, 52, 53, 54, 55, 56,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
@@ -527,6 +534,7 @@ export const MODEL_FETCHABLE_TYPES = new Set([
   60,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
+  CHANNEL_TYPE_OPENCODE_GO,
 ])
 
 export const FIELD_PASSTHROUGH_TYPES = new Set([
@@ -538,6 +546,7 @@ export const FIELD_PASSTHROUGH_TYPES = new Set([
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
+  CHANNEL_TYPE_OPENCODE_GO,
 ])
 
 export const OPENAI_FIELD_PASSTHROUGH_TYPES = new Set([
@@ -548,6 +557,7 @@ export const OPENAI_FIELD_PASSTHROUGH_TYPES = new Set([
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
+  CHANNEL_TYPE_OPENCODE_GO,
 ])
 
 export const CLAUDE_FIELD_PASSTHROUGH_TYPES = new Set([
@@ -557,6 +567,7 @@ export const CLAUDE_FIELD_PASSTHROUGH_TYPES = new Set([
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
+  CHANNEL_TYPE_OPENCODE_GO,
 ])
 
 export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
@@ -572,10 +583,12 @@ export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
   60: 'Enter API key for this channel',
   62: 'vLLM API key, or EMPTY if authentication is disabled',
   63: 'SGLang API key, or EMPTY if authentication is disabled',
+  64: 'OpenCode Go API key from the OpenCode Console',
 }
 
 export const CHANNEL_TYPE_WARNINGS: Record<number, string> = {
   3: 'For channels added after May 10, 2025, no need to remove "." from model names during deployment',
   8: 'If connecting to upstream One API or New API relay projects, use OpenAI type instead unless you know what you are doing',
   37: 'Dify channels only support chatflow and agent, and agent does not support images',
+  64: 'OpenCode Go is a single-member subscription for coding agents, and OpenCode monitors its traffic for abuse',
 }

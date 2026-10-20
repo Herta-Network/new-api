@@ -20,6 +20,7 @@ import {
   CHANNEL_TYPES,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
+  CHANNEL_TYPE_OPENCODE_GO,
 } from '../constants'
 
 // ============================================================================
@@ -49,6 +50,15 @@ export interface ChannelTypeConfig {
  * Configuration for each channel type
  */
 export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
+  [CHANNEL_TYPE_OPENCODE_GO]: {
+    id: CHANNEL_TYPE_OPENCODE_GO,
+    name: CHANNEL_TYPES[CHANNEL_TYPE_OPENCODE_GO],
+    icon: 'OpenCode',
+    hints: {
+      key: 'OpenCode Go API key from the OpenCode Console',
+      models: 'Models fetched from upstream /v1/models',
+    },
+  },
   [CHANNEL_TYPE_SGLANG]: {
     id: CHANNEL_TYPE_SGLANG,
     name: CHANNEL_TYPES[CHANNEL_TYPE_SGLANG],

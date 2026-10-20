@@ -611,3 +611,30 @@ func TestDetectAllChannelUpstreamModelUpdatesRejectsExistingActiveTask(t *testin
 	require.Contains(t, recorder.Body.String(), existing.TaskID)
 	require.Contains(t, recorder.Body.String(), "A model update task is already running or queued")
 }
+
+func TestFetchModelsOpenCodeGoCreatePreviewUsesPresetModelRoute(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/inference/go/v1/models", r.URL.Path)
+		assert.Equal(t, "Bearer go-key", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"object":"list","data":[{"id":"glm-5.3","object":"model"},{"id":"gpt-6-luna","object":"model"}]}`))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+
+	body, err := common.Marshal(map[string]any{
+		"base_url": server.URL + "/inference/go",
+		"type":     constant.ChannelTypeOpenCodeGo,
+		"key":      "go-key",
+	})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/fetch_models", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	FetchModels(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.JSONEq(t, `{"success":true,"message":"","data":["glm-5.3","gpt-6-luna"]}`, recorder.Body.String())
+}

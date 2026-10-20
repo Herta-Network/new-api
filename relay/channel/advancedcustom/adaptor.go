@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
+	"github.com/QuantumNous/new-api/relay/channel/opencodego"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -258,6 +259,9 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 	if shouldApplyClaudeHeaders(a.converter, info) {
 		applyClaudeHeaders(c, header, info)
 	}
+	if info.ChannelType == constant.ChannelTypeOpenCodeGo {
+		opencodego.SetupRequestHeader(c, header, info)
+	}
 
 	return nil
 }
@@ -475,7 +479,8 @@ func shouldUseGeminiStreamURL(converter string, info *relaycommon.RelayInfo) boo
 	return info != nil &&
 		info.IsStream &&
 		(converter == relayconvert.ConverterOpenAIChatToGeminiContent ||
-			converter == relayconvert.ConverterOpenAIResponsesToGemini)
+			converter == relayconvert.ConverterOpenAIResponsesToGemini ||
+			(converter == relayconvert.ConverterNone && info.RelayFormat == types.RelayFormatGemini))
 }
 
 func useGeminiStreamGenerateContentURL(parsedURL *url.URL) {

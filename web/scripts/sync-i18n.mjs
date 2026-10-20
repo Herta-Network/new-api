@@ -75,6 +75,7 @@ const BRAND_AND_LITERAL_KEYS = new Set([
   'One API',
   'OpenAI',
   'OpenAIMax',
+  'OpenCode Go',
   'OpenRouter',
   'Pancake',
   'Passkey',
