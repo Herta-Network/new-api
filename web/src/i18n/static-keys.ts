@@ -100,6 +100,13 @@ export const STATIC_I18N_KEYS = [
   'OpenCode Go rejected the API key',
   'This API key has no OpenCode Go subscription',
   'Upstream returned status {{status}}',
+  'Channel is not a Kimi For Coding, GLM Coding Plan or MiniMax Coding Plan channel',
+  '{{provider}} rejected the API key',
+  'This API key cannot read {{provider}} usage. Check that it belongs to a Coding Plan',
+  '{{provider}} is rate limiting usage queries. Please try again later',
+  '{{provider}} reported an error',
+  '{{provider}} reported an error: {{reason}}',
+  '{{provider}} reported no plan usage for this API key',
 
   'Price per image',
   'Per image',

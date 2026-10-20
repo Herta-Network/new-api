@@ -62,8 +62,10 @@ import { truncateText } from '@/lib/utils'
 
 import {
   getCodexUsage,
+  getCodingPlanUsage,
   getOpenCodeGoUsage,
   updateChannelBalance,
+  type CodingPlanUsage,
   type OpenCodeGoUsage,
 } from '../api'
 import {
@@ -92,6 +94,7 @@ import {
   isTagAggregateRow,
   type TagRow,
 } from '../lib'
+import { CODING_PLAN_NAMES, getCodingPlanProvider } from '../lib/coding-plan'
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
@@ -104,6 +107,7 @@ import {
   CodexUsageDialog,
   type CodexUsageDialogData,
 } from './dialogs/codex-usage-dialog'
+import { CodingPlanUsageDialog } from './dialogs/coding-plan-usage-dialog'
 import { OpenCodeGoUsageDialog } from './dialogs/opencode-go-usage-dialog'
 import { NumericSpinnerInput } from './numeric-spinner-input'
 
@@ -363,6 +367,9 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   const [openCodeGoUsageOpen, setOpenCodeGoUsageOpen] = useState(false)
   const [openCodeGoUsage, setOpenCodeGoUsage] =
     useState<OpenCodeGoUsage | null>(null)
+  const [codingPlanUsageOpen, setCodingPlanUsageOpen] = useState(false)
+  const [codingPlanUsage, setCodingPlanUsage] =
+    useState<CodingPlanUsage | null>(null)
   const currencyLabel = getCurrencyLabel()
   const tokenSuffix = currencyLabel === 'Tokens' ? ' Tokens' : ''
   const withSuffix = (value: string) =>
@@ -448,7 +455,12 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   const inferenceStatusLabel =
     channel.type === CHANNEL_TYPE_SGLANG ? t('SGLang status') : t('vLLM status')
   const isOpenCodeGoChannel = channel.type === CHANNEL_TYPE_OPENCODE_GO
-  const opensDialog = isInferenceChannel || isOpenCodeGoChannel
+  const codingPlanProvider = getCodingPlanProvider(
+    channel.type,
+    channel.base_url
+  )
+  const opensDialog =
+    isInferenceChannel || isOpenCodeGoChannel || codingPlanProvider !== null
 
   const loadOpenCodeGoUsage = async () => {
     if (isUpdating) {
@@ -469,6 +481,25 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     }
   }
 
+  const loadCodingPlanUsage = async () => {
+    if (isUpdating) {
+      return
+    }
+    setIsUpdating(true)
+    try {
+      const res = await getCodingPlanUsage(channel.id)
+      if (!res.success || !res.data) {
+        throw createServerError(res, t('Failed to fetch usage'))
+      }
+      setCodingPlanUsage(res.data)
+      setCodingPlanUsageOpen(true)
+    } catch (error) {
+      handleServerError(error, t('Failed to fetch usage'))
+    } finally {
+      setIsUpdating(false)
+    }
+  }
+
   const handleClickUpdate = async () => {
     if (isInferenceChannel) {
       setCurrentRow(channel)
@@ -477,6 +508,10 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     }
     if (isOpenCodeGoChannel) {
       await loadOpenCodeGoUsage()
+      return
+    }
+    if (codingPlanProvider) {
+      await loadCodingPlanUsage()
       return
     }
     if (isUpdating) {
@@ -532,7 +567,7 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     remainingBadgeLabel = t('Updating...')
   } else if (sensitiveVisible && channel.type === 57) {
     remainingBadgeLabel = t('Account Info')
-  } else if (sensitiveVisible && isOpenCodeGoChannel) {
+  } else if (sensitiveVisible && (isOpenCodeGoChannel || codingPlanProvider)) {
     remainingBadgeLabel = t('Usage')
   } else if (sensitiveVisible && isInferenceChannel) {
     remainingBadgeLabel = inferenceStatusLabel
@@ -544,11 +579,15 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     remainingTooltipLabel = t('Click to view Codex usage')
   } else if (isOpenCodeGoChannel) {
     remainingTooltipLabel = t('Click to view OpenCode Go usage')
+  } else if (codingPlanProvider) {
+    remainingTooltipLabel = t('Click to view {{provider}} usage', {
+      provider: CODING_PLAN_NAMES[codingPlanProvider],
+    })
   } else if (isInferenceChannel) {
     remainingTooltipLabel = inferenceStatusLabel
   }
   let remainingBadgeVariant: StatusBadgeProps['variant'] = variant
-  if (channel.type === 57 || isInferenceChannel || isOpenCodeGoChannel) {
+  if (channel.type === 57 || opensDialog) {
     remainingBadgeVariant = 'info'
   } else if (isUpdating) {
     remainingBadgeVariant = 'neutral'
@@ -651,6 +690,21 @@ export function BalanceCell({ channel }: { channel: Channel }) {
         onRefresh={loadOpenCodeGoUsage}
         isRefreshing={isUpdating}
       />
+      {codingPlanProvider && (
+        <CodingPlanUsageDialog
+          open={codingPlanUsageOpen}
+          onOpenChange={setCodingPlanUsageOpen}
+          provider={codingPlanProvider}
+          channelLabel={
+            sensitiveVisible
+              ? `${channel.name} (#${channel.id})`
+              : `${SENSITIVE_MASK} (#${SENSITIVE_MASK})`
+          }
+          usage={codingPlanUsage}
+          onRefresh={loadCodingPlanUsage}
+          isRefreshing={isUpdating}
+        />
+      )}
       {rawBalanceResponse !== null && (
         <BalanceQueryDialog
           initialRawResponse={rawBalanceResponse}

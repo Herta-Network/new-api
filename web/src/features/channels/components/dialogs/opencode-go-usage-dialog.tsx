@@ -16,15 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { Dialog } from '@/components/dialog'
-import { StatusBadge } from '@/components/status-badge'
-import { Button } from '@/components/ui/button'
-
 import type { OpenCodeGoUsage } from '../../api'
-import { RateLimitWindow } from '../rate-limit-window'
+import { PlanUsageDialog } from './plan-usage-dialog'
 
 type OpenCodeGoUsageDialogProps = {
   open: boolean
@@ -39,59 +34,19 @@ export function OpenCodeGoUsageDialog(props: OpenCodeGoUsageDialogProps) {
   const { t } = useTranslation()
 
   return (
-    <Dialog
+    <PlanUsageDialog
       open={props.open}
       onOpenChange={props.onOpenChange}
       title={t('OpenCode Go Usage')}
-      description={props.channelLabel}
-      contentClassName='sm:max-w-[900px]'
-      contentHeight='auto'
-      bodyClassName='flex flex-col gap-4'
-      footer={
-        <Button
-          type='button'
-          variant='outline'
-          onClick={() => props.onOpenChange(false)}
-        >
-          {t('Close')}
-        </Button>
-      }
-    >
-      <div className='flex flex-wrap items-center justify-between gap-2'>
-        {props.usage?.limit_reached ? (
-          <StatusBadge label={t('Limited')} variant='danger' copyable={false} />
-        ) : (
-          <StatusBadge
-            label={t('Available')}
-            variant='success'
-            copyable={false}
-          />
-        )}
-        <Button
-          type='button'
-          variant='outline'
-          size='sm'
-          onClick={props.onRefresh}
-          disabled={props.isRefreshing}
-        >
-          <RefreshCw data-icon='inline-start' />
-          {t('Refresh')}
-        </Button>
-      </div>
-      <div className='grid grid-cols-1 gap-3 md:grid-cols-3'>
-        <RateLimitWindow
-          title={t('5-Hour Window')}
-          window={props.usage?.five_hour}
-        />
-        <RateLimitWindow
-          title={t('Weekly Window')}
-          window={props.usage?.weekly}
-        />
-        <RateLimitWindow
-          title={t('Monthly Window')}
-          window={props.usage?.monthly}
-        />
-      </div>
-    </Dialog>
+      channelLabel={props.channelLabel}
+      limitReached={props.usage?.limit_reached}
+      windows={[
+        { title: t('5-Hour Window'), window: props.usage?.five_hour },
+        { title: t('Weekly Window'), window: props.usage?.weekly },
+        { title: t('Monthly Window'), window: props.usage?.monthly },
+      ]}
+      onRefresh={props.onRefresh}
+      isRefreshing={props.isRefreshing}
+    />
   )
 }

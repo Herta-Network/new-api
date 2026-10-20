@@ -135,6 +135,24 @@ export type OpenCodeGoUsageResponse = {
   data?: OpenCodeGoUsage
 }
 
+export type CodingPlanProvider = 'kimi' | 'glm' | 'minimax'
+
+export type CodingPlanUsage = {
+  provider: CodingPlanProvider
+  plan?: string
+  five_hour?: OpenCodeGoUsageWindow
+  weekly?: OpenCodeGoUsageWindow
+  limit_reached?: boolean
+}
+
+export type CodingPlanUsageResponse = {
+  success: boolean
+  message?: string
+  message_key?: string
+  message_params?: Record<string, unknown>
+  data?: CodingPlanUsage
+}
+
 export type CodexUsageResetResponse = CodexUsageResponse
 
 export type CodexCredentialRefreshResponse = {
@@ -432,6 +450,16 @@ export async function getOpenCodeGoUsage(
 ): Promise<OpenCodeGoUsageResponse> {
   const res = await api.get(
     `/api/channel/${channelId}/opencode-go/usage`,
+    channelActionConfig({ disableDuplicate: true })
+  )
+  return res.data
+}
+
+export async function getCodingPlanUsage(
+  channelId: number
+): Promise<CodingPlanUsageResponse> {
+  const res = await api.get(
+    `/api/channel/${channelId}/coding-plan/usage`,
     channelActionConfig({ disableDuplicate: true })
   )
   return res.data

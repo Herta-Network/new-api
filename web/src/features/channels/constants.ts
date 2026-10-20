@@ -28,6 +28,14 @@ export const CHANNEL_PRIORITY_GUIDE_KEYS = {
 
 export const CHANNEL_TYPE_OLLAMA = 4
 
+export const CHANNEL_TYPE_ANTHROPIC = 14
+
+export const CHANNEL_TYPE_MOONSHOT = 25
+
+export const CHANNEL_TYPE_ZHIPU_V4 = 26
+
+export const CHANNEL_TYPE_MINIMAX = 35
+
 export const CHANNEL_TYPE_SUB2API = 59
 
 export const CHANNEL_TYPE_NEW_API = 60
