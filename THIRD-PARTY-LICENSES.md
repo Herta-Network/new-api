@@ -3,7 +3,7 @@
 This file summarizes direct third-party dependencies used by distributed builds of this project.
 It is an engineering compliance artifact and should be kept with Docker images, standalone binaries, frontend bundles, and Electron installers.
 
-Scope: direct dependencies from `go.mod` (including the in-repo `relaykit` and `tokenkit` modules), `web/package.json`, and `electron/package.json`.
+Scope: direct dependencies from `go.mod` (including the in-repo `relaykit` and `tokenkit` modules), `web/package.json`, and `electron/package.json`, plus third-party source copied into this repository (see Vendored Source).
 Transitive dependencies should be audited before a final external release.
 
 ## Dependency Inventory
@@ -168,6 +168,14 @@ Transitive dependencies should be audited before a final external release.
 | electron | development | npm       | `cross-env`                                             | `7.0.3`                              | MIT                     |
 | electron | development | npm       | `electron`                                              | `41.10.6`                            | MIT                     |
 | electron | development | npm       | `electron-builder`                                      | `26.15.3`                            | MIT                     |
+
+## Vendored Source
+
+Third-party source code copied into this repository instead of being used as a module dependency. Each copied file keeps its original copyright and license notice and states what new-api changed.
+
+| Area    | Path         | Origin                                                           | Version          | License    |
+|---------|--------------|------------------------------------------------------------------|------------------|------------|
+| backend | `pkg/convo/` | AstrLink `convo` module, https://github.com/Calcium-Ion/AstrLink | commit `8461bf2` | Apache-2.0 |
 
 ## License Texts
 

@@ -3402,6 +3402,7 @@
     "Key": "Ключ",
     "Key Fingerprint": "Отпечаток ключа",
     "Key Sources": "Источники ключей",
+    "Uses the conversation recognized from the request history; no key is needed": "Использует диалог, распознанный по истории запроса; ключ не нужен",
     "Key Summary": "Сводка ключа",
     "Key Update Mode": "Режим обновления ключа",
     "Keys, OAuth credentials, and multi-key update behavior.": "Ключи, учетные данные OAuth и поведение обновления нескольких ключей.",

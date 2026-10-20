@@ -308,6 +308,8 @@ func extractChannelAffinityValue(c *gin.Context, src operation_setting.ChannelAf
 			return ""
 		}
 		return strings.TrimSpace(c.Request.Header.Get(src.Key))
+	case "conversation_session":
+		return ConversationSessionID(c)
 	case "gjson":
 		if src.Path == "" {
 			return ""

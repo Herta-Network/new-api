@@ -36,6 +36,12 @@ frontend bundles, and Electron desktop installers distributed to users.
 
 ==== Apache-2.0 Notices ====
 
+convo (pkg/convo), conversation session identification from AstrLink
+Copyright 2026 The AstrLink Authors
+https://github.com/Calcium-Ion/AstrLink
+Licensed under the Apache License, Version 2.0. Modified for new-api: moved
+into the root module and routed through the host JSON helpers.
+
 AWS SDK for Go
 Copyright 2015 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 Copyright 2014-2015 Stripe, Inc.

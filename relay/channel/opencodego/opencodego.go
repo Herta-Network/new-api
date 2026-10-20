@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
@@ -48,8 +49,10 @@ func SetupRequestHeader(c *gin.Context, header *http.Header, info *relaycommon.R
 
 // SessionID derives a stable session for the conversation, scoped to the user
 // and token so two callers never share one. It prefers an identity the client
-// sends, then prompt_cache_key, and otherwise hashes the opening of the
-// conversation, which a client that resends the history repeats on every turn.
+// sends, then the conversation session the gateway recognized from the history
+// and earlier responses, then prompt_cache_key, and otherwise hashes the
+// opening of the conversation, which a client that resends the history repeats
+// on every turn.
 func SessionID(c *gin.Context, info *relaycommon.RelayInfo) string {
 	scope := ""
 	format := types.RelayFormat("")
@@ -64,6 +67,11 @@ func SessionID(c *gin.Context, info *relaycommon.RelayInfo) string {
 			if value := strings.TrimSpace(c.Request.Header.Get(name)); value != "" {
 				source = "header:" + value
 				break
+			}
+		}
+		if source == "" {
+			if id := service.ConversationSessionID(c); id != "" {
+				source = "conversation:" + id
 			}
 		}
 		if source == "" {

@@ -3402,6 +3402,7 @@
     "Key": "Khóa",
     "Key Fingerprint": "Vân tay khóa",
     "Key Sources": "Nguồn khóa",
+    "Uses the conversation recognized from the request history; no key is needed": "Dùng cuộc hội thoại được nhận diện từ lịch sử yêu cầu; không cần khóa",
     "Key Summary": "Tóm tắt khóa",
     "Key Update Mode": "Chế độ cập nhật khóa",
     "Keys, OAuth credentials, and multi-key update behavior.": "Khóa, thông tin xác thực OAuth và hành vi cập nhật nhiều khóa.",

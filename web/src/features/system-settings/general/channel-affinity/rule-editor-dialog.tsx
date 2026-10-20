@@ -58,6 +58,7 @@ const KEY_SOURCE_TYPES = [
   'context_string',
   'request_header',
   'gjson',
+  'conversation_session',
 ] as const
 
 const CONTEXT_KEY_PRESETS = [
@@ -99,6 +100,9 @@ function normalizeStringList(text: string): string[] {
 function normalizeKeySource(src: Partial<KeySource>): KeySource {
   const type = (src?.type || 'gjson') as KeySource['type']
   if (type === 'gjson') return { ...src, type, key: '', path: src?.path || '' }
+  if (type === 'conversation_session') {
+    return { ...src, type, key: '', path: '' }
+  }
   return { ...src, type, key: src?.key || '', path: '' }
 }
 
@@ -207,7 +211,11 @@ export function RuleEditorDialog(props: Props) {
 
     const validKeySources = keySources
       .map(({ rowId: _, ...source }) => normalizeKeySource(source))
-      .filter((s) => s.type && (s.type === 'gjson' ? s.path : s.key))
+      .filter(
+        (s) =>
+          s.type === 'conversation_session' ||
+          (s.type === 'gjson' ? s.path : s.key)
+      )
     if (validKeySources.length === 0) {
       toast.error(t('At least one valid key source is required'))
       return
@@ -399,24 +407,34 @@ export function RuleEditorDialog(props: Props) {
                     </SelectGroup>
                   </SelectContent>
                 </Select>
-                <Input
-                  className='min-w-0 flex-1'
-                  placeholder={
-                    src.type === 'gjson'
-                      ? 'metadata.conversation_id'
-                      : 'user_id'
-                  }
-                  value={src.type === 'gjson' ? src.path || '' : src.key || ''}
-                  onChange={(e) => {
-                    const next = [...keySources]
-                    if (src.type === 'gjson') {
-                      next[idx] = { ...src, path: e.target.value }
-                    } else {
-                      next[idx] = { ...src, key: e.target.value }
+                {src.type === 'conversation_session' ? (
+                  <p className='text-muted-foreground min-w-0 flex-1 text-xs'>
+                    {t(
+                      'Uses the conversation recognized from the request history; no key is needed'
+                    )}
+                  </p>
+                ) : (
+                  <Input
+                    className='min-w-0 flex-1'
+                    placeholder={
+                      src.type === 'gjson'
+                        ? 'metadata.conversation_id'
+                        : 'user_id'
                     }
-                    setKeySources(next)
-                  }}
-                />
+                    value={
+                      src.type === 'gjson' ? src.path || '' : src.key || ''
+                    }
+                    onChange={(e) => {
+                      const next = [...keySources]
+                      if (src.type === 'gjson') {
+                        next[idx] = { ...src, path: e.target.value }
+                      } else {
+                        next[idx] = { ...src, key: e.target.value }
+                      }
+                      setKeySources(next)
+                    }}
+                  />
+                )}
                 <Button
                   type='button'
                   variant='ghost'
