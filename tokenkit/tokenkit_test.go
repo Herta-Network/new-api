@@ -4,7 +4,9 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
+	"github.com/dlclark/regexp2/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tiktoken-go/tokenizer/codec"
@@ -79,5 +81,112 @@ func TestCountCutsOnlyLongRuns(t *testing.T) {
 	for _, text := range []string{cjk.String(), strings.Repeat("token", 2000), "a" + strings.Repeat(" ", 10000) + "b", strings.Repeat("=", 10000)} {
 		exact, _ := encoder.Count(text)
 		assert.InEpsilon(t, exact, Count("gpt-5.6-sol", text), 0.005)
+	}
+}
+
+// splitPatterns are the split patterns of tiktoken-go v0.8.1, keyed by a model
+// that uses them. regexp2 runs these exact strings with the matchers that the
+// codec package generated and registered, as the codec itself does.
+var splitPatterns = map[string]string{
+	"gpt-5.6-sol": `[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
+	"gpt-4":       `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
+}
+
+var preTokenizerSamples = []string{
+	// Code with tabs, CRLF line ends, indentation, and trailing spaces.
+	"package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"统计 token\", 42) // 打印\n}\n",
+	"def f(x):  \r\n    return x\r\n\r\n\r\nclass A:\n        pass  \n",
+	"{\"model\": \"gpt-5.6-sol\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\\n\"}]}\n",
+	"if (a && b) {\n    return a->b;\n}\n/* comment */\n// done\n",
+	// CJK text and full-width punctuation.
+	"大语言模型按 token 计费；输入、输出分开计算。「引号」（括号）！",
+	"日本語のテキスト、カタカナ「ー」と々を含む。한국어 문장입니다.",
+	// Emoji with skin tones, ZWJ sequences, flags, and keycaps.
+	"👍🏽 ok 😀😀 👨\u200d👩\u200d👧 🇨🇳 1\ufe0f\u20e3 #\ufe0f\u20e3",
+	// Combining marks alone and after spaces, symbols, digits, and capitals.
+	"\u0301AB. e\u0301 \u0301x !\u0301 1\u0301 A\u0301B \u0301A \u0301 नमस्ते ภาษาไทย שָׁלוֹם",
+	// Whitespace runs before words, before line breaks, and at the end.
+	"a  b   c\t\td \u00a0e \u3000f\u2028g\u0085h\v\fi",
+	"x  \n  \n\n   y\r\n\r\n  z   \n\t\n",
+	"   leading and trailing   ",
+	// Contractions in every case, including U+017F, and capital runs.
+	"don't I'M WE'LL they'Re you'VE she'd it'ſ IT'S 'll 'Ve O'Neil rock'n'roll ''s x' 'tis I'dk we'llx",
+	"ǅemal ǈ HTTPServer XMLHttpRequest iOS McDonald ΑΒΓαβγ ПРИВЕТмир İstanbul 𝐀𝐁𝐂 𠀀𠀁",
+	// Numbers in several scripts.
+	"1234567 3.14159 1,000,000 v1.2.3 0x1F ٣٤٥ ⅫⅩ ½ x²³ 𝟎𝟏𝟐",
+	// Punctuation followed by line breaks and slashes.
+	"}\n\n);\r\n...\n//\n*/\n\n ->\n!\n/x :\n/\n",
+	// URLs and paths.
+	"see https://github.com/QuantumNous/new-api/blob/main/AGENTS.md?plain=1#L10 or ./tokenkit/tokenizer.go and C:\\Users\\me",
+	// Control characters; U+007F matches no branch of the generated matchers.
+	"a\x7fb !\x7f! \x7f  \x7f\n \x1b[31mred\x1b[0m \x00\x1c\x1d <|endoftext|>",
+	// Runs longer than maxRunBytes.
+	strings.Repeat("a", 3000),
+	strings.Repeat("统计按模型计费输入输出", 60),
+	"a" + strings.Repeat(" ", 3000) + "b",
+	strings.Repeat(" \n", 1000),
+	strings.Repeat("=", 3000),
+	strings.Repeat("😀", 600),
+	strings.Repeat("e\u0301", 800),
+	strings.Repeat("9", 5000),
+	// Invalid UTF-8, which the codec splits itself.
+	"abc\xff\xfedef",
+	"héllo\xc3",
+	"\x80 hello \xe4\xb8",
+	strings.Repeat("\xff", 2000),
+}
+
+// The pre-tokenizers cut text where the split patterns of tiktoken-go do.
+func TestPreTokenizersMatchRegexp2(t *testing.T) {
+	for model, pattern := range splitPatterns {
+		e := o200kBase()
+		if usesCl100k(model) {
+			e = cl100kBase()
+		}
+		split := regexp2.MustCompile(pattern, regexp2.None)
+		for _, text := range preTokenizerSamples {
+			if !utf8.ValidString(text) {
+				continue
+			}
+			var want, got [][2]int
+			m, err := split.FindStringMatch(text)
+			for ; m != nil && err == nil; m, err = split.FindNextMatch(m) {
+				start, length := m.ByteRange()
+				want = append(want, [2]int{start, start + length})
+			}
+			require.NoError(t, err)
+			for start, end := e.nextPiece(text, 0); start < len(text); start, end = e.nextPiece(text, end) {
+				got = append(got, [2]int{start, end})
+			}
+			assert.Equal(t, want, got, "%s %q", model, text)
+		}
+	}
+}
+
+// Count gives the codec's count, cold and from the piece cache. Counting the
+// codec's pieces one at a time gives the same total, which is what lets Count
+// cache each piece.
+func TestCountMatchesCodec(t *testing.T) {
+	for model, pattern := range splitPatterns {
+		e := o200kBase()
+		if usesCl100k(model) {
+			e = cl100kBase()
+		}
+		split := regexp2.MustCompile(pattern, regexp2.None)
+		for _, text := range preTokenizerSamples {
+			want := countChunks(text, e.codecCount)
+			byPiece := countChunks(text, func(chunk string) int {
+				total := 0
+				m, err := split.FindStringMatch(chunk)
+				for ; m != nil && err == nil; m, err = split.FindNextMatch(m) {
+					total += e.codecCount(m.String())
+				}
+				require.NoError(t, err)
+				return total
+			})
+			require.Equal(t, want, byPiece, "%s %q", model, text)
+			assert.Equal(t, want, Count(model, text), "%s %q", model, text)
+			assert.Equal(t, want, Count(model, text), "%s %q cached", model, text)
+		}
 	}
 }

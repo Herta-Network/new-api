@@ -1,8 +1,10 @@
 package tokenkit
 
 import (
+	"hash/maphash"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
 
@@ -11,8 +13,8 @@ import (
 )
 
 var (
-	o200kBase  = sync.OnceValue(func() tokenizer.Codec { return codec.NewO200kBase() })
-	cl100kBase = sync.OnceValue(func() tokenizer.Codec { return codec.NewCl100kBase() })
+	o200kBase  = sync.OnceValue(func() *encoding { return newEncoding(codec.NewO200kBase(), nextO200kPiece) })
+	cl100kBase = sync.OnceValue(func() *encoding { return newEncoding(codec.NewCl100kBase(), nextCl100kPiece) })
 )
 
 // maxRunBytes bounds a run of letters, whitespace, or symbols passed to the
@@ -21,6 +23,38 @@ var (
 // piece. Cutting longer runs keeps counting linear; ordinary text has no such
 // runs, and a cut changes the count only inside the run (under 0.5% for CJK).
 const maxRunBytes = 1024
+
+// Piece cache bounds. The cache is a set-associative table that never grows:
+// a piece may sit in any slot of the set its hash picks, and a new piece takes
+// the first empty slot of its set or replaces one the hash picks. An encoding
+// keeps at most pieceCacheSlots pieces of up to maxCachedPieceBytes each: about
+// 10 MB at worst, and 3 MB once full of agent traffic, where most pieces are a
+// few bytes. Longer pieces are rare, rarely repeat, and are counted every time.
+const (
+	pieceCacheSlots     = 1 << 16
+	pieceCacheWays      = 4
+	maxCachedPieceBytes = 128
+)
+
+// encoding counts tokens exactly as its codec does, but splits text into
+// pieces with a hand-written pre-tokenizer instead of regexp2, where the codec
+// spends most of its time, and caches the count of each short piece. The codec
+// encodes each piece on its own, so the sum over the pieces is its total.
+type encoding struct {
+	codec     tokenizer.Codec
+	nextPiece func(text string, pos int) (start, end int)
+	seed      maphash.Seed
+	pieces    [pieceCacheSlots]atomic.Pointer[countedPiece]
+}
+
+type countedPiece struct {
+	piece  string
+	tokens int
+}
+
+func newEncoding(c tokenizer.Codec, nextPiece func(text string, pos int) (start, end int)) *encoding {
+	return &encoding{codec: c, nextPiece: nextPiece, seed: maphash.MakeSeed()}
+}
 
 // Count returns the token count of text for model. GPT and o-series models
 // are counted with their tiktoken encoding; other models use Estimate.
@@ -32,11 +66,21 @@ func Count(model, text string) int {
 	if ModelFamily(model) != FamilyOpenAI {
 		return Estimate(model, text)
 	}
-	encoder := o200kBase()
+	e := o200kBase()
 	if usesCl100k(model) {
-		encoder = cl100kBase()
+		e = cl100kBase()
 	}
+	if !utf8.ValidString(text) {
+		// regexp2 reads each invalid byte as U+FFFD; leave such text to it.
+		return countChunks(text, e.codecCount)
+	}
+	return countChunks(text, e.count)
+}
 
+// countChunks returns the sum of count over the chunks of text that are
+// encoded separately: text is cut inside every letter, whitespace, or symbol
+// run that reaches maxRunBytes.
+func countChunks(text string, count func(chunk string) int) int {
 	total, start := 0, 0
 	runClass, runStart := runNone, 0
 	for i, r := range text {
@@ -46,13 +90,50 @@ func Count(model, text string) int {
 			continue
 		}
 		if class != runNumber && i-runStart >= maxRunBytes {
-			n, _ := encoder.Count(text[start:i])
-			total += n
+			total += count(text[start:i])
 			start, runStart = i, i
 		}
 	}
-	n, _ := encoder.Count(text[start:])
-	return total + n
+	return total + count(text[start:])
+}
+
+// count returns the token count of chunk, which must be valid UTF-8.
+func (e *encoding) count(chunk string) int {
+	total := 0
+	for start, end := e.nextPiece(chunk, 0); start < len(chunk); start, end = e.nextPiece(chunk, end) {
+		total += e.pieceCount(chunk[start:end])
+	}
+	return total
+}
+
+// pieceCount returns the token count of one piece, from the cache when the
+// piece is short enough to keep.
+func (e *encoding) pieceCount(piece string) int {
+	if len(piece) > maxCachedPieceBytes {
+		return e.codecCount(piece)
+	}
+	h := maphash.String(e.seed, piece)
+	set := (*[pieceCacheWays]atomic.Pointer[countedPiece])(e.pieces[h%pieceCacheSlots&^(pieceCacheWays-1):])
+	// Slots fill in order and are never emptied, so an empty slot ends the set.
+	slot := &set[(h>>32)%pieceCacheWays]
+	for i := range set {
+		cached := set[i].Load()
+		if cached == nil {
+			slot = &set[i]
+			break
+		}
+		if cached.piece == piece {
+			return cached.tokens
+		}
+	}
+	tokens := e.codecCount(piece)
+	slot.Store(&countedPiece{piece: strings.Clone(piece), tokens: tokens})
+	return tokens
+}
+
+func (e *encoding) codecCount(text string) int {
+	n, _ := e.codec.Count(text)
+	return n
 }
 
 type runClass int
@@ -69,17 +150,30 @@ const (
 // pieces. Digits are split into groups of three by the encoder itself.
 func runClassOf(r rune) runClass {
 	if r < utf8.RuneSelf {
+		return asciiRunClasses[r]
+	}
+	return unicodeRunClass(r)
+}
+
+var asciiRunClasses = func() (classes [utf8.RuneSelf]runClass) {
+	for r := range rune(utf8.RuneSelf) {
 		switch {
 		case 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z':
-			return runLetter
+			classes[r] = runLetter
 		case '0' <= r && r <= '9':
-			return runNumber
+			classes[r] = runNumber
 		case r == ' ' || '\t' <= r && r <= '\r':
-			return runSpace
+			classes[r] = runSpace
 		default:
-			return runSymbol
+			classes[r] = runSymbol
 		}
 	}
+	return classes
+}()
+
+// unicodeRunClass is runClassOf outside ASCII, kept apart so that runClassOf
+// inlines.
+func unicodeRunClass(r rune) runClass {
 	switch {
 	case unicode.IsLetter(r) || unicode.IsMark(r):
 		return runLetter
