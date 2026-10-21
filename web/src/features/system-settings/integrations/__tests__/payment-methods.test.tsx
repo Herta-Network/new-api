@@ -1,0 +1,339 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { api } from '@/lib/api'
+
+import type {
+  PaymentMethod,
+  PaymentPlatformsInfo,
+} from '../payment-methods-api'
+import { PaymentMethodsSection } from '../payment-methods-section'
+
+const platforms: PaymentPlatformsInfo = {
+  currencies: ['USD', 'CNY'],
+  exchange_rate_api_key_configured: false,
+  platforms: [
+    {
+      platform: 'epay',
+      name: 'EPay',
+      url: '',
+      fields: [
+        {
+          key: 'url',
+          label: 'Gateway URL',
+          required: true,
+          secret: false,
+          managed: false,
+        },
+        {
+          key: 'pid',
+          label: 'Merchant ID',
+          required: true,
+          secret: false,
+          managed: false,
+        },
+        {
+          key: 'key',
+          label: 'Merchant key',
+          required: true,
+          secret: true,
+          managed: false,
+        },
+        {
+          key: 'type',
+          label: 'Payment type',
+          required: false,
+          secret: false,
+          managed: false,
+        },
+      ],
+    },
+    {
+      platform: 'stripe',
+      name: 'Stripe',
+      url: 'https://stripe.com',
+      fields: [
+        {
+          key: 'public_key',
+          label: 'Publishable key',
+          required: true,
+          secret: false,
+          managed: false,
+        },
+        {
+          key: 'secret_key',
+          label: 'Secret key',
+          required: true,
+          secret: true,
+          managed: false,
+        },
+        {
+          key: 'webhook_url',
+          label: 'Webhook URL',
+          required: false,
+          secret: false,
+          managed: true,
+        },
+      ],
+    },
+  ],
+}
+
+function method(overrides: Partial<PaymentMethod>): PaymentMethod {
+  return {
+    id: 1,
+    name: 'Alipay',
+    platform: 'epay',
+    icon: '',
+    description: '',
+    sort: 0,
+    enabled: true,
+    domain: '',
+    fee_mode: 0,
+    fee_rate_bp: 0,
+    fee_fixed: 0,
+    created_at: 0,
+    updated_at: 0,
+    config: {},
+    secrets_set: {},
+    notify_url: '',
+    webhook_stale: false,
+    ...overrides,
+  }
+}
+
+const balance = method({ id: -1, name: 'Balance', platform: 'balance' })
+const epay = method({
+  id: 2,
+  name: 'Alipay',
+  config: {
+    url: 'https://pay.example.com',
+    pid: '1001',
+    key: '',
+    type: 'alipay',
+  },
+  secrets_set: { key: true },
+  notify_url: 'https://api.example.com/api/payment/notify/epay/token-2',
+})
+const stripe = method({
+  id: 3,
+  name: 'Card',
+  platform: 'stripe',
+  config: {
+    public_key: 'pk_test_1',
+    secret_key: '',
+    webhook_url: 'https://old.example.com/hook',
+  },
+  secrets_set: { secret_key: true },
+  notify_url: 'https://api.example.com/api/payment/notify/stripe/token-3',
+  webhook_stale: true,
+})
+
+function mockApi(methods: PaymentMethod[]) {
+  vi.spyOn(api, 'get').mockImplementation(async (url: string) => {
+    if (url === '/api/payment/settings/platforms') {
+      return { data: { success: true, data: platforms } }
+    }
+    return { data: { success: true, data: methods } }
+  })
+  const write = { data: { success: true, data: methods[0] } }
+  return {
+    post: vi.spyOn(api, 'post').mockResolvedValue(write),
+    put: vi.spyOn(api, 'put').mockResolvedValue(write),
+    del: vi.spyOn(api, 'delete').mockResolvedValue(write),
+  }
+}
+
+function renderSection() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <PaymentMethodsSection currency='USD' />
+    </QueryClientProvider>
+  )
+  return userEvent.setup()
+}
+
+afterEach(() => vi.restoreAllMocks())
+
+describe('payment methods', () => {
+  it('creates a method with the fee percentage in basis points and the fixed fee in hundredths', async () => {
+    const request = mockApi([balance])
+    const user = renderSection()
+    await user.click(
+      await screen.findByRole('button', { name: 'Add payment method' })
+    )
+    const dialog = await screen.findByRole('dialog')
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Name' }),
+      'Alipay'
+    )
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Gateway URL' }),
+      'https://pay.example.com'
+    )
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Merchant ID' }),
+      '1001'
+    )
+    await user.type(within(dialog).getByLabelText('Merchant key'), 'secret')
+    await user.click(
+      within(dialog).getByRole('combobox', { name: 'Payment fee' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'Percentage + fixed' })
+    )
+    await user.type(
+      within(dialog).getByRole('spinbutton', { name: 'Fee rate (%)' }),
+      '2.9'
+    )
+    await user.type(
+      within(dialog).getByRole('spinbutton', { name: 'Fixed fee (USD)' }),
+      '.3'
+    )
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(request.post).toHaveBeenCalledTimes(1))
+    expect(request.post).toHaveBeenCalledWith(
+      '/api/payment/settings/methods',
+      expect.objectContaining({
+        name: 'Alipay',
+        platform: 'epay',
+        config: {
+          url: 'https://pay.example.com',
+          pid: '1001',
+          key: 'secret',
+          type: '',
+        },
+        fee_mode: 3,
+        fee_rate_bp: 290,
+        fee_fixed: 30,
+      })
+    )
+  })
+
+  it('requires a secret that is not stored yet before creating a method', async () => {
+    const request = mockApi([balance])
+    const user = renderSection()
+    await user.click(
+      await screen.findByRole('button', { name: 'Add payment method' })
+    )
+    const dialog = await screen.findByRole('dialog')
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Name' }),
+      'Alipay'
+    )
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Gateway URL' }),
+      'https://pay.example.com'
+    )
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Merchant ID' }),
+      '1001'
+    )
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    expect(
+      await within(dialog).findByText('This field is required')
+    ).toBeVisible()
+    expect(within(dialog).getByLabelText('Merchant key')).toHaveAttribute(
+      'aria-invalid',
+      'true'
+    )
+    expect(request.post).not.toHaveBeenCalled()
+  })
+
+  it('keeps a stored secret when its field is left blank on edit', async () => {
+    const request = mockApi([balance, epay])
+    const user = renderSection()
+    await user.click(
+      within(await screen.findByRole('row', { name: /Alipay/ })).getByRole(
+        'button',
+        { name: 'Edit' }
+      )
+    )
+    const dialog = await screen.findByRole('dialog')
+    const secret = within(dialog).getByLabelText(/Merchant key/)
+    expect(secret).toHaveValue('')
+    expect(secret).toHaveAttribute('type', 'password')
+    expect(within(dialog).getByText('Configured')).toBeVisible()
+    const name = within(dialog).getByRole('textbox', { name: 'Name' })
+    await user.clear(name)
+    await user.type(name, 'Alipay CN')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(request.put).toHaveBeenCalledTimes(1))
+    expect(request.put).toHaveBeenCalledWith(
+      '/api/payment/settings/methods/2',
+      expect.objectContaining({
+        name: 'Alipay CN',
+        config: {
+          url: 'https://pay.example.com',
+          pid: '1001',
+          key: '',
+          type: 'alipay',
+        },
+      })
+    )
+  })
+
+  it('lets the balance method be disabled but never deleted', async () => {
+    const request = mockApi([balance, epay])
+    const user = renderSection()
+    await user.click(
+      within(await screen.findByRole('row', { name: /Balance/ })).getByRole(
+        'button',
+        { name: 'Open menu' }
+      )
+    )
+    expect(
+      screen.queryByRole('menuitem', { name: 'Delete' })
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole('menuitem', { name: 'Disable' }))
+
+    await waitFor(() => expect(request.put).toHaveBeenCalledTimes(1))
+    expect(request.put).toHaveBeenCalledWith(
+      '/api/payment/settings/methods/-1',
+      expect.objectContaining({ name: 'Balance', enabled: false })
+    )
+  })
+
+  it('shows the callback URL and lets a stale Stripe webhook be synced', async () => {
+    const request = mockApi([balance, stripe])
+    const user = renderSection()
+    const row = within(await screen.findByRole('row', { name: /Card/ }))
+    expect(row.getByText(stripe.notify_url)).toBeVisible()
+    expect(row.getByRole('button', { name: 'Copy callback URL' })).toBeVisible()
+    expect(row.getByText('Webhook outdated')).toBeVisible()
+    await user.click(row.getByRole('button', { name: 'Open menu' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Sync webhook' }))
+
+    await waitFor(() =>
+      expect(request.post).toHaveBeenCalledWith(
+        '/api/payment/settings/methods/3/webhook/sync'
+      )
+    )
+  })
+})
