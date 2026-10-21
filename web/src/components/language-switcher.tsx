@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { Languages, Check } from 'lucide-react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -31,6 +32,7 @@ import {
   INTERFACE_LANGUAGE_OPTIONS,
   normalizeInterfaceLanguage,
 } from '@/i18n/languages'
+import { changeInterfaceLanguage } from '@/i18n/locale-loader'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
@@ -40,17 +42,20 @@ export function LanguageSwitcher() {
   const user = useAuthStore((s) => s.auth.user)
   const currentLanguage = normalizeInterfaceLanguage(i18n.language)
   const handleChangeLanguage = useCallback(
-    async (code: string) => {
-      await i18n.changeLanguage(code)
-      if (user) {
-        try {
-          await api.put('/api/user/self', { language: code })
-        } catch {
-          // Best-effort persistence; don't block the UI on failure
-        }
+    async (code: string, label: string) => {
+      const result = await changeInterfaceLanguage(i18n, code)
+      if (result === 'failed') {
+        toast.error(t('Failed to load'), { description: label })
+        return
+      }
+      if (result !== 'changed' || !user) return
+      try {
+        await api.put('/api/user/self', { language: code })
+      } catch {
+        // Best-effort persistence; don't block the UI on failure
       }
     },
-    [i18n, user]
+    [i18n, t, user]
   )
 
   return (
@@ -65,7 +70,7 @@ export function LanguageSwitcher() {
         {INTERFACE_LANGUAGE_OPTIONS.map((lang) => (
           <DropdownMenuItem
             key={lang.code}
-            onClick={() => handleChangeLanguage(lang.code)}
+            onClick={() => handleChangeLanguage(lang.code, lang.label)}
           >
             {lang.label}
             <Check
