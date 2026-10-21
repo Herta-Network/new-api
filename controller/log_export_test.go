@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
@@ -66,17 +67,12 @@ func seedExportLogs(t *testing.T, mainDB *gorm.DB, logDB *gorm.DB, now int64) {
 	}
 }
 
-func useLogExportDatabases(t *testing.T, mainDB *gorm.DB, logDB *gorm.DB, mainType common.DatabaseType, logType common.DatabaseType) {
+func useLogExportDatabases(t *testing.T) {
 	t.Helper()
-	previousDB, previousLogDB := model.DB, model.LOG_DB
-	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
+	pgtest.Reset(t, model.DB)
 	previousRedis, previousMemory := common.RedisEnabled, common.MemoryCacheEnabled
-	model.DB, model.LOG_DB = mainDB, logDB
-	common.SetDatabaseTypes(mainType, logType)
 	common.RedisEnabled, common.MemoryCacheEnabled = false, false
 	t.Cleanup(func() {
-		model.DB, model.LOG_DB = previousDB, previousLogDB
-		common.SetDatabaseTypes(previousMain, previousLog)
 		common.RedisEnabled, common.MemoryCacheEnabled = previousRedis, previousMemory
 	})
 }
@@ -86,43 +82,24 @@ func TestLogExportDatabaseMatrix(t *testing.T) {
 	previousMaster := common.IsMasterNode
 	common.IsMasterNode = true
 	t.Cleanup(func() { common.IsMasterNode = previousMaster })
-	for _, tc := range []struct {
-		kind, env string
-		typ       common.DatabaseType
-	}{
-		{"sqlite", "", common.DatabaseTypeSQLite},
-		{"mysql", "AUDIT_MYSQL_DSN", common.DatabaseTypeMySQL},
-		{"postgres", "AUDIT_POSTGRES_DSN", common.DatabaseTypePostgreSQL},
-		{"clickhouse", "AUDIT_CLICKHOUSE_DSN", common.DatabaseTypeClickHouse},
-	} {
-		t.Run(tc.kind, func(t *testing.T) {
-			dsn := os.Getenv(tc.env)
-			if tc.env != "" && dsn == "" {
-				t.Skip(tc.env + " is not configured")
+	for _, kind := range []string{"postgres", "clickhouse"} {
+		t.Run(kind, func(t *testing.T) {
+			dsn := os.Getenv("AUDIT_CLICKHOUSE_DSN")
+			if kind == "clickhouse" && dsn == "" {
+				t.Skip("AUDIT_CLICKHOUSE_DSN is not configured")
 			}
-			db, isolatedDSN := newAuditTestDatabase(t, tc.kind, dsn)
-			mainDB, mainType := db, tc.typ
-			if tc.kind == "clickhouse" {
-				mainDB, _ = newAuditTestDatabase(t, "sqlite", "")
-				mainType = common.DatabaseTypeSQLite
-			}
-			useLogExportDatabases(t, mainDB, db, mainType, tc.typ)
-			require.NoError(t, mainDB.AutoMigrate(&model.Channel{}))
-			if tc.kind == "clickhouse" {
+			useLogExportDatabases(t)
+			if kind == "clickhouse" {
+				_, isolatedDSN := newClickHouseTestDatabase(t, dsn)
+				keepPackageDatabases(t)
 				t.Setenv("LOG_SQL_DSN", isolatedDSN)
 				require.NoError(t, model.InitLogDB())
-			} else {
-				require.NoError(t, db.AutoMigrate(&model.Log{}))
-			}
-			versionSQL := "SELECT version()"
-			if tc.kind == "sqlite" {
-				versionSQL = "SELECT sqlite_version()"
 			}
 			var version string
-			require.NoError(t, model.LOG_DB.Raw(versionSQL).Scan(&version).Error)
-			t.Logf("log database: %s %s", tc.kind, version)
+			require.NoError(t, model.LOG_DB.Raw("SELECT version()").Scan(&version).Error)
+			t.Logf("log database: %s %s", kind, version)
 			now := time.Now().Unix()
-			seedExportLogs(t, mainDB, model.LOG_DB, now)
+			seedExportLogs(t, model.DB, model.LOG_DB, now)
 			query := fmt.Sprintf("start_timestamp=%d&end_timestamp=%d", now-2*24*3600, now+3600)
 
 			listed := callLogHandler(t, GetUserLogs, 1, common.RoleCommonUser, query)[0]
@@ -152,11 +129,9 @@ func TestLogExportDatabaseMatrix(t *testing.T) {
 
 func TestLogExportRules(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db, _ := newAuditTestDatabase(t, "sqlite", "")
-	useLogExportDatabases(t, db, db, common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
-	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Log{}, &model.QuotaData{}))
+	useLogExportDatabases(t)
 	now := time.Now().Unix()
-	seedExportLogs(t, db, db, now)
+	seedExportLogs(t, model.DB, model.LOG_DB, now)
 	logSetting := operation_setting.GetLogSetting()
 	previousSetting := *logSetting
 	t.Cleanup(func() { *logSetting = previousSetting })

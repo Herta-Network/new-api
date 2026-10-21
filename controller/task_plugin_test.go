@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -15,23 +16,19 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	"github.com/QuantumNous/new-api/plugins"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 func setupTaskPluginControllerTest(t *testing.T) {
 	t.Helper()
-	originalDB := model.DB
-	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, database.AutoMigrate(&model.TaskPlugin{}, &model.Channel{}, &model.Ability{}, &model.Task{}, &model.Option{}))
-	model.DB = database
-	t.Cleanup(func() { model.DB = originalDB })
+	pgtest.Reset(t, model.DB)
 }
 
 const lifecyclePluginSource = `
@@ -325,22 +322,17 @@ export function parseTaskResult() { return {}; }
 	assert.True(t, ok)
 }
 
-// The shipped alibaba plugin is already larger than a MySQL TEXT column
-// (64 KiB), so storing it through the model path the upload endpoint uses and
-// reading it back unchanged proves the source and icon columns are not
-// truncated. Set TEST_TASK_DB_DIALECT plus TEST_MYSQL_DSN or TEST_POSTGRES_DSN
-// to run the same contract against a real MySQL or PostgreSQL server.
-func TestTaskPluginSourceAboveMySQLTextLimitRoundTrips(t *testing.T) {
-	database, _ := openTaskDialectDatabase(t, &model.TaskPlugin{})
-	originalDB := model.DB
-	model.DB = database
-	t.Cleanup(func() { model.DB = originalDB })
+// The shipped alibaba plugin is larger than 64 KiB, so storing it through the
+// model path the upload endpoint uses and reading it back unchanged proves the
+// source and icon columns are not truncated.
+func TestTaskPluginSourceAbove64KiBRoundTrips(t *testing.T) {
+	pgtest.Reset(t, model.DB)
 
 	source, err := plugins.Source("alibaba")
 	require.NoError(t, err)
-	require.Greater(t, len(source), 65535, "fixture must exceed the MySQL TEXT limit")
+	require.Greater(t, len(source), 65535, "fixture must exceed 64 KiB")
 	icon := "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(strings.Repeat(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`, 2048)))
-	require.Greater(t, len(icon), 65535, "icon fixture must exceed the MySQL TEXT limit")
+	require.Greater(t, len(icon), 65535, "icon fixture must exceed 64 KiB")
 
 	plugin := model.TaskPlugin{Key: "alibaba", APIVersion: 1, Version: "roundtrip", Source: model.LongText(source), SourceHash: "hash", Enabled: true}
 	require.NoError(t, model.SaveTaskPlugin(&plugin))
@@ -761,6 +753,11 @@ func TestTaskPluginRuntimeReportsPluginLevelCompileErrors(t *testing.T) {
 
 func TestTaskPluginRuntimeSurvivesDatabaseSyncFailure(t *testing.T) {
 	setupTaskPluginControllerTest(t)
+	// The test closes the database below; give it a connection of its own.
+	keepPackageDatabases(t)
+	connection, err := gorm.Open(postgres.New(postgres.Config{DSN: os.Getenv("SQL_DSN"), PreferSimpleProtocol: true}), &gorm.Config{})
+	require.NoError(t, err)
+	model.DB = connection
 	key := "runtime-database-failure"
 	cleanupTaskPluginControllerRuntime(t, key)
 	taskPluginSyncState.Lock()
