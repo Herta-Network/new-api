@@ -268,3 +268,15 @@ func SearchRateLimit() func(c *gin.Context) {
 	}
 	return userRateLimitFactory(common.SearchRateLimitNum, common.SearchRateLimitDuration, "SR")
 }
+
+// PaymentRateLimit returns a per-user rate limiter for a buyer's actions on
+// payment orders (checkout, sync, close). The payment result page polls sync,
+// so these calls must not share the IP-keyed critical bucket that guards
+// login and registration.
+// Configurable via PAYMENT_RATE_LIMIT_ENABLE / PAYMENT_RATE_LIMIT / PAYMENT_RATE_LIMIT_DURATION.
+func PaymentRateLimit() func(c *gin.Context) {
+	if !common.PaymentRateLimitEnable {
+		return defNext
+	}
+	return userRateLimitFactory(common.PaymentRateLimitNum, common.PaymentRateLimitDuration, "PM")
+}

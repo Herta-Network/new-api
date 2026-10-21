@@ -242,6 +242,12 @@ var (
 	SearchRateLimitEnable         = true
 	SearchRateLimitNum            = 10
 	SearchRateLimitDuration int64 = 60
+
+	// Per-user limit on a buyer's actions on payment orders: checkout, sync
+	// and close (applies after authentication, keyed by user ID)
+	PaymentRateLimitEnable         = true
+	PaymentRateLimitNum            = 60
+	PaymentRateLimitDuration int64 = 10 * 60
 )
 
 var RateLimitKeyExpirationDuration = 20 * time.Minute

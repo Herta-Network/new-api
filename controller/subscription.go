@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service/payment"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -137,6 +138,10 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 		common.ApiErrorT(c, "Price cannot exceed 9999")
 		return
 	}
+	if _, err := payment.PlanPrice(req.Plan.PriceAmount); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	if req.Plan.AllowBalancePay == nil {
 		req.Plan.AllowBalancePay = common.GetPointer(true)
 	}
@@ -210,6 +215,10 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 	}
 	if req.Plan.PriceAmount > 9999 {
 		common.ApiErrorT(c, "Price cannot exceed 9999")
+		return
+	}
+	if _, err := payment.PlanPrice(req.Plan.PriceAmount); err != nil {
+		common.ApiError(c, err)
 		return
 	}
 	req.Plan.Id = id
