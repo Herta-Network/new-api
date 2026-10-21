@@ -61,13 +61,6 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/oauth/:provider", middleware.CriticalRateLimit(), middleware.DisableCache(), middleware.TryUserAuth(), controller.HandleOAuth)
 		apiRouter.GET("/ratio_config", middleware.CriticalRateLimit(), controller.GetRatioConfig)
 
-		apiRouter.POST("/stripe/webhook", anonymousRequestBodyLimit, controller.StripeWebhook)
-		apiRouter.POST("/creem/webhook", anonymousRequestBodyLimit, controller.CreemWebhook)
-		apiRouter.POST("/waffo/webhook", anonymousRequestBodyLimit, controller.WaffoWebhook)
-		// :env separates test vs prod URLs so the operator can register each
-		// in Pancake's matching webhook slot; handler enforces env match.
-		apiRouter.POST("/waffo-pancake/webhook/:env", anonymousRequestBodyLimit, controller.WaffoPancakeWebhook)
-
 		// Universal secure verification routes
 		apiRouter.GET("/verify/methods", middleware.UserAuth(), middleware.DisableCache(), controller.GetVerificationMethods)
 		apiRouter.POST("/verify", middleware.UserAuth(), middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("security-verification"), middleware.DisableCache(), controller.UniversalVerify)
@@ -86,8 +79,6 @@ func SetApiRouter(router *gin.Engine) {
 			userRoute.POST("/passkey/login/begin", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.PasskeyLoginBegin)
 			userRoute.POST("/passkey/login/finish", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.PasskeyLoginFinish)
 			//userRoute.POST("/tokenlog", middleware.CriticalRateLimit(), controller.TokenLog)
-			userRoute.POST("/epay/notify", anonymousRequestBodyLimit, controller.EpayNotify)
-			userRoute.GET("/epay/notify", controller.EpayNotify)
 			userRoute.GET("/groups", controller.GetUserGroups)
 
 			selfRoute := userRoute.Group("/")
@@ -120,17 +111,7 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.DELETE("/passkey", middleware.DisableCache(), controller.PasskeyDelete)
 				selfRoute.GET("/aff", controller.GetAffCode)
 				selfRoute.GET("/topup/info", controller.GetTopUpInfo)
-				selfRoute.GET("/topup/self", controller.GetUserTopUps)
 				selfRoute.POST("/topup", middleware.CriticalRateLimit(), controller.TopUp)
-				selfRoute.POST("/pay", middleware.CriticalRateLimit(), controller.RequestEpay)
-				selfRoute.POST("/amount", controller.RequestAmount)
-				selfRoute.POST("/stripe/pay", middleware.CriticalRateLimit(), controller.RequestStripePay)
-				selfRoute.POST("/stripe/amount", controller.RequestStripeAmount)
-				selfRoute.POST("/creem/pay", middleware.CriticalRateLimit(), controller.RequestCreemPay)
-				selfRoute.POST("/waffo/amount", controller.RequestWaffoAmount)
-				selfRoute.POST("/waffo/pay", middleware.CriticalRateLimit(), controller.RequestWaffoPay)
-				selfRoute.POST("/waffo-pancake/amount", controller.RequestWaffoPancakeAmount)
-				selfRoute.POST("/waffo-pancake/pay", middleware.CriticalRateLimit(), controller.RequestWaffoPancakePay)
 				selfRoute.POST("/aff_transfer", middleware.UserCriticalRateLimit("aff-transfer"), controller.TransferAffQuota)
 				selfRoute.PUT("/setting", controller.UpdateUserSetting)
 
@@ -154,8 +135,6 @@ func SetApiRouter(router *gin.Engine) {
 			adminRoute.Use(middleware.AdminAuth())
 			{
 				adminRoute.GET("/", controller.GetAllUsers)
-				adminRoute.GET("/topup", controller.GetAllTopUps)
-				adminRoute.POST("/topup/complete", controller.AdminCompleteTopUp)
 				adminRoute.GET("/search", controller.SearchUsers)
 				adminRoute.GET("/:id/oauth/bindings", controller.GetUserOAuthBindingsByAdmin)
 				adminRoute.DELETE("/:id/oauth/bindings/:provider_id", controller.UnbindCustomOAuthByAdmin)
@@ -180,11 +159,6 @@ func SetApiRouter(router *gin.Engine) {
 			subscriptionRoute.GET("/plans", controller.GetSubscriptionPlans)
 			subscriptionRoute.GET("/self", controller.GetSubscriptionSelf)
 			subscriptionRoute.PUT("/self/preference", controller.UpdateSubscriptionPreference)
-			subscriptionRoute.POST("/balance/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestBalancePay)
-			subscriptionRoute.POST("/epay/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestEpay)
-			subscriptionRoute.POST("/stripe/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestStripePay)
-			subscriptionRoute.POST("/creem/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestCreemPay)
-			subscriptionRoute.POST("/waffo-pancake/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestWaffoPancakePay)
 		}
 		subscriptionAdminRoute := apiRouter.Group("/subscription/admin")
 		subscriptionAdminRoute.Use(middleware.AdminAuth())
@@ -204,11 +178,51 @@ func SetApiRouter(router *gin.Engine) {
 			subscriptionAdminRoute.DELETE("/user_subscriptions/:id", controller.AdminDeleteUserSubscription)
 		}
 
-		// Subscription payment callbacks (no auth)
-		apiRouter.POST("/subscription/epay/notify", anonymousRequestBodyLimit, controller.SubscriptionEpayNotify)
-		apiRouter.GET("/subscription/epay/notify", controller.SubscriptionEpayNotify)
-		apiRouter.GET("/subscription/epay/return", controller.SubscriptionEpayReturn)
-		apiRouter.POST("/subscription/epay/return", anonymousRequestBodyLimit, controller.SubscriptionEpayReturn)
+		// Payments: gateway callbacks (no auth), the buyer, administrators
+		// (orders) and the root (payment methods).
+		paymentRoute := apiRouter.Group("/payment")
+		{
+			paymentRoute.GET("/notify/:platform/:token", controller.PaymentNotify)
+			paymentRoute.POST("/notify/:platform/:token", anonymousRequestBodyLimit, controller.PaymentNotify)
+
+			buyerRoute := paymentRoute.Group("")
+			buyerRoute.Use(middleware.UserAuth())
+			{
+				buyerRoute.GET("/info", controller.GetPaymentInfo)
+				buyerRoute.GET("/methods", controller.GetBuyerPaymentMethods)
+				buyerRoute.POST("/quote", controller.QuotePayment)
+				buyerRoute.GET("/orders", controller.ListUserPaymentOrders)
+				buyerRoute.GET("/orders/:no", controller.GetUserPaymentOrder)
+				buyerRoute.POST("/orders", middleware.CriticalRateLimit(), controller.CreatePaymentOrder)
+				buyerRoute.POST("/orders/:no/checkout", middleware.CriticalRateLimit(), controller.CheckoutPaymentOrder)
+				buyerRoute.POST("/orders/:no/sync", middleware.CriticalRateLimit(), controller.SyncPaymentOrder)
+				buyerRoute.POST("/orders/:no/close", middleware.CriticalRateLimit(), controller.CloseUserPaymentOrder)
+			}
+
+			paymentAdminRoute := paymentRoute.Group("/admin")
+			paymentAdminRoute.Use(middleware.AdminAuth())
+			{
+				paymentAdminRoute.GET("/orders", controller.AdminListPaymentOrders)
+				paymentAdminRoute.POST("/orders/:no/reconcile", controller.AdminReconcilePaymentOrder)
+				paymentAdminRoute.POST("/orders/:no/close", controller.AdminClosePaymentOrder)
+				paymentAdminRoute.POST("/orders/:no/fulfil", controller.AdminFulfilPaymentOrder)
+				paymentAdminRoute.POST("/orders/:no/complete", controller.AdminCompletePaymentOrder)
+				paymentAdminRoute.GET("/unmatched", controller.AdminListPaymentUnmatched)
+				paymentAdminRoute.POST("/unmatched/:id/resolve", controller.AdminResolvePaymentUnmatched)
+			}
+
+			paymentSettingsRoute := paymentRoute.Group("/settings")
+			paymentSettingsRoute.Use(middleware.RootAuth())
+			{
+				paymentSettingsRoute.GET("/platforms", controller.GetPaymentPlatforms)
+				paymentSettingsRoute.GET("/methods", controller.AdminListPaymentMethods)
+				paymentSettingsRoute.POST("/methods", controller.AdminCreatePaymentMethod)
+				paymentSettingsRoute.PUT("/methods/:id", controller.AdminUpdatePaymentMethod)
+				paymentSettingsRoute.DELETE("/methods/:id", controller.AdminDeletePaymentMethod)
+				paymentSettingsRoute.POST("/methods/:id/webhook/sync", controller.AdminSyncPaymentWebhook)
+			}
+		}
+
 		optionRoute := apiRouter.Group("/option")
 		optionRoute.Use(middleware.RootAuth())
 		{
@@ -225,11 +239,6 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.GET("/channel_affinity_cache", controller.GetChannelAffinityCacheStats)
 			optionRoute.DELETE("/channel_affinity_cache", controller.ClearChannelAffinityCache)
 			optionRoute.POST("/rest_model_ratio", controller.ResetModelRatio)
-			optionRoute.GET("/waffo-pancake/catalog", controller.ListWaffoPancakeCatalog)
-			optionRoute.POST("/waffo-pancake/pair", controller.CreateWaffoPancakePair)
-			optionRoute.POST("/waffo-pancake/save", controller.SaveWaffoPancake)
-			optionRoute.POST("/waffo-pancake/subscription-product", controller.CreateWaffoPancakeSubscriptionProduct)
-			optionRoute.GET("/waffo-pancake/subscription-product-options", controller.ListWaffoPancakeSubscriptionProductOptions)
 		}
 
 		// Custom OAuth provider management (root only)

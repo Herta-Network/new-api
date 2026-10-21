@@ -36,6 +36,7 @@ const formatterLocaleArguments = new Map([
   ['formatNumber', 1],
   ['formatCompactNumber', 1],
   ['formatTimestampRelative', 2],
+  ['formatMinorAmount', 2],
 ])
 const interfaceLanguageProperties = new Set(['language', 'resolvedLanguage'])
 

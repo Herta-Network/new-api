@@ -73,6 +73,11 @@ var auditContentTemplates = map[string]string{
 	"subscription.plan_reset":       "Reset active subscriptions for plan ${plan_id}",
 	"subscription.user_plan_reset":  "Reset active plan ${plan_id} subscriptions for user ${target_user_id}",
 	"subscription.user_quota_reset": "Administrator reset the quota of subscription plan ${plan_title} (ID: ${plan_id})",
+
+	"payment.order_complete":    "Marked payment order ${order_no} as paid: ${note}",
+	"payment.unmatched_resolve": "Resolved unmatched payment ${id}: ${note}",
+	"payment.method_create":     "Created payment method ${name} (${platform}, ID: ${id})",
+	"payment.method_update":     "Updated payment method ${name} (${platform}, ID: ${id})",
 }
 
 func recordPasskeyDomainAudit(c *gin.Context, change *model.PasskeyDomainChange, confirmed bool, err error) {

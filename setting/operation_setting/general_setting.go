@@ -10,6 +10,10 @@ const (
 	QuotaDisplayTypeCustom = "CUSTOM"
 )
 
+// USDExchangeRate is 1 USD in CNY (the USDExchangeRate option): it displays
+// quota in CNY and converts upstream CNY balances to USD.
+var USDExchangeRate = 7.3
+
 type GeneralSetting struct {
 	DocsLink            string `json:"docs_link"`
 	PingIntervalEnabled bool   `json:"ping_interval_enabled"`

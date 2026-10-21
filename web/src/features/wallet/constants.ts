@@ -21,39 +21,29 @@ For commercial licensing, please contact support@quantumnous.com
 // ============================================================================
 
 /**
- * Default preset amount multipliers
- * Used to generate quick select amounts based on minimum topup
+ * Payment platforms a buyer can meet
  */
-export const DEFAULT_PRESET_MULTIPLIERS = [1, 5, 10, 30, 50, 100, 300, 500]
-
-/**
- * Payment method types
- */
-export const PAYMENT_TYPES = {
-  ALIPAY: 'alipay',
-  WECHAT: 'wxpay',
+export const PAYMENT_PLATFORMS = {
+  EPAY: 'epay',
   STRIPE: 'stripe',
-  CREEM: 'creem',
-  WAFFO: 'waffo',
-  WAFFO_PANCAKE: 'waffo_pancake',
+  CRYPTOMUS: 'cryptomus',
+  BALANCE: 'balance',
 } as const
 
 /**
- * Default payment type
+ * Platform names shown when an order's method is not at hand
  */
-export const DEFAULT_PAYMENT_TYPE = PAYMENT_TYPES.ALIPAY
+export const PAYMENT_PLATFORM_LABELS: Record<string, string> = {
+  [PAYMENT_PLATFORMS.EPAY]: 'EPay',
+  [PAYMENT_PLATFORMS.STRIPE]: 'Stripe',
+  [PAYMENT_PLATFORMS.CRYPTOMUS]: 'Cryptomus',
+  [PAYMENT_PLATFORMS.BALANCE]: 'Balance',
+}
 
 /**
- * Payment icon colors (HEX format for react-icons)
+ * Stripe brand color for its built-in icon
  */
-export const PAYMENT_ICON_COLORS = {
-  [PAYMENT_TYPES.ALIPAY]: '#1677FF',
-  [PAYMENT_TYPES.WECHAT]: '#07C160',
-  [PAYMENT_TYPES.STRIPE]: '#635BFF',
-  [PAYMENT_TYPES.CREEM]: '#6366F1',
-  [PAYMENT_TYPES.WAFFO]: '#2563EB',
-  [PAYMENT_TYPES.WAFFO_PANCAKE]: '#F97316',
-} as const
+export const STRIPE_ICON_COLOR = '#635BFF'
 
 /**
  * Default discount rate (no discount)
@@ -61,6 +51,11 @@ export const PAYMENT_ICON_COLORS = {
 export const DEFAULT_DISCOUNT_RATE = 1.0
 
 /**
- * Default minimum topup amount
+ * How often and for how long the order result dialog re-reads an order still
+ * on its way, and when (seconds after opening) it asks the gateway. Asking the
+ * gateway shares the strict per-IP limit with creating orders, so it happens
+ * only a few times.
  */
-export const DEFAULT_MIN_TOPUP = 1
+export const ORDER_POLL_INTERVAL_MS = 3000
+export const ORDER_POLL_WINDOW_MS = 15 * 60 * 1000
+export const ORDER_SYNC_SCHEDULE_SECONDS = [0, 10, 30, 90] as const

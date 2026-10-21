@@ -16,8 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Crown, RefreshCw, Sparkles, Check } from 'lucide-react'
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -56,24 +57,23 @@ import type {
   PlanRecord,
   UserSubscriptionRecord,
 } from '@/features/subscriptions/types'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatMinorAmount } from '@/lib/currency'
 import { formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
-import type { PaymentMethod, TopupInfo } from '../types'
+import { subscriptionQueryKeys } from '../hooks/use-payment-queries'
+import type { PurchaseRequest } from '../types'
 
 interface SubscriptionPlansCardProps {
-  topupInfo: TopupInfo | null
+  /** Site currency plan prices are in */
+  currency: string
   onAvailabilityChange?: (available: boolean) => void
   userQuota?: number
-  onPurchaseSuccess?: () => void | Promise<void>
-}
-
-function getEpayMethods(payMethods: PaymentMethod[] = []): PaymentMethod[] {
-  return payMethods.filter(
-    (m) => m?.type && m.type !== 'stripe' && m.type !== 'creem'
-  )
+  onPurchase: (request: PurchaseRequest) => Promise<boolean>
+  purchasing: boolean
 }
 
 function getBillingPreferenceLabel(
@@ -94,99 +94,66 @@ function getBillingPreferenceLabel(
   }
 }
 
-export function SubscriptionPlansCard({
-  topupInfo,
-  onAvailabilityChange,
-  userQuota,
-  onPurchaseSuccess,
-}: SubscriptionPlansCardProps) {
-  const { t } = useTranslation()
+export function SubscriptionPlansCard(props: SubscriptionPlansCardProps) {
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const queryClient = useQueryClient()
 
-  const [plans, setPlans] = useState<PlanRecord[]>([])
-  const [activeSubscriptions, setActiveSubscriptions] = useState<
-    UserSubscriptionRecord[]
-  >([])
-  const [allSubscriptions, setAllSubscriptions] = useState<
-    UserSubscriptionRecord[]
-  >([])
-  const [billingPreference, setBillingPreference] =
-    useState('subscription_first')
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
+  const plansQuery = useQuery({
+    queryKey: subscriptionQueryKeys.publicPlans,
+    queryFn: async () =>
+      requireServerSuccess(await getPublicPlans()).data ?? [],
+  })
+  const selfQuery = useQuery({
+    queryKey: subscriptionQueryKeys.self,
+    queryFn: async () =>
+      requireServerSuccess(await getSelfSubscriptionFull()).data ?? null,
+  })
+  const plans = useMemo<PlanRecord[]>(
+    () => plansQuery.data ?? [],
+    [plansQuery.data]
+  )
+  const activeSubscriptions: UserSubscriptionRecord[] =
+    selfQuery.data?.subscriptions ?? []
+  const allSubscriptions = useMemo<UserSubscriptionRecord[]>(
+    () => selfQuery.data?.all_subscriptions ?? [],
+    [selfQuery.data]
+  )
+  const [preferenceOverride, setPreferenceOverride] = useState<string | null>(
+    null
+  )
+  const billingPreference =
+    preferenceOverride ??
+    selfQuery.data?.billing_preference ??
+    'subscription_first'
+  const loading = plansQuery.isLoading || selfQuery.isLoading
+  const refreshing = selfQuery.isFetching && !selfQuery.isLoading
 
   const [purchaseOpen, setPurchaseOpen] = useState(false)
   const [selectedPlan, setSelectedPlan] = useState<PlanRecord | null>(null)
 
-  const enableStripe = !!topupInfo?.enable_stripe_topup
-  const enableCreem = !!topupInfo?.enable_creem_topup
-  const enableWaffoPancake = !!topupInfo?.enable_waffo_pancake_topup
-  const enableOnlineTopUp = !!topupInfo?.enable_online_topup
-  const epayMethods = useMemo(
-    () => getEpayMethods(topupInfo?.pay_methods),
-    [topupInfo?.pay_methods]
-  )
-
-  const fetchPlans = useCallback(async () => {
-    try {
-      const res = requireServerSuccess(await getPublicPlans())
-      if (res.success) {
-        setPlans(res.data || [])
-      }
-    } catch (error) {
-      handleServerError(error)
-      setPlans([])
-    }
-  }, [])
-
-  const fetchSelfSubscription = useCallback(async () => {
-    try {
-      const res = requireServerSuccess(await getSelfSubscriptionFull())
-      if (res.success && res.data) {
-        setBillingPreference(
-          res.data.billing_preference || 'subscription_first'
-        )
-        setActiveSubscriptions(res.data.subscriptions || [])
-        setAllSubscriptions(res.data.all_subscriptions || [])
-      }
-    } catch (error) {
-      handleServerError(error)
-    }
-  }, [])
-
-  useEffect(() => {
-    const init = async () => {
-      setLoading(true)
-      await Promise.all([fetchPlans(), fetchSelfSubscription()])
-      setLoading(false)
-    }
-    init()
-  }, [fetchPlans, fetchSelfSubscription])
-
-  const handleRefresh = async () => {
-    setRefreshing(true)
-    try {
-      await fetchSelfSubscription()
-    } finally {
-      setRefreshing(false)
-    }
+  const handleRefresh = () => {
+    void selfQuery.refetch()
   }
 
   const handlePreferenceChange = async (pref: string) => {
     const previous = billingPreference
-    setBillingPreference(pref)
+    setPreferenceOverride(pref)
     try {
       const res = await updateBillingPreference(pref)
       if (res.success) {
         toast.success(t('Updated successfully'))
-        const normalized = res.data?.billing_preference || pref
-        setBillingPreference(normalized)
+        setPreferenceOverride(res.data?.billing_preference || pref)
+        void queryClient.invalidateQueries({
+          queryKey: subscriptionQueryKeys.self,
+        })
       } else {
         handleServerError(res, t('Update failed'))
-        setBillingPreference(previous)
+        setPreferenceOverride(previous)
       }
     } catch (error) {
       handleServerError(error, t('Request failed'))
-      setBillingPreference(previous)
+      setPreferenceOverride(previous)
     }
   }
 
@@ -208,6 +175,7 @@ export function SubscriptionPlansCard({
     return map
   }, [allSubscriptions])
 
+  const onAvailabilityChange = props.onAvailabilityChange
   useEffect(() => {
     onAvailabilityChange?.(isAvailable)
   }, [isAvailable, onAvailabilityChange])
@@ -472,12 +440,14 @@ export function SubscriptionPlansCard({
                         {endTimeLabel}{' '}
                         {new Date(
                           (subscription?.end_time || 0) * 1000
-                        ).toLocaleString()}
+                        ).toLocaleString(locale)}
                       </div>
                       {isActive && nextResetTime > 0 && (
                         <div className='text-muted-foreground mt-1'>
                           {t('Next reset')}:{' '}
-                          {new Date(nextResetTime * 1000).toLocaleString()}
+                          {new Date(nextResetTime * 1000).toLocaleString(
+                            locale
+                          )}
                         </div>
                       )}
                       <div className='text-muted-foreground mt-1'>
@@ -529,7 +499,11 @@ export function SubscriptionPlansCard({
               const plan = p?.plan
               if (!plan) return null
               const totalAmount = Number(plan.total_amount || 0)
-              const price = Number(plan.price_amount || 0).toFixed(2)
+              const price = formatMinorAmount(
+                Math.round(Number(plan.price_amount || 0) * 100),
+                props.currency,
+                locale
+              )
               const isPopular = index === 0 && plans.length > 1
               const limit = Number(plan.max_purchase_per_user || 0)
               const count = planPurchaseCountMap.get(plan.id) || 0
@@ -581,7 +555,7 @@ export function SubscriptionPlansCard({
 
                     <div className='py-2'>
                       <span className='text-primary text-2xl font-bold'>
-                        ${price}
+                        {price}
                       </span>
                     </div>
 
@@ -636,20 +610,12 @@ export function SubscriptionPlansCard({
 
       <SubscriptionPurchaseDialog
         open={purchaseOpen}
-        onOpenChange={(open) => {
-          setPurchaseOpen(open)
-          if (!open) {
-            fetchSelfSubscription()
-          }
-        }}
+        onOpenChange={setPurchaseOpen}
         plan={selectedPlan}
-        enableStripe={enableStripe}
-        enableCreem={enableCreem}
-        enableWaffoPancake={enableWaffoPancake}
-        enableOnlineTopUp={enableOnlineTopUp}
-        epayMethods={epayMethods}
-        userQuota={userQuota}
-        onPurchaseSuccess={onPurchaseSuccess}
+        currency={props.currency}
+        userQuota={props.userQuota}
+        onPurchase={props.onPurchase}
+        purchasing={props.purchasing}
         purchaseLimit={
           selectedPlan?.plan?.max_purchase_per_user
             ? Number(selectedPlan.plan.max_purchase_per_user)

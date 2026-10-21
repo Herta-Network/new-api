@@ -27,7 +27,13 @@ export function getPlanFormSchema(t: TFunction) {
   return z.object({
     title: z.string().min(1, t('Please enter plan title')),
     subtitle: z.string().optional(),
-    price_amount: z.coerce.number().min(0, t('Please enter amount')),
+    price_amount: z.coerce
+      .number()
+      .min(0, t('Please enter amount'))
+      .refine(
+        (value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-6,
+        { message: t('Use at most two decimal places') }
+      ),
     duration_unit: z.enum(['year', 'month', 'day', 'hour', 'custom']),
     duration_value: z.coerce.number().min(1),
     custom_seconds: z.coerce.number().min(0).optional(),
@@ -47,9 +53,6 @@ export function getPlanFormSchema(t: TFunction) {
     total_amount: z.coerce.number().min(0),
     upgrade_group: z.string().optional(),
     downgrade_group: z.string().optional(),
-    stripe_price_id: z.string().optional(),
-    creem_product_id: z.string().optional(),
-    waffo_pancake_product_id: z.string().optional(),
   })
 }
 
@@ -72,9 +75,6 @@ export const PLAN_FORM_DEFAULTS: PlanFormValues = {
   total_amount: 0,
   upgrade_group: '',
   downgrade_group: '',
-  stripe_price_id: '',
-  creem_product_id: '',
-  waffo_pancake_product_id: '',
 }
 
 export function planToFormValues(plan: SubscriptionPlan): PlanFormValues {
@@ -95,9 +95,6 @@ export function planToFormValues(plan: SubscriptionPlan): PlanFormValues {
     total_amount: quotaUnitsToDollars(Number(plan.total_amount || 0)),
     upgrade_group: plan.upgrade_group || '',
     downgrade_group: plan.downgrade_group || '',
-    stripe_price_id: plan.stripe_price_id || '',
-    creem_product_id: plan.creem_product_id || '',
-    waffo_pancake_product_id: plan.waffo_pancake_product_id || '',
   }
 }
 
@@ -106,7 +103,6 @@ export function formValuesToPlanPayload(values: PlanFormValues): PlanPayload {
     plan: {
       ...values,
       price_amount: Number(values.price_amount || 0),
-      currency: 'USD',
       duration_value: Number(values.duration_value || 0),
       custom_seconds: Number(values.custom_seconds || 0),
       quota_reset_period: values.quota_reset_period || 'never',

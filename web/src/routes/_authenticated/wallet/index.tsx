@@ -23,6 +23,12 @@ import { Wallet } from '@/features/wallet'
 
 const walletSearchSchema = z.object({
   show_history: z.boolean().optional(),
+  // Set by the payment return URL; a malformed value is ignored.
+  payment_order: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,64}$/)
+    .optional()
+    .catch(undefined),
 })
 
 export const Route = createFileRoute('/_authenticated/wallet/')({
@@ -31,6 +37,18 @@ export const Route = createFileRoute('/_authenticated/wallet/')({
 })
 
 function RouteComponent() {
-  const { show_history } = Route.useSearch()
-  return <Wallet initialShowHistory={show_history} />
+  const search = Route.useSearch()
+  const navigate = Route.useNavigate()
+  return (
+    <Wallet
+      initialShowHistory={search.show_history}
+      paymentOrder={search.payment_order}
+      onPaymentOrderChange={(orderNo) =>
+        navigate({
+          search: (prev) => ({ ...prev, payment_order: orderNo }),
+          replace: orderNo === undefined,
+        })
+      }
+    />
+  )
 }

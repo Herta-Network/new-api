@@ -519,7 +519,6 @@ func buildSelfUserData(user *model.User) map[string]any {
 		"inviter_id":        user.InviterId,
 		"linux_do_id":       user.LinuxDOId,
 		"setting":           user.Setting,
-		"stripe_customer":   user.StripeCustomer,
 		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
 		"permissions":       permissions,
 	}
@@ -1280,6 +1279,15 @@ func getTopUpLock(userID int) *topUpTryLock {
 	l := newTopUpTryLock()
 	topUpLocks.Store(userID, l)
 	return l
+}
+
+// GetTopUpInfo tells the wallet whether redemption codes can be used and
+// where to buy them.
+func GetTopUpInfo(c *gin.Context) {
+	common.ApiSuccess(c, gin.H{
+		"enable_redemption": operation_setting.IsPaymentComplianceConfirmed(),
+		"topup_link":        common.TopUpLink,
+	})
 }
 
 func TopUp(c *gin.Context) {

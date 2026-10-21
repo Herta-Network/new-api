@@ -46,7 +46,7 @@ function SubscriptionsContent() {
               <Info className='h-4 w-4' />
               <AlertDescription className='text-xs'>
                 {t(
-                  'Stripe/Creem requires creating products on the third-party platform and entering the ID'
+                  'Plan prices are in the site currency; buyers pay with the payment methods configured in Payment settings.'
                 )}
               </AlertDescription>
             </Alert>

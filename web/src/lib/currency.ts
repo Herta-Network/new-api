@@ -635,3 +635,47 @@ export function formatLocalCurrencyAmount(
 
   return formatCurrencyValue(amount, merged, meta)
 }
+
+/**
+ * Format a payment amount counted in hundredths of an ISO 4217 currency.
+ *
+ * Payment quotes and orders store every amount in hundredths, whatever the
+ * currency's own minor unit. A whole amount keeps the currency's usual
+ * decimals (none for JPY or KRW); a fractional one always shows two. An
+ * unknown currency code falls back to the number followed by the code.
+ *
+ * @param minor - Amount in hundredths, e.g. 1050 for 10.50
+ * @param currency - ISO 4217 code, e.g. "USD"
+ * @param locale - Intl locale; pass interface languages through `toIntlLocale`
+ *
+ * @example
+ * formatMinorAmount(1050, 'USD', 'en') → "$10.50"
+ * formatMinorAmount(120000, 'JPY', 'ja') → "￥1,200"
+ */
+export function formatMinorAmount(
+  minor: number,
+  currency: string,
+  locale?: Intl.LocalesArgument
+): string {
+  const value = minor / 100
+  try {
+    const currencyDigits =
+      new Intl.NumberFormat(locale, {
+        style: 'currency',
+        currency,
+      }).resolvedOptions().maximumFractionDigits ?? 2
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency,
+      minimumFractionDigits:
+        minor % 100 === 0 ? Math.min(currencyDigits, 2) : 2,
+      maximumFractionDigits: 2,
+    }).format(value)
+  } catch {
+    const number = new Intl.NumberFormat(locale, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value)
+    return currency ? `${number} ${currency}` : number
+  }
+}

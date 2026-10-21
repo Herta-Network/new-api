@@ -43,7 +43,6 @@ func (w *auditResponseWriter) WriteString(s string) (int, error) {
 // 未命中的写操作回退为 action="generic"，前端展示 "METHOD route"。
 var auditRouteActions = map[string]string{
 	// 用户管理
-	"POST /api/user/topup/complete":                    "user.topup_complete",
 	"DELETE /api/user/:id/reset_passkey":               "user.reset_passkey",
 	"DELETE /api/user/:id/oauth/bindings/:provider_id": "user.oauth_unbind",
 
@@ -93,6 +92,17 @@ var auditRouteActions = map[string]string{
 	"POST /api/subscription/admin/plans":    "subscription.plan_create",
 	"PUT /api/subscription/admin/plans/:id": "subscription.plan_update",
 	"POST /api/subscription/admin/bind":     "subscription.bind",
+
+	// 支付（管理员订单、root 支付方式）
+	"POST /api/payment/admin/orders/:no/reconcile":        "payment.order_reconcile",
+	"POST /api/payment/admin/orders/:no/close":            "payment.order_close",
+	"POST /api/payment/admin/orders/:no/fulfil":           "payment.order_fulfil",
+	"POST /api/payment/admin/orders/:no/complete":         "payment.order_complete",
+	"POST /api/payment/admin/unmatched/:id/resolve":       "payment.unmatched_resolve",
+	"POST /api/payment/settings/methods":                  "payment.method_create",
+	"PUT /api/payment/settings/methods/:id":               "payment.method_update",
+	"DELETE /api/payment/settings/methods/:id":            "payment.method_delete",
+	"POST /api/payment/settings/methods/:id/webhook/sync": "payment.webhook_sync",
 
 	// 日志
 	"POST /api/system-task/log-cleanup": "log.cleanup_start",
