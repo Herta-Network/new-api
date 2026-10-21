@@ -154,6 +154,7 @@ function ChatRouteComponent() {
   }
 
   return (
+    // oxlint-disable-next-line react/iframe-missing-sandbox -- embeds the admin-configured chat web app, which needs scripts and its own origin; any sandbox that keeps both is rejected by this rule too
     <iframe
       src={iframeSrc}
       key={iframeSrc}
