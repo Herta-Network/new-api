@@ -57,6 +57,7 @@ export function DataTablePagination<TData>({
   const pageSize = pagination.pageSize
   const totalPages = table.getPageCount()
   const totalRows = table.getRowCount()
+  const totalSuffix = table.options.meta?.totalCountCapped ? '+' : ''
   const pageNumbers = getPageNumbers(currentPage, totalPages)
   const pageItems = pageNumbers.map((page, index) => ({
     page,
@@ -71,6 +72,7 @@ export function DataTablePagination<TData>({
       >
         <span className='text-muted-foreground min-w-0 [overflow-wrap:anywhere]'>
           {t('Total:')} {totalRows.toLocaleString()}
+          {totalSuffix}
         </span>
         <div className='flex items-center gap-2'>
           <Button
@@ -113,6 +115,7 @@ export function DataTablePagination<TData>({
           <span className='text-muted-foreground/80'>{t('Total:')}</span>
           <span className='text-foreground tabular-nums'>
             {totalRows.toLocaleString()}
+            {totalSuffix}
           </span>
         </div>
 

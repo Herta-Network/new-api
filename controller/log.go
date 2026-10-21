@@ -56,7 +56,7 @@ func limitLogTimeRange(startTimestamp int64, endTimestamp int64) (int64, error) 
 
 func GetAllLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
-	logs, total, err := model.GetAllLogs(logFilterFromQuery(c, true), pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	logs, total, capped, err := model.GetAllLogs(logFilterFromQuery(c, true), pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -67,6 +67,7 @@ func GetAllLogs(c *gin.Context) {
 		model.FormatRootLogs(logs)
 	}
 	pageInfo.SetTotal(int(total))
+	pageInfo.TotalCapped = capped
 	pageInfo.SetItems(logs)
 	common.ApiSuccess(c, pageInfo)
 	return
@@ -83,12 +84,13 @@ func GetUserLogs(c *gin.Context) {
 		}
 		filter.StartTimestamp = startTimestamp
 	}
-	logs, total, err := model.GetUserLogs(c.GetInt("id"), filter, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	logs, total, capped, err := model.GetUserLogs(c.GetInt("id"), filter, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	pageInfo.SetTotal(int(total))
+	pageInfo.TotalCapped = capped
 	pageInfo.SetItems(logs)
 	common.ApiSuccess(c, pageInfo)
 	return

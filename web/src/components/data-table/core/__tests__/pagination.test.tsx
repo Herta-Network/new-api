@@ -30,13 +30,18 @@ import { DataTablePagination } from '../pagination'
 const rows = [{ id: 1 }, { id: 2 }, { id: 3 }]
 const emptyRows: { id: number }[] = []
 
-function Fixture(props: { empty?: boolean; compact?: boolean }) {
+function Fixture(props: {
+  empty?: boolean
+  compact?: boolean
+  totalCountCapped?: boolean
+}) {
   const table = useReactTable({
     data: props.empty ? emptyRows : rows,
     columns: [{ accessorKey: 'id' }],
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     initialState: { pagination: { pageIndex: 0, pageSize: 2 } },
+    meta: { totalCountCapped: props.totalCountCapped },
   })
   return <DataTablePagination table={table} compact={props.compact} />
 }
@@ -65,3 +70,13 @@ it('keeps page size selection available in the default layout', () => {
   render(<Fixture />)
   expect(screen.getByRole('combobox')).toBeVisible()
 })
+it.each([false, true])(
+  'shows the total as a lower bound when counting stopped (compact: %s)',
+  (compact) => {
+    const { unmount } = render(<Fixture compact={compact} />)
+    expect(screen.queryByText(/3\+/)).not.toBeInTheDocument()
+    unmount()
+    render(<Fixture compact={compact} totalCountCapped />)
+    expect(screen.getByText(/3\+/)).toBeVisible()
+  }
+)

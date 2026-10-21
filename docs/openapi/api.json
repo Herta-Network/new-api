@@ -6052,6 +6052,10 @@
           "total": {
             "type": "integer"
           },
+          "total_capped": {
+            "type": "boolean",
+            "description": "日志列表最多计数到 10000 条；为 true 时表示匹配的日志超过 total"
+          },
           "items": {
             "type": "array",
             "items": {}

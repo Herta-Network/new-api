@@ -94,6 +94,8 @@ type UseDataTableOptions<TData> = DataTableFeatureOptions<TData> &
     data: TData[]
     columns: ColumnDef<TData, unknown>[]
     totalCount?: number
+    /** The server stopped counting at `totalCount`; more rows match. */
+    totalCountCapped?: boolean
     pageCount?: number
     ensurePageInRange?: (pageCount: number) => void
   }
@@ -382,6 +384,7 @@ export function useDataTable<TData>(options: UseDataTableOptions<TData>) {
     columns,
     rowCount: totalCount,
     pageCount: resolvedPageCount,
+    meta: { totalCountCapped: options.totalCountCapped },
     state: {
       sorting,
       columnVisibility,

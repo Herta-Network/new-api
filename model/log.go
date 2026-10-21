@@ -56,13 +56,13 @@ func sanitizeClickHouseLikePattern(input string) (string, error) {
 
 type Log struct {
 	Id                int    `json:"id" gorm:"index:idx_created_at_id,priority:2;index:idx_user_id_id,priority:2"`
-	UserId            int    `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
+	UserId            int    `json:"user_id" gorm:"index:idx_user_id_id,priority:1"`
 	CreatedAt         int64  `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:1;index:idx_created_at_type"`
 	Type              int    `json:"type" gorm:"index:idx_created_at_type"`
 	Content           string `json:"content"`
 	Username          string `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
 	TokenName         string `json:"token_name" gorm:"index;default:''"`
-	ModelName         string `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
+	ModelName         string `json:"model_name" gorm:"index:index_username_model_name,priority:1;default:''"`
 	Quota             int    `json:"quota" gorm:"default:0"`
 	PromptTokens      int    `json:"prompt_tokens" gorm:"default:0"`
 	CompletionTokens  int    `json:"completion_tokens" gorm:"default:0"`
@@ -72,9 +72,9 @@ type Log struct {
 	ChannelName       string `json:"channel_name" gorm:"->"`
 	TokenId           int    `json:"token_id" gorm:"default:0;index"`
 	Group             string `json:"group" gorm:"index"`
-	Ip                string `json:"ip" gorm:"index;default:''"`
+	Ip                string `json:"ip" gorm:"default:''"`
 	RequestId         string `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
-	UpstreamRequestId string `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
+	UpstreamRequestId string `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id,where:upstream_request_id <> '';default:''"`
 	Other             string `json:"other"`
 }
 
@@ -523,14 +523,16 @@ func (f LogFilter) apply(tx *gorm.DB) (*gorm.DB, error) {
 	return tx, nil
 }
 
-func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int64, err error) {
+// GetAllLogs returns one page of the logs that match filter and how many match,
+// counted up to logSearchCountLimit; capped reports that more match.
+func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int64, capped bool, err error) {
 	tx, err := filter.apply(LOG_DB)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
-	err = tx.Model(&Log{}).Count(&total).Error
+	total, capped, err = countLogsUpToLimit(tx)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	order := "logs.created_at desc, logs.id desc"
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
@@ -538,7 +540,7 @@ func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int
 	}
 	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		assignDisplayLogIds(logs, startIdx)
@@ -572,7 +574,7 @@ func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int
 		} else {
 			// Bulk query channels from DB
 			if err = DB.Table("channels").Select("id, name").Where("id IN ?", channelIds.Items()).Find(&channels).Error; err != nil {
-				return logs, total, err
+				return logs, total, capped, err
 			}
 		}
 		channelMap := make(map[int]string, len(channels))
@@ -584,20 +586,33 @@ func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int
 		}
 	}
 
-	return logs, total, err
+	return logs, total, capped, err
 }
 
+// logSearchCountLimit is where the log lists stop counting: a count reads
+// every log it counts, and a large log table would make each page slow.
 const logSearchCountLimit = 10000
 
-func GetUserLogs(userId int, filter LogFilter, startIdx int, num int) (logs []*Log, total int64, err error) {
+// countLogsUpToLimit counts the logs tx selects up to logSearchCountLimit and
+// reports whether more match. It leaves tx unchanged for the page query.
+func countLogsUpToLimit(tx *gorm.DB) (total int64, capped bool, err error) {
+	matching := tx.Session(&gorm.Session{}).Model(&Log{}).Select("1").Limit(logSearchCountLimit + 1)
+	if err := tx.Session(&gorm.Session{NewDB: true}).Table("(?) AS matching", matching).Count(&total).Error; err != nil {
+		return 0, false, err
+	}
+	return min(total, logSearchCountLimit), total > logSearchCountLimit, nil
+}
+
+// GetUserLogs is GetAllLogs for one user's own logs.
+func GetUserLogs(userId int, filter LogFilter, startIdx int, num int) (logs []*Log, total int64, capped bool, err error) {
 	tx, err := filter.apply(LOG_DB.Where("logs.user_id = ?", userId))
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
-	err = tx.Model(&Log{}).Limit(logSearchCountLimit).Count(&total).Error
+	total, capped, err = countLogsUpToLimit(tx)
 	if err != nil {
 		common.SysError(common.LogText("failed to count user logs: %s", err.Error()))
-		return nil, 0, common.NewMessage("Failed to query logs")
+		return nil, 0, false, common.NewMessage("Failed to query logs")
 	}
 	order := "logs.id desc"
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
@@ -606,11 +621,11 @@ func GetUserLogs(userId int, filter LogFilter, startIdx int, num int) (logs []*L
 	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
 		common.SysError(common.LogText("failed to search user logs: %s", err.Error()))
-		return nil, 0, common.NewMessage("Failed to query logs")
+		return nil, 0, false, common.NewMessage("Failed to query logs")
 	}
 
 	formatUserLogs(logs, startIdx)
-	return logs, total, err
+	return logs, total, capped, err
 }
 
 // StreamAllLogs calls fn with each log matching filter, newest first, as an
@@ -806,7 +821,10 @@ func DeleteOldLogBatch(ctx context.Context, targetTimestamp int64, limit int) (i
 		return total, nil
 	}
 
-	result := LOG_DB.WithContext(ctx).Where("created_at < ?", targetTimestamp).Limit(limit).Delete(&Log{})
+	// PostgreSQL has no DELETE ... LIMIT and GORM drops the Limit, so pick the
+	// batch in a subquery. It reads the oldest ids from idx_created_at_id.
+	oldest := LOG_DB.Model(&Log{}).Select("id").Where("created_at < ?", targetTimestamp).Order("created_at, id").Limit(limit)
+	result := LOG_DB.WithContext(ctx).Where("id IN (?)", oldest).Delete(&Log{})
 	if nil != result.Error {
 		return 0, result.Error
 	}

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -435,4 +436,34 @@ func TestUpdateSystemTaskStateIdenticalPayloadDoesNotLoseLock(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, finished)
 	assert.Equal(t, SystemTaskStatusSucceeded, finished.Status)
+}
+
+// The log cleanup task deletes old logs in batches: one call removes at most
+// its limit of the oldest old logs, and repeated calls remove the rest.
+func TestDeleteOldLogBatchDeletesAtMostLimit(t *testing.T) {
+	truncateTables(t)
+	for _, createdAt := range []int64{103, 100, 104, 101, 102, 200} {
+		require.NoError(t, LOG_DB.Create(&Log{UserId: 1, CreatedAt: createdAt, Type: LogTypeConsume}).Error)
+	}
+
+	deleted, err := DeleteOldLogBatch(context.Background(), 200, 2)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, deleted)
+	var remaining []int64
+	require.NoError(t, LOG_DB.Model(&Log{}).Order("created_at").Pluck("created_at", &remaining).Error)
+	assert.Equal(t, []int64{102, 103, 104, 200}, remaining)
+
+	var batches []int64
+	for {
+		deleted, err := DeleteOldLogBatch(context.Background(), 200, 2)
+		require.NoError(t, err)
+		if deleted == 0 {
+			break
+		}
+		batches = append(batches, deleted)
+	}
+	assert.Equal(t, []int64{2, 1}, batches)
+	var kept []int64
+	require.NoError(t, LOG_DB.Model(&Log{}).Pluck("created_at", &kept).Error)
+	assert.Equal(t, []int64{200}, kept)
 }
