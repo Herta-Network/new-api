@@ -16,142 +16,51 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import i18next from 'i18next'
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { toast } from 'sonner'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
 
-import { useIsAdmin } from '@/hooks/use-admin'
 import { useDebounce } from '@/hooks/use-debounce'
-import { handleServerError } from '@/lib/handle-server-error'
 
-import {
-  getUserBillingHistory,
-  getAllBillingHistory,
-  completeOrder,
-  isApiSuccess,
-} from '../api'
-import type { TopupRecord } from '../types'
+import { getPaymentOrder, listPaymentOrders } from '../api'
+import type { PaymentOrder } from '../types'
+import { paymentQueryKeys } from './use-payment-queries'
 
 // ============================================================================
 // Billing History Hook
 // ============================================================================
 
-interface UseBillingHistoryOptions {
-  /** Initial page number */
-  initialPage?: number
-  /** Initial page size */
-  initialPageSize?: number
-}
-
-export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
-  const { initialPage = 1, initialPageSize = 10 } = options
-  const isAdmin = useIsAdmin()
-
-  const [records, setRecords] = useState<TopupRecord[]>([])
-  const [total, setTotal] = useState(0)
-  const [page, setPage] = useState(initialPage)
-  const [pageSize, setPageSize] = useState(initialPageSize)
+/**
+ * The user's payment orders, a page at a time. Searching by order number
+ * looks that one order up instead.
+ */
+export function useBillingHistory(enabled: boolean) {
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const [keyword, setKeyword] = useState('')
-  const debouncedKeyword = useDebounce(keyword)
-  const requestIdRef = useRef(0)
-  const [loading, setLoading] = useState(false)
-  const [completing, setCompleting] = useState(false)
+  const orderNo = useDebounce(keyword.trim())
 
-  /**
-   * Fetch billing history
-   */
-  const fetchBillingHistory = useCallback(async () => {
-    const requestId = ++requestIdRef.current
-    setLoading(true)
-    try {
-      const response = isAdmin
-        ? await getAllBillingHistory(page, pageSize, debouncedKeyword)
-        : await getUserBillingHistory(page, pageSize, debouncedKeyword)
+  const list = useQuery({
+    queryKey: [...paymentQueryKeys.orders, page, pageSize],
+    queryFn: () => listPaymentOrders(page, pageSize),
+    enabled: enabled && !orderNo,
+    placeholderData: keepPreviousData,
+  })
+  const found = useQuery({
+    queryKey: paymentQueryKeys.order(orderNo),
+    queryFn: () => getPaymentOrder(orderNo),
+    enabled: enabled && !!orderNo,
+    retry: false,
+    meta: { errorToast: false },
+  })
 
-      if (requestId !== requestIdRef.current) return
-
-      if (isApiSuccess(response) && response.data) {
-        setRecords(response.data.items || [])
-        setTotal(response.data.total || 0)
-      } else {
-        handleServerError(response, i18next.t('Failed to load billing history'))
-        setRecords([])
-        setTotal(0)
-      }
-    } catch (error) {
-      if (requestId !== requestIdRef.current) return
-      handleServerError(error, i18next.t('Failed to load billing history'))
-      setRecords([])
-      setTotal(0)
-    } finally {
-      if (requestId === requestIdRef.current) {
-        setLoading(false)
-      }
-    }
-  }, [debouncedKeyword, isAdmin, page, pageSize])
-
-  /**
-   * Complete a pending order (admin only)
-   */
-  const handleCompleteOrder = useCallback(
-    async (tradeNo: string) => {
-      if (!isAdmin) {
-        toast.error(i18next.t('Admin access required'))
-        return false
-      }
-
-      setCompleting(true)
-      try {
-        const response = await completeOrder({ trade_no: tradeNo })
-        if (isApiSuccess(response)) {
-          toast.success(i18next.t('Order completed successfully'))
-          // Refresh the list
-          await fetchBillingHistory()
-          return true
-        } else {
-          handleServerError(response, i18next.t('Failed to complete order'))
-          return false
-        }
-      } catch (error) {
-        handleServerError(error, i18next.t('Failed to complete order'))
-        return false
-      } finally {
-        setCompleting(false)
-      }
-    },
-    [isAdmin, fetchBillingHistory]
-  )
-
-  /**
-   * Change page
-   */
-  const handlePageChange = useCallback((newPage: number) => {
-    setPage(newPage)
-  }, [])
-
-  /**
-   * Change page size
-   */
-  const handlePageSizeChange = useCallback((newPageSize: number) => {
-    setPageSize(newPageSize)
-    setPage(1) // Reset to first page when changing page size
-  }, [])
-
-  /**
-   * Search by keyword
-   */
-  const handleSearch = useCallback((newKeyword: string) => {
-    requestIdRef.current += 1
-    setKeyword(newKeyword)
-    setPage(1) // Reset to first page when searching
-  }, [])
-
-  // Fetch data after the search draft has settled.
-  useEffect(() => {
-    if (keyword !== debouncedKeyword) return
-
-    fetchBillingHistory()
-  }, [debouncedKeyword, fetchBillingHistory, keyword])
+  let records: PaymentOrder[] = list.data?.items ?? []
+  let total = list.data?.total ?? 0
+  let loading = list.isLoading
+  if (orderNo) {
+    records = found.data ? [found.data] : []
+    total = records.length
+    loading = found.isLoading
+  }
 
   return {
     records,
@@ -159,13 +68,16 @@ export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
     page,
     pageSize,
     keyword,
-    loading,
-    completing,
-    isAdmin,
-    handlePageChange,
-    handlePageSizeChange,
-    handleSearch,
-    handleCompleteOrder,
-    refresh: fetchBillingHistory,
+    searching: keyword.trim() !== '',
+    loading: loading || keyword.trim() !== orderNo,
+    handlePageChange: setPage,
+    handlePageSizeChange: (size: number) => {
+      setPageSize(size)
+      setPage(1)
+    },
+    handleSearch: (value: string) => {
+      setKeyword(value)
+      setPage(1)
+    },
   }
 }

@@ -16,14 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import i18next from 'i18next'
-import { CreditCard, Landmark } from 'lucide-react'
+import { Bitcoin, CreditCard, QrCode, Wallet } from 'lucide-react'
 import type { ReactNode } from 'react'
 
-import { IconAlipay, IconWeChat, IconStripe } from '@/assets/brand-icons'
+import { IconStripe } from '@/assets/brand-icons'
 import { ReactIconByName } from '@/components/react-icon-by-name'
 
-import { PAYMENT_TYPES, PAYMENT_ICON_COLORS } from '../constants'
+import { PAYMENT_PLATFORMS, STRIPE_ICON_COLOR } from '../constants'
 
 // ============================================================================
 // UI Helper Functions
@@ -58,12 +57,12 @@ function normalizeHttpIconUrl(raw: string | undefined | null): string | null {
 /**
  * Get payment method icon component
  *
- * When icon is provided, render a safe http(s) image URL or resolve it as a
+ * When icon is provided, render a safe https image URL or resolve it as a
  * react-icons component name. Invalid configured icons intentionally render
- * nothing instead of falling back to the payment type.
+ * nothing instead of falling back to the platform icon.
  */
 export function getPaymentIcon(
-  paymentType: string | undefined,
+  platform: string | undefined,
   className: string = 'h-4 w-4',
   icon?: string,
   altName?: string
@@ -74,7 +73,7 @@ export function getPaymentIcon(
     return (
       <img
         src={safeIconUrl}
-        alt={altName || paymentType || 'payment'}
+        alt={altName || platform || 'payment'}
         className={className}
         style={{ objectFit: 'contain' }}
         loading='lazy'
@@ -88,73 +87,26 @@ export function getPaymentIcon(
       <ReactIconByName
         name={iconValue}
         className={className}
-        title={altName || paymentType || iconValue}
+        title={altName || platform || iconValue}
       />
     )
   }
 
-  if (!paymentType) {
-    return <CreditCard className={className} />
-  }
-
-  switch (paymentType) {
-    case PAYMENT_TYPES.ALIPAY:
-      return (
-        <IconAlipay
-          className={className}
-          style={{ color: PAYMENT_ICON_COLORS[PAYMENT_TYPES.ALIPAY] }}
-        />
-      )
-    case PAYMENT_TYPES.WECHAT:
-      return (
-        <IconWeChat
-          className={className}
-          style={{ color: PAYMENT_ICON_COLORS[PAYMENT_TYPES.WECHAT] }}
-        />
-      )
-    case PAYMENT_TYPES.STRIPE:
+  switch (platform) {
+    case PAYMENT_PLATFORMS.STRIPE:
       return (
         <IconStripe
           className={className}
-          style={{ color: PAYMENT_ICON_COLORS[PAYMENT_TYPES.STRIPE] }}
+          style={{ color: STRIPE_ICON_COLOR }}
         />
       )
-    case PAYMENT_TYPES.CREEM:
-      return (
-        <Landmark
-          className={className}
-          style={{ color: PAYMENT_ICON_COLORS[PAYMENT_TYPES.CREEM] }}
-        />
-      )
-    case PAYMENT_TYPES.WAFFO:
-      return (
-        <CreditCard
-          className={className}
-          style={{ color: PAYMENT_ICON_COLORS[PAYMENT_TYPES.WAFFO] }}
-        />
-      )
-    case PAYMENT_TYPES.WAFFO_PANCAKE:
-      // The W glyph fills only ~40% of its viewBox vertically (wide and
-      // short letterform); scale(2) brings its rendered height in line
-      // with Stripe's S and Creem's Landmark.
-      return (
-        <span
-          className={`inline-flex items-center justify-center leading-none ${className}`}
-          style={{ transform: 'scale(2)' }}
-        >
-          <img
-            src='/waffo-logo-light.svg'
-            alt={i18next.t('Waffo')}
-            className='block h-full w-full object-contain dark:hidden'
-          />
-          <img
-            src='/waffo-logo-dark.svg'
-            alt={i18next.t('Waffo')}
-            className='hidden h-full w-full object-contain dark:block'
-          />
-        </span>
-      )
+    case PAYMENT_PLATFORMS.EPAY:
+      return <QrCode className={className} aria-hidden='true' />
+    case PAYMENT_PLATFORMS.CRYPTOMUS:
+      return <Bitcoin className={className} aria-hidden='true' />
+    case PAYMENT_PLATFORMS.BALANCE:
+      return <Wallet className={className} aria-hidden='true' />
     default:
-      return <CreditCard className={className} />
+      return <CreditCard className={className} aria-hidden='true' />
   }
 }

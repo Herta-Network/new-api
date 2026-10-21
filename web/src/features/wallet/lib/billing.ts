@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { StatusBadgeProps } from '@/components/status-badge'
-import { formatTimestampToDate } from '@/lib/format'
 
-import type { TopupStatus } from '../types'
+import { PAYMENT_PLATFORM_LABELS } from '../constants'
+import { PAYMENT_ORDER_STATUS, type PaymentOrder } from '../types'
 
 // ============================================================================
 // Billing Utility Functions
@@ -27,58 +27,41 @@ import type { TopupStatus } from '../types'
 
 interface StatusConfig {
   variant: StatusBadgeProps['variant']
+  /** i18n key */
   label: string
 }
 
-/**
- * Status badge configuration
- */
-export const STATUS_CONFIG: Record<TopupStatus, StatusConfig> = {
-  success: {
-    variant: 'success',
-    label: 'Success',
-  },
-  pending: {
+const STATUS_CONFIG: Record<number, StatusConfig> = {
+  [PAYMENT_ORDER_STATUS.PENDING]: {
     variant: 'warning',
-    label: 'Pending',
+    label: 'Awaiting payment',
   },
-  expired: {
-    variant: 'danger',
-    label: 'Expired',
-  },
+  [PAYMENT_ORDER_STATUS.PAID]: { variant: 'info', label: 'Paid' },
+  [PAYMENT_ORDER_STATUS.CLOSED]: { variant: 'neutral', label: 'Closed' },
+  [PAYMENT_ORDER_STATUS.FINISHED]: { variant: 'success', label: 'Completed' },
 }
 
 /**
- * Get status badge configuration
+ * Status badge of a payment order
  */
-export function getStatusConfig(status: TopupStatus): StatusConfig {
-  return STATUS_CONFIG[status] || STATUS_CONFIG.pending
+export function getOrderStatusConfig(status: number): StatusConfig {
+  return STATUS_CONFIG[status] ?? STATUS_CONFIG[PAYMENT_ORDER_STATUS.PENDING]
 }
 
 /**
- * Payment method display names
+ * Whether the buyer can still pay an order (pending and not expired)
  */
-export const PAYMENT_METHOD_NAMES: Record<string, string> = {
-  stripe: 'Stripe',
-  alipay: 'Alipay',
-  wxpay: 'WeChat Pay',
-  waffo: 'Waffo',
+export function isOrderPayable(order: PaymentOrder, nowSeconds: number) {
+  return (
+    order.status === PAYMENT_ORDER_STATUS.PENDING &&
+    order.platform !== 'balance' &&
+    order.expires_at > nowSeconds
+  )
 }
 
 /**
- * Get payment method display name
+ * Platform name (i18n key) of an order
  */
-export function getPaymentMethodName(
-  method: string,
-  t?: (key: string) => string
-): string {
-  const name = PAYMENT_METHOD_NAMES[method] || method
-  return t ? t(name) : name
-}
-
-/**
- * Format timestamp to readable date string
- */
-export function formatTimestamp(timestamp: number): string {
-  return formatTimestampToDate(timestamp)
+export function getPlatformLabel(platform: string): string {
+  return PAYMENT_PLATFORM_LABELS[platform] ?? platform
 }

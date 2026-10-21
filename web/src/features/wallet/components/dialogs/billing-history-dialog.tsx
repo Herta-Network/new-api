@@ -16,25 +16,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Search, Copy, Check, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
+import { CopyButton } from '@/components/copy-button'
 import { Dialog } from '@/components/dialog'
 import { StatusBadge } from '@/components/status-badge'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -44,61 +37,62 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
-import { formatCurrencyFromUSD } from '@/lib/currency'
-import { formatNumber } from '@/lib/format'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatMinorAmount } from '@/lib/currency'
+import { formatQuota, formatTimestampToDate } from '@/lib/format'
+import { handleServerError } from '@/lib/handle-server-error'
 
+import { closePaymentOrder } from '../../api'
 import { useBillingHistory } from '../../hooks/use-billing-history'
+import { paymentQueryKeys } from '../../hooks/use-payment-queries'
 import {
-  getStatusConfig,
-  getPaymentMethodName,
-  formatTimestamp,
+  getOrderStatusConfig,
+  getPlatformLabel,
+  isOrderPayable,
 } from '../../lib/billing'
 
 interface BillingHistoryDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** Pay a pending order again */
+  onResume?: (orderNo: string) => void
+  resuming?: boolean
 }
 
-export function BillingHistoryDialog({
-  open,
-  onOpenChange,
-}: BillingHistoryDialogProps) {
-  const { t } = useTranslation()
-  const {
-    records,
-    total,
-    page,
-    pageSize,
-    keyword,
-    loading,
-    completing,
-    isAdmin,
-    handlePageChange,
-    handlePageSizeChange,
-    handleSearch,
-    handleCompleteOrder,
-  } = useBillingHistory()
+/** Page sizes; labels are i18n keys */
+const PAGE_SIZE_OPTIONS = [
+  { value: '10', label: '10 / page' },
+  { value: '20', label: '20 / page' },
+  { value: '50', label: '50 / page' },
+  { value: '100', label: '100 / page' },
+]
 
-  const [confirmTradeNo, setConfirmTradeNo] = useState<string | null>(null)
-  const { copyToClipboard, copiedText } = useCopyToClipboard({ notify: false })
+export function BillingHistoryDialog(props: BillingHistoryDialogProps) {
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const queryClient = useQueryClient()
+  const history = useBillingHistory(props.open)
+  const [closingOrderNo, setClosingOrderNo] = useState<string | null>(null)
+  const nowSeconds = Date.now() / 1000
 
-  const totalPages = Math.ceil(total / pageSize)
+  const closeOrder = useMutation({
+    mutationFn: closePaymentOrder,
+    onSuccess: (order) => {
+      toast.success(t('Order cancelled'))
+      setClosingOrderNo(null)
+      queryClient.setQueryData(paymentQueryKeys.order(order.order_no), order)
+      void queryClient.invalidateQueries({ queryKey: paymentQueryKeys.orders })
+    },
+    onError: (error) => handleServerError(error, t('Failed to cancel order')),
+  })
 
-  const handleConfirmComplete = async () => {
-    if (confirmTradeNo) {
-      const success = await handleCompleteOrder(confirmTradeNo)
-      if (success) {
-        setConfirmTradeNo(null)
-      }
-    }
-  }
+  const totalPages = Math.max(1, Math.ceil(history.total / history.pageSize))
 
   return (
     <>
       <Dialog
-        open={open}
-        onOpenChange={onOpenChange}
+        open={props.open}
+        onOpenChange={props.onOpenChange}
         title={t('Billing History')}
         description={t(
           'View your topup transaction records and payment history'
@@ -108,27 +102,26 @@ export function BillingHistoryDialog({
         bodyClassName='space-y-3'
       >
         <div className='min-h-0 space-y-3'>
-          {/* Search and Filter Bar */}
           <div className='flex items-center gap-2'>
             <div className='relative flex-1'>
               <Search className='text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2' />
               <Input
                 placeholder={t('Search by order number...')}
-                value={keyword}
-                onChange={(e) => handleSearch(e.target.value)}
+                aria-label={t('Search by order number...')}
+                value={history.keyword}
+                onChange={(e) => history.handleSearch(e.target.value)}
                 className='h-9 pl-10'
               />
             </div>
             <Select
-              items={[
-                { value: '10', label: t('10 / page') },
-                { value: '20', label: t('20 / page') },
-                { value: '50', label: t('50 / page') },
-                { value: '100', label: t('100 / page') },
-              ]}
-              value={pageSize.toString()}
+              items={PAGE_SIZE_OPTIONS.map((option) => ({
+                value: option.value,
+                label: t(option.label),
+              }))}
+              value={String(history.pageSize)}
               onValueChange={(value) =>
-                value !== null && handlePageSizeChange(Number.parseInt(value))
+                value !== null &&
+                history.handlePageSizeChange(Number.parseInt(value))
               }
             >
               <SelectTrigger className='h-9 w-[92px] sm:w-32'>
@@ -136,219 +129,208 @@ export function BillingHistoryDialog({
               </SelectTrigger>
               <SelectContent alignItemWithTrigger={false}>
                 <SelectGroup>
-                  <SelectItem value='10'>{t('10 / page')}</SelectItem>
-                  <SelectItem value='20'>{t('20 / page')}</SelectItem>
-                  <SelectItem value='50'>{t('50 / page')}</SelectItem>
-                  <SelectItem value='100'>{t('100 / page')}</SelectItem>
+                  {PAGE_SIZE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {t(option.label)}
+                    </SelectItem>
+                  ))}
                 </SelectGroup>
               </SelectContent>
             </Select>
           </div>
 
-          {/* Records List */}
           <div className='max-h-[min(54vh,520px)] overflow-y-auto pr-1'>
-            {loading && (
+            {history.loading && (
               <div className='space-y-3'>
-                {['first', 'second', 'third', 'fourth', 'fifth'].map(
-                  (placeholder) => (
-                    <div
-                      key={placeholder}
-                      className='rounded-lg border p-3 sm:p-4'
-                    >
-                      <div className='flex items-start justify-between'>
-                        <div className='flex-1 space-y-2'>
-                          <Skeleton className='h-4 w-48' />
-                          <Skeleton className='h-3 w-32' />
-                        </div>
-                        <Skeleton className='h-5 w-16' />
-                      </div>
-                      <div className='mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4'>
-                        <Skeleton className='h-3 w-full' />
-                        <Skeleton className='h-3 w-full' />
-                        <Skeleton className='h-3 w-full' />
-                      </div>
+                {['first', 'second', 'third'].map((placeholder) => (
+                  <div
+                    key={placeholder}
+                    className='rounded-lg border p-3 sm:p-4'
+                  >
+                    <Skeleton className='h-4 w-48' />
+                    <Skeleton className='mt-2 h-3 w-32' />
+                    <div className='mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4'>
+                      <Skeleton className='h-3 w-full' />
+                      <Skeleton className='h-3 w-full' />
                     </div>
-                  )
-                )}
+                  </div>
+                ))}
               </div>
             )}
-            {!loading && records.length === 0 && (
+            {!history.loading && history.records.length === 0 && (
               <div className='text-muted-foreground flex min-h-40 flex-col items-center justify-center py-10 text-center'>
                 <p className='text-sm font-medium'>
                   {t('No billing records found')}
                 </p>
                 <p className='mt-1 text-xs'>
-                  {keyword
+                  {history.searching
                     ? t('Try adjusting your search')
                     : t('Your transaction history will appear here')}
                 </p>
               </div>
             )}
-            {!loading && records.length > 0 && (
-              <div className='space-y-3'>
-                {records.map((record) => {
-                  const statusConfig = getStatusConfig(record.status)
+            {!history.loading && history.records.length > 0 && (
+              <ul className='space-y-3'>
+                {history.records.map((order) => {
+                  const status = getOrderStatusConfig(order.status)
+                  const payable = isOrderPayable(order, nowSeconds)
                   return (
-                    <div
-                      key={record.id}
+                    <li
+                      key={order.order_no}
                       className='rounded-lg border p-3 sm:p-4'
                     >
-                      {/* Header Row */}
                       <div className='flex items-start justify-between gap-2'>
-                        <div className='flex-1 space-y-1'>
-                          <div className='flex min-w-0 items-center gap-2'>
-                            <code className='text-foreground truncate font-mono text-sm'>
-                              {record.trade_no}
+                        <div className='min-w-0 flex-1 space-y-1'>
+                          <div className='truncate text-sm font-medium'>
+                            {order.subject}
+                          </div>
+                          <div className='flex min-w-0 items-center gap-1'>
+                            <code className='text-muted-foreground truncate font-mono text-xs'>
+                              {order.order_no}
                             </code>
-                            <Button
-                              variant='ghost'
+                            <CopyButton
+                              value={order.order_no}
                               size='sm'
                               className='h-5 w-5 p-0'
-                              onClick={() => copyToClipboard(record.trade_no)}
-                            >
-                              {copiedText === record.trade_no ? (
-                                <Check className='h-3 w-3' />
-                              ) : (
-                                <Copy className='h-3 w-3' />
-                              )}
-                            </Button>
-                            {isAdmin && record.user_id != null && (
-                              <StatusBadge
-                                label={`${t('User ID')}: ${record.user_id}`}
-                                variant='neutral'
-                                size='sm'
-                                copyText={String(record.user_id)}
-                              />
-                            )}
+                              iconClassName='h-3 w-3'
+                            />
                           </div>
                           <div className='text-muted-foreground text-xs'>
-                            {formatTimestamp(record.create_time)}
+                            {formatTimestampToDate(order.created_at)}
                           </div>
                         </div>
                         <StatusBadge
-                          label={t(statusConfig.label)}
-                          variant={statusConfig.variant}
-                          showDot
+                          label={t(status.label)}
+                          variant={status.variant}
                           copyable={false}
                         />
                       </div>
 
-                      {/* Details Grid */}
-                      <div className='mt-3 grid grid-cols-2 gap-3 sm:mt-4 sm:grid-cols-3 sm:gap-4'>
+                      <dl className='mt-3 grid grid-cols-2 gap-3 sm:mt-4 sm:grid-cols-4 sm:gap-4'>
                         <div className='space-y-1'>
-                          <Label className='text-muted-foreground text-xs'>
+                          <dt className='text-muted-foreground text-xs'>
+                            {t('Type')}
+                          </dt>
+                          <dd className='text-sm font-medium'>
+                            {order.purpose === 'topup'
+                              ? t('Top-up')
+                              : t('Subscription')}
+                          </dd>
+                        </div>
+                        <div className='space-y-1'>
+                          <dt className='text-muted-foreground text-xs'>
                             {t('Payment Method')}
-                          </Label>
-                          <div className='text-sm font-medium'>
-                            {getPaymentMethodName(record.payment_method, t)}
-                          </div>
+                          </dt>
+                          <dd className='text-sm font-medium'>
+                            {t(getPlatformLabel(order.platform))}
+                          </dd>
                         </div>
                         <div className='space-y-1'>
-                          <Label className='text-muted-foreground text-xs'>
-                            {t('Amount')}
-                          </Label>
-                          <div className='text-sm font-semibold'>
-                            {formatCurrencyFromUSD(record.amount, {
-                              digitsLarge: 2,
-                              digitsSmall: 2,
-                              abbreviate: false,
-                            })}
-                          </div>
+                          <dt className='text-muted-foreground text-xs'>
+                            {t('Total')}
+                          </dt>
+                          <dd className='text-sm font-semibold'>
+                            {formatMinorAmount(
+                              order.amount,
+                              order.currency,
+                              locale
+                            )}
+                          </dd>
                         </div>
-                        <div className='space-y-1'>
-                          <Label className='text-muted-foreground text-xs'>
-                            {t('Payment')}
-                          </Label>
-                          <div className='text-sm font-semibold text-red-600'>
-                            {formatNumber(record.money)}
+                        {order.purpose === 'topup' && (
+                          <div className='space-y-1'>
+                            <dt className='text-muted-foreground text-xs'>
+                              {t('Quota')}
+                            </dt>
+                            <dd className='text-sm font-medium'>
+                              {formatQuota(order.quota_amount)}
+                            </dd>
                           </div>
-                        </div>
-                      </div>
+                        )}
+                      </dl>
 
-                      {/* Admin Actions */}
-                      {isAdmin && record.status === 'pending' && (
-                        <div className='mt-4 flex justify-end'>
+                      {payable && (
+                        <div className='mt-4 flex justify-end gap-2'>
                           <Button
                             size='sm'
                             variant='outline'
-                            onClick={() => setConfirmTradeNo(record.trade_no)}
-                            disabled={completing}
+                            onClick={() => setClosingOrderNo(order.order_no)}
                           >
-                            {t('Complete Order')}
+                            {t('Cancel order')}
                           </Button>
+                          {props.onResume && (
+                            <Button
+                              size='sm'
+                              onClick={() => props.onResume?.(order.order_no)}
+                              disabled={props.resuming}
+                            >
+                              {t('Continue payment')}
+                            </Button>
+                          )}
                         </div>
                       )}
-                    </div>
+                    </li>
                   )
                 })}
-              </div>
+              </ul>
             )}
           </div>
 
-          {/* Pagination */}
-          {!loading && records.length > 0 && (
-            <div className='flex flex-col items-center gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between'>
-              <div className='text-muted-foreground text-xs sm:text-sm'>
-                {t('Showing')} {(page - 1) * pageSize + 1}-
-                {Math.min(page * pageSize, total)} {t('of')} {total}
-              </div>
-              <div className='flex items-center gap-2'>
-                <Button
-                  variant='outline'
-                  size='sm'
-                  onClick={() => handlePageChange(page - 1)}
-                  disabled={page <= 1}
-                  className='h-8 w-8 p-0'
-                >
-                  <ChevronLeft className='h-4 w-4' />
-                </Button>
-                <div className='text-muted-foreground flex items-center gap-1 text-sm'>
-                  <span className='font-medium'>{page}</span>
-                  <span>/</span>
-                  <span>{totalPages}</span>
+          {!history.loading &&
+            !history.searching &&
+            history.records.length > 0 && (
+              <div className='flex flex-col items-center gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between'>
+                <div className='text-muted-foreground text-xs sm:text-sm'>
+                  {t('Showing')} {(history.page - 1) * history.pageSize + 1}-
+                  {Math.min(history.page * history.pageSize, history.total)}{' '}
+                  {t('of')} {history.total}
                 </div>
-                <Button
-                  variant='outline'
-                  size='sm'
-                  onClick={() => handlePageChange(page + 1)}
-                  disabled={page >= totalPages}
-                  className='h-8 w-8 p-0'
-                >
-                  <ChevronRight className='h-4 w-4' />
-                </Button>
+                <div className='flex items-center gap-2'>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={() => history.handlePageChange(history.page - 1)}
+                    disabled={history.page <= 1}
+                    className='h-8 w-8 p-0'
+                    aria-label={t('Previous page')}
+                  >
+                    <ChevronLeft className='h-4 w-4' />
+                  </Button>
+                  <div className='text-muted-foreground flex items-center gap-1 text-sm'>
+                    <span className='font-medium'>{history.page}</span>
+                    <span>/</span>
+                    <span>{totalPages}</span>
+                  </div>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={() => history.handlePageChange(history.page + 1)}
+                    disabled={history.page >= totalPages}
+                    className='h-8 w-8 p-0'
+                    aria-label={t('Next page')}
+                  >
+                    <ChevronRight className='h-4 w-4' />
+                  </Button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
         </div>
       </Dialog>
 
-      {/* Confirm Complete Order Dialog */}
-      <AlertDialog
-        open={!!confirmTradeNo}
-        onOpenChange={(open) => !open && setConfirmTradeNo(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('Complete Order')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t(
-                'Are you sure you want to manually complete this order? The user will be credited with the corresponding quota.'
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={completing}>
-              {t('Cancel')}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleConfirmComplete}
-              disabled={completing}
-            >
-              {completing ? t('Processing...') : t('Confirm')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={!!closingOrderNo}
+        onOpenChange={(open) => !open && setClosingOrderNo(null)}
+        title={t('Cancel order')}
+        desc={t(
+          'Cancel this unpaid order? If you already paid, the payment is still checked before the order closes.'
+        )}
+        confirmText={t('Cancel order')}
+        destructive
+        isLoading={closeOrder.isPending}
+        handleConfirm={() =>
+          closingOrderNo && closeOrder.mutate(closingOrderNo)
+        }
+      />
     </>
   )
 }

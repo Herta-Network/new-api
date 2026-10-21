@@ -67,6 +67,11 @@ const cases = [
     true,
   ],
   [
+    'shared-minor-amount',
+    'formatMinorAmount(1234, "USD", i18n.language)',
+    true,
+  ],
+  [
     'shared-import-alias',
     'import { formatNumber as number } from "@/lib/format"; number(1234, i18n.language)',
     true,

@@ -24,6 +24,9 @@ import { BadgeCell } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
 import { TableId } from '@/components/table-id'
+import { usePaymentInfo } from '@/features/wallet/hooks/use-payment-queries'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatMinorAmount } from '@/lib/currency'
 import { formatQuota } from '@/lib/format'
 
 import { formatDuration, formatResetPeriod } from '../lib'
@@ -31,7 +34,9 @@ import type { PlanRecord } from '../types'
 import { DataTableRowActions } from './data-table-row-actions'
 
 export function useSubscriptionsColumns(): ColumnDef<PlanRecord>[] {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const currency = usePaymentInfo().data?.currency ?? 'USD'
 
   return useMemo(
     (): ColumnDef<PlanRecord>[] => [
@@ -69,7 +74,11 @@ export function useSubscriptionsColumns(): ColumnDef<PlanRecord>[] {
         header: t('Price'),
         cell: ({ row }) => (
           <span className='font-semibold text-emerald-600'>
-            ${Number(row.original.plan.price_amount || 0).toFixed(2)}
+            {formatMinorAmount(
+              Math.round(Number(row.original.plan.price_amount || 0) * 100),
+              currency,
+              locale
+            )}
           </span>
         ),
         size: 100,
@@ -131,36 +140,6 @@ export function useSubscriptionsColumns(): ColumnDef<PlanRecord>[] {
         size: 80,
       },
       {
-        id: 'payment',
-        header: t('Payment Channel'),
-        meta: { mobileHidden: true },
-        cell: ({ row }) => {
-          const plan = row.original.plan
-          return (
-            <BadgeCell>
-              {plan.stripe_price_id && (
-                <StatusBadge
-                  label='Stripe'
-                  variant='neutral'
-                  copyable={false}
-                />
-              )}
-              {plan.creem_product_id && (
-                <StatusBadge label='Creem' variant='neutral' copyable={false} />
-              )}
-              {plan.waffo_pancake_product_id && (
-                <StatusBadge
-                  label='Waffo Pancake'
-                  variant='neutral'
-                  copyable={false}
-                />
-              )}
-            </BadgeCell>
-          )
-        },
-        size: 140,
-      },
-      {
         id: 'total_amount',
         header: t('Plan Quota'),
         meta: { mobileHidden: true },
@@ -200,6 +179,6 @@ export function useSubscriptionsColumns(): ColumnDef<PlanRecord>[] {
         meta: { pinned: 'right' as const },
       },
     ],
-    [t]
+    [currency, locale, t]
   )
 }
