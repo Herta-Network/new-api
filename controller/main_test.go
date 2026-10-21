@@ -23,13 +23,13 @@ func TestMain(m *testing.M) {
 	}))
 }
 
-// keepPackageDatabases restores model.DB, model.LOG_DB and their database
-// types when the test ends, closing the connections the test put in their
+// keepPackageDatabases restores model.DB, model.LOG_DB and the log database
+// type when the test ends, closing the connections the test put in their
 // place.
 func keepPackageDatabases(t *testing.T) {
 	t.Helper()
 	previousDB, previousLogDB := model.DB, model.LOG_DB
-	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
+	previousLogType := common.LogDatabaseType()
 	t.Cleanup(func() {
 		for _, opened := range []*gorm.DB{model.DB, model.LOG_DB} {
 			if opened != previousDB && opened != previousLogDB {
@@ -37,7 +37,7 @@ func keepPackageDatabases(t *testing.T) {
 			}
 		}
 		model.DB, model.LOG_DB = previousDB, previousLogDB
-		common.SetDatabaseTypes(previousMain, previousLog)
+		common.SetLogDatabaseType(previousLogType)
 	})
 }
 

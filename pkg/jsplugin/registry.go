@@ -1943,10 +1943,9 @@ func integerSliceMetaField(object map[string]any, name string) ([]int, error) {
 	return numbers, nil
 }
 
-// MaxMetaBaseURLLength bounds a normalized plugin default base URL. The value
-// is persisted into channel.base_url, which the pinned MySQL driver creates as
-// varchar(191); a longer default would store on SQLite and PostgreSQL but fail
-// on MySQL.
+// MaxMetaBaseURLLength bounds a normalized plugin default base URL, which is
+// persisted into channel.base_url. Task Plugin API v1 fixes the limit at 191
+// characters, the width that column had on MySQL.
 const MaxMetaBaseURLLength = 191
 
 // normalizeMetaBaseURL admits an absolute http(s) URL that a channel can adopt

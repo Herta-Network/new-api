@@ -1,7 +1,6 @@
 package model
 
 import (
-	"os"
 	"strings"
 	"testing"
 
@@ -48,22 +47,25 @@ func TestNormalizeClickHouseDSN(t *testing.T) {
 	assert.Equal(t, "tcp://localhost:9000/logs", normalizeClickHouseDSN("tcp://localhost:9000/logs"))
 }
 
-func TestChooseDBRejectsClickHouseForMainDatabase(t *testing.T) {
-	original, had := os.LookupEnv("SQL_DSN")
-	t.Cleanup(func() {
-		if had {
-			require.NoError(t, os.Setenv("SQL_DSN", original))
-		} else {
-			require.NoError(t, os.Unsetenv("SQL_DSN"))
-		}
-	})
-	require.NoError(t, os.Setenv("SQL_DSN", "clickhouse://default:pass@localhost:9000/logs"))
-
-	db, dbType, err := chooseDB("SQL_DSN", false)
-	require.Error(t, err)
-	assert.Nil(t, db)
-	assert.Equal(t, common.DatabaseType(""), dbType)
-	assert.Contains(t, err.Error(), "does not support ClickHouse")
+func TestChooseDBRequiresPostgreSQL(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		dsn  string
+		want string
+	}{
+		{"unset", "", "SQL_DSN is not set"},
+		{"sqlite", "local", "SQLite and MySQL are not supported"},
+		{"mysql", "root:pass@tcp(localhost:3306)/new-api", "SQLite and MySQL are not supported"},
+		{"clickhouse", "clickhouse://default:pass@localhost:9000/logs", "ClickHouse is only supported as LOG_SQL_DSN"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SQL_DSN", tc.dsn)
+			db, dbType, err := chooseDB("SQL_DSN", false)
+			require.ErrorContains(t, err, tc.want)
+			assert.Nil(t, db)
+			assert.Equal(t, common.DatabaseType(""), dbType)
+		})
+	}
 }
 
 func TestClickHouseLogTTLExpression(t *testing.T) {

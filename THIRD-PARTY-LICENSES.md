@@ -32,13 +32,10 @@ Transitive dependencies should be audited before a final external release.
 | backend  | production  | Go        | `github.com/gin-contrib/gzip`                           | `v0.0.6`                             | MIT                     |
 | backend  | production  | Go        | `github.com/gin-contrib/static`                         | `v0.0.1`                             | MIT                     |
 | backend  | production  | Go        | `github.com/gin-gonic/gin`                              | `v1.9.1`                             | MIT                     |
-| backend  | production  | Go        | `github.com/glebarez/go-sqlite`                         | `v1.21.2`                            | BSD-3-Clause            |
-| backend  | production  | Go        | `github.com/glebarez/sqlite`                            | `v1.11.0`                            | MIT                     |
 | backend  | production  | Go        | `github.com/go-audio/aiff`                              | `v1.1.0`                             | Apache-2.0              |
 | backend  | production  | Go        | `github.com/go-audio/wav`                               | `v1.1.0`                             | Apache-2.0              |
 | backend  | production  | Go        | `github.com/go-playground/validator/v10`                | `v10.20.0`                           | MIT                     |
 | backend  | production  | Go        | `github.com/go-redis/redis/v8`                          | `v8.11.5`                            | BSD-2-Clause            |
-| backend  | production  | Go        | `github.com/go-sql-driver/mysql`                        | `v1.7.0`                             | MPL-2.0                 |
 | backend  | production  | Go        | `github.com/go-webauthn/webauthn`                       | `v0.14.0`                            | BSD-3-Clause            |
 | backend  | production  | Go        | `github.com/golang-jwt/jwt/v5`                          | `v5.3.0`                             | MIT                     |
 | backend  | production  | Go        | `github.com/google/uuid`                                | `v1.6.0`                             | BSD-3-Clause            |
@@ -79,7 +76,6 @@ Transitive dependencies should be audited before a final external release.
 | backend  | production  | Go        | `golang.org/x/text`                                     | `v0.37.0`                            | BSD-3-Clause            |
 | backend  | production  | Go        | `gopkg.in/yaml.v3`                                      | `v3.0.1`                             | Apache-2.0 OR MIT       |
 | backend  | production  | Go        | `gorm.io/driver/clickhouse`                             | `v0.6.0`                             | MIT                     |
-| backend  | production  | Go        | `gorm.io/driver/mysql`                                  | `v1.5.7`                             | MIT                     |
 | backend  | production  | Go        | `gorm.io/driver/postgres`                               | `v1.5.9`                             | MIT                     |
 | backend  | production  | Go        | `gorm.io/gorm`                                          | `v1.25.12`                           | MIT                     |
 | web      | production  | npm       | `@base-ui/react`                                        | `1.6.0`                              | MIT                     |
@@ -330,8 +326,6 @@ SOFTWARE.
 
 Mozilla Public License 2.0
 https://mozilla.org/MPL/2.0/
-
-The source code of the MPL-covered files is available from the upstream project at https://github.com/go-sql-driver/mysql.
 
 ### OFL-1.1
 
