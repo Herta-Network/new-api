@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-
 /** One usage allowance window, as the Codex and OpenCode Go usage APIs report it. */
 export type RateLimitWindowData = {
   used_percent?: number

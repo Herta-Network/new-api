@@ -24,6 +24,7 @@ import {
   getSavedLanguage,
   sanitizeAuthRedirect,
 } from '@/features/auth/lib/auth-redirect'
+import { changeInterfaceLanguage } from '@/i18n/locale-loader'
 import { applyAuthBundle, isAuthBundle } from '@/lib/api'
 import { AuthOperationError } from '@/lib/secure-verification'
 import { useAuthStore, type AuthBundle } from '@/stores/auth-store'
@@ -60,7 +61,9 @@ export function useAuthRedirect() {
       applyAuthBundle(bundle)
       const savedLang = getSavedLanguage(bundle.user)
       if (savedLang && savedLang !== i18n.language) {
-        await i18n.changeLanguage(savedLang)
+        // If the saved language fails to load, sign-in continues in the
+        // current language.
+        await changeInterfaceLanguage(i18n, savedLang)
       }
 
       const targetPath =

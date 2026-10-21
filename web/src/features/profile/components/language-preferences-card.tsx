@@ -27,6 +27,7 @@ import {
   INTERFACE_LANGUAGE_OPTIONS,
   normalizeInterfaceLanguage,
 } from '@/i18n/languages'
+import { changeInterfaceLanguage } from '@/i18n/locale-loader'
 import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
@@ -64,7 +65,19 @@ export function LanguagePreferencesCard(props: LanguagePreferencesCardProps) {
     const previousLanguage = currentLanguage
     setCurrentLanguage(nextLanguage)
     setSaving(true)
-    await i18n.changeLanguage(nextLanguage)
+    const result = await changeInterfaceLanguage(i18n, nextLanguage)
+    if (result !== 'changed') {
+      setCurrentLanguage(previousLanguage)
+      setSaving(false)
+      if (result === 'failed') {
+        toast.error(t('Failed to load'), {
+          description: INTERFACE_LANGUAGE_OPTIONS.find(
+            (option) => option.code === nextLanguage
+          )?.label,
+        })
+      }
+      return
+    }
 
     try {
       const response = await updateUserLanguage(nextLanguage)
@@ -90,7 +103,7 @@ export function LanguagePreferencesCard(props: LanguagePreferencesCardProps) {
       toast.success(t('Language preference saved'))
     } catch (error) {
       setCurrentLanguage(previousLanguage)
-      await i18n.changeLanguage(previousLanguage)
+      await changeInterfaceLanguage(i18n, previousLanguage)
       handleServerError(error, t('Failed to update settings'))
     } finally {
       setSaving(false)

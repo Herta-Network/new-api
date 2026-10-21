@@ -101,10 +101,14 @@ it('opens OpenCode Go usage from the balance cell with the keyboard instead of u
   expect(within(dialog).getByText('Go plan (#42)')).toBeInTheDocument()
   expect(within(dialog).getByText('Available')).toBeInTheDocument()
   expect(
-    within(dialog).getByRole('progressbar', { name: '5-Hour Window usage: 12%' })
+    within(dialog).getByRole('progressbar', {
+      name: '5-Hour Window usage: 12%',
+    })
   ).toBeInTheDocument()
   expect(
-    within(dialog).getByRole('progressbar', { name: 'Weekly Window usage: 40%' })
+    within(dialog).getByRole('progressbar', {
+      name: 'Weekly Window usage: 40%',
+    })
   ).toBeInTheDocument()
   expect(
     within(dialog).getByRole('progressbar', {
