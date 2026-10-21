@@ -222,6 +222,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     manualPagination: true,
     manualFiltering: true,
     totalCount: data?.total || 0,
+    totalCountCapped: data?.total_capped,
     ensurePageInRange,
   })
 

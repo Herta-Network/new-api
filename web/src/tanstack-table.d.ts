@@ -30,4 +30,9 @@ declare module '@tanstack/react-table' {
     mobileHidden?: boolean // hide this column on mobile entirely
     mobileOrder?: number // lower values appear first in card field area
   }
+
+  interface TableMeta<_TData> {
+    // The server stopped counting at the row count; more rows match.
+    totalCountCapped?: boolean
+  }
 }

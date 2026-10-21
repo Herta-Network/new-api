@@ -445,6 +445,8 @@ export interface GetLogsResponse {
   data?: {
     items: UsageLog[] | MidjourneyLog[] | TaskLog[]
     total: number
+    /** Counting stopped at `total`; more logs match. */
+    total_capped?: boolean
     page: number
     page_size: number
   }

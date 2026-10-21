@@ -105,6 +105,7 @@ func TestLogExportDatabaseMatrix(t *testing.T) {
 			listed := callLogHandler(t, GetUserLogs, 1, common.RoleCommonUser, query)[0]
 			require.Equal(t, true, listed["success"])
 			assert.EqualValues(t, 2, listed["data"].(map[string]any)["total"])
+			assert.NotContains(t, listed["data"], "total_capped", "a count below the limit is exact")
 			listed = callLogHandler(t, GetAllLogs, 3, common.RoleAdminUser, query+"&username=alice")[0]
 			require.Equal(t, true, listed["success"])
 			assert.EqualValues(t, 2, listed["data"].(map[string]any)["total"])
@@ -123,6 +124,34 @@ func TestLogExportDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, "primary", all[2]["channel_name"])
 			assert.Contains(t, all[2]["other"], "admin_info")
 			assert.Equal(t, true, all[3]["success"])
+
+			// The lists stop counting at 10000 logs and say that more match;
+			// pages still come from the full result.
+			const capped = 10000
+			first := now - capped - 1
+			many := make([]model.Log, capped+1)
+			for i := range many {
+				many[i] = model.Log{UserId: 4, Username: "dave", CreatedAt: first + int64(i), Type: model.LogTypeConsume, ModelName: "gpt-a", RequestId: fmt.Sprintf("d-%d", i)}
+			}
+			require.NoError(t, model.LOG_DB.CreateInBatches(&many, 1000).Error)
+			daveQuery := fmt.Sprintf("start_timestamp=%d&end_timestamp=%d", first, now)
+			for _, listed := range []map[string]any{
+				callLogHandler(t, GetUserLogs, 4, common.RoleCommonUser, daveQuery+"&p=2&page_size=3")[0],
+				callLogHandler(t, GetAllLogs, 3, common.RoleAdminUser, daveQuery+"&username=dave&p=2&page_size=3")[0],
+			} {
+				require.Equal(t, true, listed["success"])
+				data := listed["data"].(map[string]any)
+				assert.EqualValues(t, capped, data["total"])
+				assert.Equal(t, true, data["total_capped"])
+				items := data["items"].([]any)
+				require.Len(t, items, 3)
+				for i, item := range items {
+					assert.Equal(t, fmt.Sprintf("d-%d", capped-3-i), item.(map[string]any)["request_id"])
+				}
+			}
+			exactly := callLogHandler(t, GetUserLogs, 4, common.RoleCommonUser, fmt.Sprintf("start_timestamp=%d&end_timestamp=%d", first+1, now))[0]
+			assert.EqualValues(t, capped, exactly["data"].(map[string]any)["total"])
+			assert.NotContains(t, exactly["data"], "total_capped", "exactly the limit is still an exact count")
 		})
 	}
 }

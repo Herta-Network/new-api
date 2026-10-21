@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -291,6 +292,12 @@ func migrateDB() error {
 	if err := migrateOptionPrimaryKey(DB); err != nil {
 		common.SysError(common.LogText("failed to migrate options primary key: %s", err.Error()))
 	}
+	if err := migrateQuotaDataKey(DB); err != nil {
+		return err
+	}
+	if err := migrateLogIndexes(DB); err != nil {
+		common.SysError(common.LogText("failed to migrate log indexes: %s", err.Error()))
+	}
 
 	err := DB.AutoMigrate(
 		&Channel{},
@@ -358,7 +365,71 @@ func migrateLOGDB() error {
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		return migrateClickHouseLogDB()
 	}
+	if err := migrateLogIndexes(LOG_DB); err != nil {
+		common.SysError(common.LogText("failed to migrate log indexes: %s", err.Error()))
+	}
 	return LOG_DB.AutoMigrate(&Log{})
+}
+
+// Earlier versions indexed these log columns on their own. Nothing filters
+// logs by ip, and idx_user_id_id and index_username_model_name lead with
+// user_id and model_name.
+var retiredLogIndexes = []string{"idx_logs_ip", "idx_logs_user_id", "idx_logs_model_name"}
+
+const logUpstreamRequestIdIndex = "idx_logs_upstream_request_id"
+
+// migrateLogIndexes brings the indexes of an existing PostgreSQL logs table in
+// line with Log before AutoMigrate, which never drops or redefines an index
+// and would build a missing one while blocking log writes. Every log insert
+// maintains every index and logs can be very large, so indexes are dropped
+// and built CONCURRENTLY, outside a transaction. Callers only log a failure:
+// the gateway works without these changes, and the next startup tries again.
+func migrateLogIndexes(db *gorm.DB) error {
+	migrator := db.Migrator()
+	if !migrator.HasTable(&Log{}) {
+		return nil
+	}
+	var indexes []struct {
+		Name    string
+		Valid   bool
+		Partial bool
+	}
+	if err := db.Raw(`
+SELECT index_class.relname AS name,
+       index_meta.indisvalid AS valid,
+       index_meta.indpred IS NOT NULL AS partial
+FROM pg_catalog.pg_index AS index_meta
+JOIN pg_catalog.pg_class AS index_class
+  ON index_class.oid = index_meta.indexrelid
+WHERE index_meta.indrelid = to_regclass('logs')`).Scan(&indexes).Error; err != nil {
+		return fmt.Errorf("inspect log indexes: %w", err)
+	}
+	// Without the column, AutoMigrate adds it to a very old table along with
+	// its index.
+	buildUpstreamIndex := migrator.HasColumn(&Log{}, "upstream_request_id")
+	for _, index := range indexes {
+		if index.Name == logUpstreamRequestIdIndex && index.Valid && index.Partial {
+			buildUpstreamIndex = false
+			continue
+		}
+		// The upstream request id index is replaced when it is the full index
+		// of earlier versions or an INVALID one an interrupted build left.
+		if index.Name != logUpstreamRequestIdIndex && !slices.Contains(retiredLogIndexes, index.Name) {
+			continue
+		}
+		if err := db.Exec("DROP INDEX CONCURRENTLY IF EXISTS " + index.Name).Error; err != nil {
+			return fmt.Errorf("drop log index %s: %w", index.Name, err)
+		}
+	}
+	if !buildUpstreamIndex {
+		return nil
+	}
+	// Most logs store no upstream request id; leave them out of the index.
+	common.SysLog(common.LogText("building log index %s, which can take a while on a large logs table", logUpstreamRequestIdIndex))
+	if err := db.Exec("CREATE INDEX CONCURRENTLY " + logUpstreamRequestIdIndex + " ON logs (upstream_request_id) WHERE upstream_request_id <> ''").Error; err != nil {
+		return fmt.Errorf("create log index %s: %w", logUpstreamRequestIdIndex, err)
+	}
+	return nil
 }
 
 func migrateClickHouseLogDB() error {
