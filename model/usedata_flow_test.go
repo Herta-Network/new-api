@@ -1,10 +1,14 @@
 package model
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func seedFlowQuotaData(t *testing.T, quotaData QuotaData) {
@@ -190,4 +194,100 @@ func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 	require.Equal(t, 60, rows[0].TokenUsed)
 	require.Equal(t, "default", rows[1].UseGroup)
 	require.Equal(t, 25, rows[1].Quota)
+
+	// A later flush of the same hour adds to the stored row instead of
+	// storing the key again, which the unique key also refuses.
+	LogQuotaData(QuotaDataLogParams{
+		UserID:              1,
+		Username:            "alice",
+		ModelName:           "gpt-a",
+		CreatedAt:           7199,
+		UseGroup:            "vip",
+		TokenID:             11,
+		ChannelID:           1,
+		NodeName:            "node-a",
+		Quota:               30,
+		TokenUsed:           12,
+		CacheReadTokens:     5,
+		CacheCreationTokens: 2,
+	})
+	SaveQuotaDataCache()
+
+	require.NoError(t, DB.Order("quota DESC").Find(&rows).Error)
+	require.Len(t, rows, 2)
+	assert.Equal(t, QuotaData{
+		Id:                  rows[0].Id,
+		UserID:              1,
+		Username:            "alice",
+		ModelName:           "gpt-a",
+		CreatedAt:           3600,
+		UseGroup:            "vip",
+		TokenID:             11,
+		ChannelID:           1,
+		NodeName:            "node-a",
+		TokenUsed:           72,
+		Count:               3,
+		Quota:               180,
+		CacheReadTokens:     5,
+		CacheCreationTokens: 2,
+	}, rows[0])
+	assert.Equal(t, 25, rows[1].Quota)
+	duplicate := rows[0]
+	duplicate.Id = 0
+	assert.Error(t, DB.Create(&duplicate).Error)
+}
+
+// A row the database rejects, here a model name longer than its column, is
+// lost on its own; the rest of the flush is saved.
+func TestSaveQuotaDataCacheSavesRowsBesideARejectedOne(t *testing.T) {
+	truncateTables(t)
+	CacheQuotaDataLock.Lock()
+	CacheQuotaData = make(map[string]*QuotaData)
+	CacheQuotaDataLock.Unlock()
+	for _, modelName := range []string{"gpt-a", strings.Repeat("m", 65), "gpt-b"} {
+		LogQuotaData(QuotaDataLogParams{UserID: 1, Username: "alice", ModelName: modelName, CreatedAt: 3700, Quota: 10})
+	}
+
+	SaveQuotaDataCache()
+
+	var models []string
+	require.NoError(t, DB.Model(&QuotaData{}).Order("model_name").Pluck("model_name", &models).Error)
+	assert.Equal(t, []string{"gpt-a", "gpt-b"}, models)
+}
+
+// Upgrading merges the rows that racing flushes stored under one key into the
+// oldest, keeping the totals, before the key becomes unique. An older table
+// gains the columns it lacks, and a second startup changes nothing.
+func TestMigrateQuotaDataKeyMergesDuplicates(t *testing.T) {
+	recorder := &migrationSQLRecorder{}
+	db := pgtest.NewSchemaDB(t).Session(&gorm.Session{Logger: recorder})
+	require.NoError(t, db.AutoMigrate(&QuotaData{}))
+	require.NoError(t, db.Migrator().DropIndex(&QuotaData{}, quotaDataKeyIndex))
+	require.NoError(t, db.Migrator().DropColumn(&QuotaData{}, "cache_creation_tokens"))
+	require.NoError(t, db.Exec(`INSERT INTO quota_data
+		(id, user_id, username, model_name, created_at, use_group, token_id, channel_id, node_name, count, quota, token_used, cache_read_tokens)
+		VALUES
+		(1, 1, 'alice', 'gpt-a', 3600, 'vip', 11, 1, 'node-a', 2, 100, 40, 4),
+		(2, 1, 'alice', 'gpt-a', 3600, 'vip', 11, 1, 'node-b', 1, 10, 5, 0),
+		(3, 1, 'alice', 'gpt-a', 3600, 'vip', 11, 1, 'node-a', 1, 50, 20, 3),
+		(4, 1, 'alice', 'gpt-a', 3600, 'vip', 11, 1, 'node-a', 3, 70, 30, 0)`).Error)
+
+	for pass := range 2 {
+		recorder.reset()
+		require.NoError(t, migrateQuotaDataKey(db))
+		require.NoError(t, db.AutoMigrate(&QuotaData{}))
+		if pass == 1 {
+			assert.Empty(t, recorder.schemaMutations(), "repeated startup must not change the schema")
+		}
+	}
+
+	var rows []QuotaData
+	require.NoError(t, db.Order("id").Find(&rows).Error)
+	assert.Equal(t, []QuotaData{
+		{Id: 1, UserID: 1, Username: "alice", ModelName: "gpt-a", CreatedAt: 3600, UseGroup: "vip", TokenID: 11, ChannelID: 1, NodeName: "node-a", Count: 6, Quota: 220, TokenUsed: 90, CacheReadTokens: 7},
+		{Id: 2, UserID: 1, Username: "alice", ModelName: "gpt-a", CreatedAt: 3600, UseGroup: "vip", TokenID: 11, ChannelID: 1, NodeName: "node-b", Count: 1, Quota: 10, TokenUsed: 5},
+	}, rows)
+	duplicate := rows[0]
+	duplicate.Id = 0
+	assert.Error(t, db.Create(&duplicate).Error)
 }

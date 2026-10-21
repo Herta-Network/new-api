@@ -292,6 +292,9 @@ func migrateDB() error {
 	if err := migrateOptionPrimaryKey(DB); err != nil {
 		common.SysError(common.LogText("failed to migrate options primary key: %s", err.Error()))
 	}
+	if err := migrateQuotaDataKey(DB); err != nil {
+		return err
+	}
 	if err := migrateLogIndexes(DB); err != nil {
 		common.SysError(common.LogText("failed to migrate log indexes: %s", err.Error()))
 	}
