@@ -162,20 +162,17 @@ This README describes the current source tree. Check the release notes for the v
 
 ## Quick start
 
-### Try locally with Docker
+### Try locally with Docker Compose
 
-This starts a single instance with SQLite and binds it to localhost:
+New API requires PostgreSQL 18 or later. The repository's [Compose configuration](./docker-compose.yml) starts New API, PostgreSQL 18, and Redis:
 
 ```bash
-mkdir -p data
-docker run --name new-api -d --restart unless-stopped \
-  -p 127.0.0.1:3000:3000 \
-  -e TZ=Asia/Shanghai \
-  -v "$(pwd)/data:/data" \
-  calciumion/new-api:latest
+git clone https://github.com/QuantumNous/new-api.git
+cd new-api
+docker compose up -d
 ```
 
-Open [http://localhost:3000](http://localhost:3000) and complete the setup wizard to create the administrator account. The `data` directory persists the SQLite database across container replacements.
+Open [http://localhost:3000](http://localhost:3000) and complete the setup wizard to create the administrator account. PostgreSQL data persists in the `pg_data` volume across container replacements. The Compose file uses example passwords and publishes port 3000 on all interfaces; follow [Deployment](#deployment) before exposing it.
 
 ### Make your first request
 
@@ -206,7 +203,7 @@ curl --fail-with-body http://localhost:3000/v1/responses \
 
 ### Docker Compose
 
-The repository's [Compose configuration](./docker-compose.yml) starts **New API + PostgreSQL + Redis** by default. It also contains examples for MySQL and a separate ClickHouse log database.
+The repository's [Compose configuration](./docker-compose.yml) starts **New API + PostgreSQL 18 + Redis** by default. It also contains an example for a separate ClickHouse log database.
 
 ```bash
 git clone https://github.com/QuantumNous/new-api.git
@@ -220,19 +217,23 @@ docker compose up -d
 docker compose logs -f new-api
 ```
 
+Earlier Compose files ran `postgres:15` with data in `/var/lib/postgresql/data`, which PostgreSQL 18 cannot open. To upgrade, back up with `pg_dump` using the old image, start PostgreSQL 18 on an empty volume, and restore the dump.
+
 ### Storage and configuration
 
 | Component | Options |
 | --- | --- |
-| Main database | SQLite, MySQL ≥ 5.7.8, or PostgreSQL ≥ 9.6 |
-| Separate log database | Configure with `LOG_SQL_DSN`; also supports ClickHouse |
+| Main database | PostgreSQL 18 or later (required) |
+| Separate log database | Optional; PostgreSQL or ClickHouse, configured with `LOG_SQL_DSN` |
 | Cache | Optional Redis plus in-memory caching; use shared Redis when application nodes need shared rate limits |
 | Container platforms | Linux amd64 / arm64 |
 
+SQLite and MySQL are not supported, and there is no built-in migration from them.
+
 | Variable | Purpose |
 | --- | --- |
-| `SQL_DSN` | Main database connection; unset uses SQLite |
-| `LOG_SQL_DSN` | Optional separate log database connection |
+| `SQL_DSN` | Required main database connection, such as `postgresql://user:password@host:5432/new-api`; the service does not start without it |
+| `LOG_SQL_DSN` | Optional separate log database (PostgreSQL or ClickHouse); unset writes logs to the main database |
 | `REDIS_CONN_STRING` | Redis connection string |
 | `SESSION_SECRET` | Persistent authentication secret; all nodes must use the same value |
 | `CRYPTO_SECRET` | Defaults to `SESSION_SECRET`; nodes sharing Redis must use the same effective value |
@@ -260,7 +261,8 @@ cd web
 bun install --frozen-lockfile
 bun run build
 cd ..
-go run .
+# SQL_DSN must point to a PostgreSQL 18+ database
+SQL_DSN=postgresql://user:password@localhost:5432/new-api go run .
 ```
 
 In a second terminal, start the frontend development server:
@@ -280,9 +282,8 @@ Open [http://localhost:5173](http://localhost:5173); the development server prox
 | [relaykit/](./relaykit/README.md) | Independently buildable Go module for protocol DTOs and conversions |
 | [plugins/tasks/](./plugins/tasks/) | JavaScript task plugins; see [Task Plugin API v1](./docs/plugin-api/v1.md) for authoring and host boundaries |
 | `web/` | Web console; see [frontend conventions](./web/AGENTS.md) |
-| [electron/](./electron/README.md) | Desktop wrapper and packaging |
 
-Read [AGENTS.md](./AGENTS.md) before contributing. Run checks appropriate to your change, including `make test` for the Go modules and `bun run typecheck`, `bun run lint`, `bun run test`, and `bun run build` in `web/` for frontend changes. Changes to RelayKit must also pass `GOWORK=off go build ./...` from `relaykit/`.
+Read [AGENTS.md](./AGENTS.md) before contributing. Run checks appropriate to your change, including `make test` for the Go modules (database tests need `TEST_POSTGRES_DSN`; `make test-db` starts a local PostgreSQL 18 and prints it) and `bun run typecheck`, `bun run lint`, `bun run test`, and `bun run build` in `web/` for frontend changes. Changes to RelayKit must also pass `GOWORK=off go build ./...` from `relaykit/`.
 
 <a id="documentation"></a>
 

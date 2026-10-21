@@ -11,7 +11,7 @@
 # Stop:
 #   docker compose -f docker-compose.dev.yml down
 #
-# Reset data:
+# Reset data (also required once for a dev_pg_data volume created by the older postgres:15 setup):
 #   docker compose -f docker-compose.dev.yml down -v
 
 services:
@@ -52,7 +52,7 @@ services:
       - dev-network
 
   postgres:
-    image: postgres:15-alpine
+    image: postgres:18-alpine
     container_name: new-api-dev-pg
     restart: unless-stopped
     environment:
@@ -60,7 +60,7 @@ services:
       POSTGRES_PASSWORD: 123456
       POSTGRES_DB: new-api
     volumes:
-      - dev_pg_data:/var/lib/postgresql/data
+      - dev_pg_data:/var/lib/postgresql # postgres:18 keeps its data under /var/lib/postgresql/18/docker
     networks:
       - dev-network
     healthcheck:
