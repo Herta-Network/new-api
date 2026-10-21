@@ -29,194 +29,43 @@ export interface ApiResponse<T = unknown> {
   data?: T
 }
 
-/**
- * Standard API response types
- */
-export type TopupInfoResponse = ApiResponse<TopupInfo>
 export type RedemptionResponse = ApiResponse<number>
-export type AmountResponse = ApiResponse<string>
-export type PaymentResponse = ApiResponse<Record<string, unknown>> & {
-  url?: string
-}
-export type StripePaymentResponse = ApiResponse<{ pay_link: string }>
 export type AffiliateCodeResponse = ApiResponse<string>
 export type AffiliateTransferResponse = ApiResponse
-export type CreemPaymentResponse = ApiResponse<{ checkout_url: string }>
-export type WaffoPaymentResponse = ApiResponse<
-  { payment_url?: string } | string
->
-export type WaffoPancakePaymentResponse = ApiResponse<
-  | {
-      checkout_url?: string
-      session_id?: string
-      expires_at?: number | string
-      order_id?: string
-      // Self-service session token + expiry — surfaced by the backend so
-      // future flows (refund / cancel from new-api's own UI) can use them
-      // without re-issuing checkout. Not consumed by the current handler.
-      token?: string
-      token_expires_at?: number | string
-    }
-  | string
->
 
 /**
- * Creem product configuration
+ * Creem product configuration, still read by the legacy payment settings
+ * page until it is removed.
  */
 export interface CreemProduct {
-  /** Product display name */
   name: string
-  /** Creem product ID */
   productId: string
-  /** Product price */
   price: number
-  /** Quota amount to credit */
   quota: number
-  /** Currency (USD or EUR) */
   currency: 'USD' | 'EUR'
 }
 
 /**
- * Creem payment request
+ * Redemption settings (GET /api/user/topup/info)
  */
-export interface CreemPaymentRequest {
-  /** Creem product ID */
-  product_id: string
-  /** Payment method identifier */
-  payment_method: 'creem'
-}
-
-/**
- * Payment method configuration
- */
-export interface PaymentMethod {
-  /** Display name of payment method */
-  name: string
-  /** Payment method type identifier */
-  type: string
-  /** Legacy optional color for UI display */
-  color?: string
-  /** Minimum topup amount for this payment method */
-  min_topup?: number
-  /** Optional react-icons component name or safe icon URL */
-  icon?: string
-}
-
-/**
- * Waffo payment method configuration
- */
-export interface WaffoPayMethod {
-  /** Display name of payment method */
-  name: string
-  /** Optional icon path */
-  icon?: string
-  /** Waffo pay method type */
-  payMethodType?: string
-  /** Waffo pay method name */
-  payMethodName?: string
-}
-
-/**
- * Topup configuration information
- */
-export interface TopupInfo {
-  /** Whether online topup is enabled */
-  enable_online_topup: boolean
-  /** Whether Stripe topup is enabled */
-  enable_stripe_topup: boolean
-  /** Available payment methods */
-  pay_methods: PaymentMethod[]
-  /** Minimum topup amount for online topup */
-  min_topup: number
-  /** Minimum topup amount for Stripe */
-  stripe_min_topup: number
-  /** Preset amount options */
-  amount_options: number[]
-  /** Discount rates by amount */
-  discount: Record<number, number>
-  /** Optional topup link for purchasing codes */
+export interface RedemptionInfo {
+  /** Codes can be redeemed once the compliance terms are confirmed */
+  enable_redemption: boolean
+  /** Where to buy redemption codes */
   topup_link?: string
-  /** Whether Creem topup is enabled */
-  enable_creem_topup?: boolean
-  /** Available Creem products */
-  creem_products?: CreemProduct[]
-  /** Whether Waffo topup is enabled */
-  enable_waffo_topup?: boolean
-  /** Available Waffo payment methods */
-  waffo_pay_methods?: WaffoPayMethod[]
-  /** Minimum topup amount for Waffo */
-  waffo_min_topup?: number
-  /** Whether Waffo Pancake topup is enabled */
-  enable_waffo_pancake_topup?: boolean
-  /** Minimum topup amount for Waffo Pancake */
-  waffo_pancake_min_topup?: number
-  /** Whether redemption code usage is enabled */
-  enable_redemption?: boolean
-  /** Whether compliance confirmation has been completed */
-  payment_compliance_confirmed?: boolean
-  /** Current compliance terms version */
-  payment_compliance_terms_version?: string
-}
-
-/**
- * Preset amount option with optional discount
- */
-export interface PresetAmount {
-  /** Preset amount value */
-  value: number
-  /** Optional discount rate (0-1) */
-  discount?: number
 }
 
 /**
  * Redemption code request
  */
 export interface RedemptionRequest {
-  /** Redemption code key */
   key: string
-}
-
-/**
- * Payment request parameters
- */
-export interface PaymentRequest {
-  /** Topup amount */
-  amount: number
-  /** Payment method identifier */
-  payment_method: string
-}
-
-/**
- * Waffo payment request parameters
- */
-export interface WaffoPaymentRequest {
-  /** Topup amount */
-  amount: number
-  /** Optional server-side Waffo payment method index */
-  pay_method_index?: number
-}
-
-/**
- * Waffo Pancake payment request parameters
- */
-export interface WaffoPancakePaymentRequest {
-  /** Topup amount */
-  amount: number
-}
-
-/**
- * Amount calculation request
- */
-export interface AmountRequest {
-  /** Topup amount to calculate */
-  amount: number
 }
 
 /**
  * Affiliate quota transfer request
  */
 export interface AffiliateTransferRequest {
-  /** Quota amount to transfer */
   quota: number
 }
 
@@ -224,66 +73,159 @@ export interface AffiliateTransferRequest {
  * User wallet data
  */
 export interface UserWalletData {
-  /** User ID */
   id: number
-  /** Username */
   username: string
   /** Current quota balance */
   quota: number
-  /** Total used quota */
   used_quota: number
-  /** Total request count */
   request_count: number
   /** Affiliate quota (pending rewards) */
   aff_quota: number
   /** Total affiliate quota earned (historical) */
   aff_history_quota: number
-  /** Number of successful affiliate invites */
   aff_count: number
-  /** User group */
   group: string
 }
 
-/**
- * Topup record status
- */
-export type TopupStatus = 'success' | 'pending' | 'expired'
+// ============================================================================
+// Payments (/api/payment)
+// ============================================================================
 
-/**
- * Topup billing record
- */
-export interface TopupRecord {
-  /** Record ID */
+export type PaymentPurpose = 'topup' | 'subscription'
+
+export type PaymentPlatform = 'epay' | 'stripe' | 'cryptomus' | 'balance'
+
+/** A web console message: an English locale key plus its params. */
+export interface ServerMessage {
+  key: string
+  params?: Record<string, unknown>
+}
+
+/** What the wallet needs to offer a top-up (GET /api/payment/info). */
+export interface PaymentInfo {
+  /** Site currency every price and top-up amount is in */
+  currency: string
+  /** Smallest top-up in the site currency, a decimal string */
+  min_topup: string
+  /** Preset top-up amounts in whole units of the site currency */
+  amount_options: number[]
+  /** Discount factor (0-1) by preset amount */
+  amount_discount: Record<string, number>
+  payment_compliance_confirmed: boolean
+  payment_compliance_terms_version: string
+}
+
+/** A payment method as a buyer sees it (GET /api/payment/methods). */
+export interface PaymentMethodOption {
   id: number
-  /** User ID */
-  user_id: number
-  /** Topup amount (quota) */
+  name: string
+  platform: PaymentPlatform
+  icon: string
+  description: string
+  fee_mode: number
+  fee_rate_bp: number
+  fee_fixed: number
+  /** Currency the gateway collects */
+  charge_currency: string
+  available: boolean
+  /** Why the method cannot take an order now */
+  unavailable?: ServerMessage
+}
+
+/** What a buyer asks to buy (POST /api/payment/quote and /orders). */
+export interface PurchaseRequest {
+  purpose: PaymentPurpose
+  payment_method_id: number
+  /** Top-up amount in the site currency, at most two decimal places */
+  amount?: number
+  plan_id?: number
+}
+
+/**
+ * The price of a purchase. Amounts count hundredths of `currency`;
+ * amount = price + adjustment + fee_amount.
+ */
+export interface PaymentQuote {
+  purpose: PaymentPurpose
+  currency: string
+  subject: string
+  topup_amount: number
+  plan_id: number
+  price: number
+  /** What the group ratio and the amount discount change; negative for a discount */
+  adjustment: number
+  fee_amount: number
   amount: number
-  /** Payment amount (actual money paid) */
-  money: number
-  /** Trade/order number */
-  trade_no: string
-  /** Payment method type */
-  payment_method: string
-  /** Creation timestamp */
-  create_time: number
-  /** Completion timestamp */
-  complete_time?: number
-  /** Payment status */
-  status: TopupStatus
+  /** Quota a top-up credits or a balance purchase deducts */
+  quota_amount: number
+  quota_rate: string
+  /** What the gateway collects, in hundredths of payment_currency; empty for the balance */
+  payment_amount: number
+  payment_currency: string
 }
 
-/**
- * Billing history response
- */
-export interface BillingHistoryResponse {
-  items: TopupRecord[]
+export interface StripeCheckout {
+  publishable_key: string
+  client_secret: string
+}
+
+/** How to pay an order: open a URL, confirm with Stripe.js, or nothing left to pay. */
+export type CheckoutAction =
+  | { type: 'url'; url: string; order_no: string }
+  | { type: 'stripe'; stripe: StripeCheckout; order_no: string }
+  | { type: 'paid'; order_no: string }
+
+export const PAYMENT_ORDER_STATUS = {
+  PENDING: 1,
+  PAID: 2,
+  CLOSED: 3,
+  FINISHED: 5,
+} as const
+
+export type PaymentOrderStatus =
+  (typeof PAYMENT_ORDER_STATUS)[keyof typeof PAYMENT_ORDER_STATUS]
+
+/** A payment order; amounts count hundredths of their currency. */
+export interface PaymentOrder {
+  id: number
+  order_no: string
+  user_id: number
+  purpose: PaymentPurpose
+  plan_id: number
+  subject: string
+  topup_amount: number
+  quota_amount: number
+  quota_rate: string
+  currency: string
+  price: number
+  adjustment: number
+  fee_amount: number
+  amount: number
+  payment_method_id: number
+  platform: PaymentPlatform
+  payment_amount: number
+  payment_currency: string
+  exchange_rate: string
+  trade_no: string
+  status: PaymentOrderStatus
+  fulfil_error: string
+  user_subscription_id: number
+  close_reason: string
+  created_at: number
+  expires_at: number
+  paid_at: number
+  finished_at: number
+  closed_at: number
+}
+
+export interface CreatedPaymentOrder {
+  order: PaymentOrder
+  checkout: CheckoutAction
+}
+
+export interface PaymentOrderPage {
+  page: number
+  page_size: number
   total: number
-}
-
-/**
- * Complete order request (admin only)
- */
-export interface CompleteOrderRequest {
-  trade_no: string
+  items: PaymentOrder[]
 }

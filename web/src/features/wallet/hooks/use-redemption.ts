@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { useState, useCallback } from 'react'
 import { toast } from 'sonner'
@@ -24,11 +25,20 @@ import { getSelf } from '@/lib/api'
 import { formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 
-import { redeemTopupCode } from '../api'
+import { getRedemptionInfo, redeemTopupCode } from '../api'
 
 // ============================================================================
-// Redemption Hook
+// Redemption Hooks
 // ============================================================================
+
+/** Whether codes can be redeemed and the link to buy them. */
+export function useRedemptionInfo() {
+  return useQuery({
+    queryKey: ['redemption', 'info'],
+    queryFn: getRedemptionInfo,
+    staleTime: 60 * 1000,
+  })
+}
 
 export function useRedemption() {
   const [redeeming, setRedeeming] = useState(false)
