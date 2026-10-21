@@ -13,15 +13,14 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func TestShouldRetryRelayErrorHonorsChannelPinOnChannelError(t *testing.T) {
@@ -58,7 +57,6 @@ func TestShouldRetryRelayErrorHonorsChannelPinOnChannelError(t *testing.T) {
 }
 
 func TestProcessChannelErrorMasksDisableReasonAndNotification(t *testing.T) {
-	previousDB, previousType := model.DB, common.MainDatabaseType()
 	previousCache, previousRedis := common.MemoryCacheEnabled, common.RedisEnabled
 	previousAutoDisable, previousErrorLog := common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled
 	previousNotifyLimit := constant.NotifyLimitCount
@@ -66,23 +64,13 @@ func TestProcessChannelErrorMasksDisableReasonAndNotification(t *testing.T) {
 	fetch := system_setting.GetFetchSetting()
 	previousFetch := *fetch
 	t.Cleanup(func() {
-		model.DB = previousDB
-		common.SetMainDatabaseType(previousType)
 		common.MemoryCacheEnabled, common.RedisEnabled = previousCache, previousRedis
 		common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled = previousAutoDisable, previousErrorLog
 		constant.NotifyLimitCount = previousNotifyLimit
 		httpClient, system_setting.WorkerUrl = previousClient, previousWorker
 		*fetch = previousFetch
 	})
-	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := database.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.User{}))
-	model.DB = database
-	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	pgtest.Reset(t, model.DB)
 	common.MemoryCacheEnabled, common.RedisEnabled = false, false
 	common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled = true, false
 	constant.NotifyLimitCount = 10
@@ -100,7 +88,7 @@ func TestProcessChannelErrorMasksDisableReasonAndNotification(t *testing.T) {
 	settings, err := common.Marshal(kitdto.UserSetting{NotifyType: kitdto.NotifyTypeWebhook, WebhookUrl: server.URL})
 	require.NoError(t, err)
 	root := &model.User{Username: "notification-test-root", Role: common.RoleRootUser, Status: common.UserStatusEnabled, Setting: string(settings)}
-	require.NoError(t, database.Create(root).Error)
+	require.NoError(t, model.DB.Create(root).Error)
 	notifyKey := fmt.Sprintf("%d:%s:%s", root.Id, formatNotifyType(channel.Id, common.ChannelStatusAutoDisabled), time.Now().Format("2006010215"))
 	notifyLimitStore.Delete(notifyKey)
 	t.Cleanup(func() { notifyLimitStore.Delete(notifyKey) })

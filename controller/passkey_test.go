@@ -293,7 +293,6 @@ func TestPasskeyDomainChoicesRespectOriginAndConfiguration(t *testing.T) {
 
 func setupPasskeyDomainOptions(t *testing.T) {
 	t.Helper()
-	require.NoError(t, model.DB.AutoMigrate(&model.Option{}))
 	// These tests assert on the whole options table. The server-managed legacy
 	// access token deadline written by the enrollment fixture is unrelated.
 	require.NoError(t, model.DB.Delete(&model.Option{Key: "LegacyAccessTokenRetireAt"}).Error)

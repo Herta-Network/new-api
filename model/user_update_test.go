@@ -60,7 +60,7 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 		AffQuota:        800,
 		AffHistoryQuota: 1200,
 	}
-	user.SetAccessToken("old-token")
+	user.SetAccessToken("old-token00000000000000000000000")
 	require.NoError(t, DB.Create(&user).Error)
 
 	staleUser, err := GetUserById(user.Id, true)
@@ -73,7 +73,7 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 		"aff_count":     gorm.Expr("aff_count + ?", 1),
 		"aff_quota":     gorm.Expr("aff_quota - ?", 500),
 		"aff_history":   gorm.Expr("aff_history + ?", 500),
-		"access_token":  "rotated-token",
+		"access_token":  "rotated-token0000000000000000000",
 	}).Error)
 
 	staleUser.DisplayName = "after"
@@ -88,7 +88,7 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 	assert.Equal(t, 3, got.AffCount)
 	assert.Equal(t, 300, got.AffQuota)
 	assert.Equal(t, 1700, got.AffHistoryQuota)
-	assert.Equal(t, "rotated-token", got.GetAccessToken())
+	assert.Equal(t, "rotated-token0000000000000000000", got.GetAccessToken())
 }
 
 func TestUsageAccountingSupportsSignedDirectAndBatchDeltas(t *testing.T) {
@@ -193,7 +193,7 @@ func TestRevokeUserAccessTokenRejectsSoftDeletedUser(t *testing.T) {
 		Password: "password",
 		Status:   common.UserStatusEnabled,
 	}
-	user.SetAccessToken("old-token")
+	user.SetAccessToken("old-token00000000000000000000000")
 	require.NoError(t, DB.Create(&user).Error)
 	require.NoError(t, DB.Delete(&user).Error)
 
@@ -202,7 +202,7 @@ func TestRevokeUserAccessTokenRejectsSoftDeletedUser(t *testing.T) {
 
 	var got User
 	require.NoError(t, DB.Unscoped().First(&got, user.Id).Error)
-	assert.Equal(t, "old-token", got.GetAccessToken())
+	assert.Equal(t, "old-token00000000000000000000000", got.GetAccessToken())
 }
 
 func TestUpdateUserSettingOnlyUpdatesSetting(t *testing.T) {

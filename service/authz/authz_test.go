@@ -5,7 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/glebarez/sqlite"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -18,13 +18,8 @@ func newAuthzTestDB(t *testing.T) *gorm.DB {
 	t.Cleanup(func() {
 		common.IsMasterNode = wasMaster
 	})
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.CasbinRule{}, &model.AuthzRole{}))
-	return db
+	pgtest.Reset(t, model.DB)
+	return model.DB
 }
 
 func TestInitSeedsBuiltInRolesAndPoliciesOnce(t *testing.T) {
@@ -59,12 +54,8 @@ func TestInitOnSlaveOnlyLoadsPolicies(t *testing.T) {
 	t.Cleanup(func() {
 		common.IsMasterNode = wasMaster
 	})
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.CasbinRule{}, &model.AuthzRole{}))
+	pgtest.Reset(t, model.DB)
+	db := model.DB
 
 	require.NoError(t, Init(db))
 

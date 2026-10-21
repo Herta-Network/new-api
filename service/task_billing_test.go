@@ -7,65 +7,22 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
-
-func TestMain(m *testing.M) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		panic("failed to open test db: " + err.Error())
-	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		panic("failed to get sql.DB: " + err.Error())
-	}
-	sqlDB.SetMaxOpenConns(1)
-
-	model.DB = db
-	model.LOG_DB = db
-
-	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
-	common.RedisEnabled = false
-	common.BatchUpdateEnabled = false
-	common.LogConsumeEnabled = true
-	if err := i18n.Init(); err != nil {
-		panic("failed to load locales: " + err.Error())
-	}
-
-	if err := db.AutoMigrate(
-		&model.Task{},
-		&model.User{},
-		&model.Token{},
-		&model.Log{},
-		&model.Channel{},
-		&model.Midjourney{},
-		&model.TopUp{},
-		&model.UserSubscription{},
-		&model.SystemTask{},
-		&model.SystemTaskLock{},
-	); err != nil {
-		panic("failed to migrate: " + err.Error())
-	}
-
-	os.Exit(m.Run())
-}
 
 // ---------------------------------------------------------------------------
 // Seed helpers
@@ -73,18 +30,7 @@ func TestMain(m *testing.M) {
 
 func truncate(t *testing.T) {
 	t.Helper()
-	t.Cleanup(func() {
-		model.DB.Exec("DELETE FROM tasks")
-		model.DB.Exec("DELETE FROM users")
-		model.DB.Exec("DELETE FROM tokens")
-		model.DB.Exec("DELETE FROM logs")
-		model.DB.Exec("DELETE FROM channels")
-		model.DB.Exec("DELETE FROM midjourneys")
-		model.DB.Exec("DELETE FROM top_ups")
-		model.DB.Exec("DELETE FROM user_subscriptions")
-		model.DB.Exec("DELETE FROM system_task_locks")
-		model.DB.Exec("DELETE FROM system_tasks")
-	})
+	pgtest.Reset(t, model.DB)
 }
 
 func seedUser(t *testing.T, id int, quota int) {
@@ -736,15 +682,17 @@ func TestSettleMidjourneyTaskBillingFundingFailureClearsMarkers(t *testing.T) {
 	require.NoError(t, task.Insert())
 
 	require.NoError(t, model.DB.Exec(`
+		CREATE FUNCTION fail_midjourney_user_update() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'forced user quota failure';
+		END $$;
 		CREATE TRIGGER fail_midjourney_user_update
 		BEFORE UPDATE ON users
-		WHEN OLD.id = 52
-		BEGIN
-			SELECT RAISE(ABORT, 'forced user quota failure');
-		END;
+		FOR EACH ROW WHEN (OLD.id = 52)
+		EXECUTE FUNCTION fail_midjourney_user_update();
 	`).Error)
 	t.Cleanup(func() {
-		model.DB.Exec("DROP TRIGGER IF EXISTS fail_midjourney_user_update")
+		require.NoError(t, model.DB.Exec("DROP TRIGGER IF EXISTS fail_midjourney_user_update ON users; DROP FUNCTION IF EXISTS fail_midjourney_user_update()").Error)
 	})
 
 	billed, err := SettleMidjourneyTaskBilling(relayInfo, task, prepared)
@@ -790,15 +738,17 @@ func TestSettleMidjourneyTaskBillingTokenFailureKeepsFundingRefundable(t *testin
 	require.NoError(t, task.Insert())
 
 	require.NoError(t, model.DB.Exec(`
+		CREATE FUNCTION fail_midjourney_token_update() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'forced token quota failure';
+		END $$;
 		CREATE TRIGGER fail_midjourney_token_update
 		BEFORE UPDATE ON tokens
-		WHEN OLD.id = 53
-		BEGIN
-			SELECT RAISE(ABORT, 'forced token quota failure');
-		END;
+		FOR EACH ROW WHEN (OLD.id = 53)
+		EXECUTE FUNCTION fail_midjourney_token_update();
 	`).Error)
 	t.Cleanup(func() {
-		model.DB.Exec("DROP TRIGGER IF EXISTS fail_midjourney_token_update")
+		require.NoError(t, model.DB.Exec("DROP TRIGGER IF EXISTS fail_midjourney_token_update ON tokens; DROP FUNCTION IF EXISTS fail_midjourney_token_update()").Error)
 	})
 
 	billed, err := SettleMidjourneyTaskBilling(relayInfo, task, prepared)

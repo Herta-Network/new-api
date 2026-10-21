@@ -359,13 +359,8 @@ func EnsureEmailAvailable(email string, excludeUserID int) error {
 // withNormalizedEmailLock serializes concurrent writers that target the same
 // normalized email inside tx, so a "check then write" sequence cannot be raced
 // by two transactions. It must be called inside an active transaction; the lock
-// is scoped to that transaction and released on commit/rollback.
-//
-//   - PostgreSQL: transaction-level advisory lock keyed by the normalized email.
-//   - MySQL (default REPEATABLE READ): a locking read that takes a next-key/gap
-//     lock on the email index, blocking concurrent inserts of the same value.
-//   - SQLite: no explicit lock; the single-writer model already serializes the
-//     write, so a racing second write fails instead of duplicating.
+// is scoped to that transaction and released on commit/rollback: a
+// transaction-level advisory lock keyed by the normalized email.
 //
 // An empty email is allowed to repeat and needs no serialization.
 func withNormalizedEmailLock(tx *gorm.DB, email string, fn func(tx *gorm.DB) error) error {
@@ -380,18 +375,7 @@ func lockNormalizedEmail(tx *gorm.DB, email string) error {
 	if email == "" {
 		return nil
 	}
-	switch {
-	case common.UsingMainDatabase(common.DatabaseTypePostgreSQL):
-		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", email).Error; err != nil {
-			return err
-		}
-	case common.UsingMainDatabase(common.DatabaseTypeMySQL):
-		var ids []int
-		if err := tx.Raw("SELECT id FROM users WHERE email = ? FOR UPDATE", email).Scan(&ids).Error; err != nil {
-			return err
-		}
-	}
-	return nil
+	return tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", email).Error
 }
 
 func GetMaxUserId() int {

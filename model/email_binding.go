@@ -102,9 +102,9 @@ func CompleteEmailBinding(identity AuthSessionIdentity, token, email, newCode, o
 	var state *EmailBindingState
 	var verificationError error
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		// Acquire ownership protection before the first consistent read. Under
-		// MySQL REPEATABLE READ, a snapshot created before this lock could hide
-		// an address claimed by a concurrent transaction while we were waiting.
+		// Acquire ownership protection before the first consistent read, so a
+		// snapshot cannot hide an address claimed by a concurrent transaction
+		// while we were waiting.
 		if email == "" || email != NormalizeEmail(email) {
 			return ErrAuthFlowInvalid
 		}
@@ -151,9 +151,8 @@ func CompleteEmailBinding(identity AuthSessionIdentity, token, email, newCode, o
 
 func lockEmailBindingWithTx(tx *gorm.DB, identity AuthSessionIdentity, token string) (*AuthFlow, *EmailBindingState, error) {
 	match := AuthFlowMatch{Purpose: AuthFlowPurposeEmailBinding, UserId: identity.UserID, SessionId: identity.SessionID}
-	// Make the first statement a write so SQLite does not have to upgrade a
-	// deferred read transaction. A no-op update also locks the row on MySQL and
-	// PostgreSQL; do not interpret dialect-dependent RowsAffected as success.
+	// Make the first statement a write: the no-op update locks the row. Do not
+	// interpret its RowsAffected as success.
 	if err := applyAuthFlowMatch(tx.Model(&AuthFlow{}), token, match).
 		Where("consumed_at IS NULL AND expires_at > ?", time.Now()).
 		UpdateColumn("payload", gorm.Expr("payload")).Error; err != nil {

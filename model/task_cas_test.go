@@ -10,90 +10,30 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/glebarez/sqlite"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func TestMain(m *testing.M) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		panic("failed to open test db: " + err.Error())
-	}
-	DB = db
-	LOG_DB = db
-
-	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
-	common.RedisEnabled = false
-	common.BatchUpdateEnabled = false
-	common.LogConsumeEnabled = true
-	initCol()
-
-	sqlDB, err := db.DB()
-	if err != nil {
-		panic("failed to get sql.DB: " + err.Error())
-	}
-	sqlDB.SetMaxOpenConns(1)
-
-	if err := db.AutoMigrate(
-		&Task{},
-		&User{},
-		&UserSession{},
-		&AuthFlow{},
-		&ExternalIdentityClaim{},
-		&Token{},
-		&PasskeyCredential{},
-		&TwoFA{},
-		&TwoFABackupCode{},
-		&Log{},
-		&Channel{},
-		&QuotaData{},
-		&Ability{},
-		&TopUp{},
-		&SubscriptionPlan{},
-		&SubscriptionOrder{},
-		&UserSubscription{},
-		&UserOAuthBinding{},
-		&PerfMetric{},
-		&SystemInstance{},
-		&SystemTask{},
-		&SystemTaskLock{},
-		&UserAccessToken{},
-	); err != nil {
-		panic("failed to migrate: " + err.Error())
-	}
-
-	os.Exit(m.Run())
+	os.Exit(pgtest.Main(m, func(string) error {
+		common.IsMasterNode = true
+		common.RedisEnabled = false
+		common.BatchUpdateEnabled = false
+		common.LogConsumeEnabled = true
+		if err := InitDB(); err != nil {
+			return err
+		}
+		return InitLogDB()
+	}))
 }
 
+// truncateTables gives the test an empty database and empties it again when
+// the test ends.
 func truncateTables(t *testing.T) {
 	t.Helper()
-	t.Cleanup(func() {
-		DB.Exec("DELETE FROM tasks")
-		DB.Exec("DELETE FROM auth_flows")
-		DB.Exec("DELETE FROM external_identity_claims")
-		DB.Exec("DELETE FROM user_sessions")
-		DB.Exec("DELETE FROM passkey_credentials")
-		DB.Exec("DELETE FROM two_fa_backup_codes")
-		DB.Exec("DELETE FROM two_fas")
-		DB.Exec("DELETE FROM tokens")
-		DB.Exec("DELETE FROM user_access_tokens")
-		DB.Exec("DELETE FROM user_oauth_bindings")
-		DB.Exec("DELETE FROM users")
-		DB.Exec("DELETE FROM logs")
-		DB.Exec("DELETE FROM channels")
-		DB.Exec("DELETE FROM quota_data")
-		DB.Exec("DELETE FROM abilities")
-		DB.Exec("DELETE FROM top_ups")
-		DB.Exec("DELETE FROM subscription_orders")
-		DB.Exec("DELETE FROM subscription_plans")
-		DB.Exec("DELETE FROM user_subscriptions")
-		DB.Exec("DELETE FROM perf_metrics")
-		DB.Exec("DELETE FROM system_instances")
-		DB.Exec("DELETE FROM system_task_locks")
-		DB.Exec("DELETE FROM system_tasks")
-	})
+	pgtest.Reset(t, DB)
+	t.Cleanup(func() { pgtest.Reset(t, DB) })
 }
 
 func insertTask(t *testing.T, task *Task) {

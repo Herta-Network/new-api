@@ -14,10 +14,10 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,24 +26,13 @@ import (
 
 func setupDashboardAuthMiddlewareTest(t *testing.T) {
 	t.Helper()
-	previousDB := model.DB
-	previousLogDB := model.LOG_DB
-	previousType := common.MainDatabaseType()
 	previousRedis := common.RedisEnabled
 	previousSecret := common.SessionSecret
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuditLog{}, &model.UserAccessToken{}, &model.Option{}))
-	model.DB = db
-	model.LOG_DB = db
-	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	pgtest.Reset(t, model.DB)
 	common.RedisEnabled = false
 	common.SessionSecret = "middleware-auth-test-secret"
 	require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))
 	t.Cleanup(func() {
-		model.DB = previousDB
-		model.LOG_DB = previousLogDB
-		common.SetMainDatabaseType(previousType)
 		common.RedisEnabled = previousRedis
 		common.SessionSecret = previousSecret
 	})
@@ -85,7 +74,7 @@ func createMiddlewarePATUser(t *testing.T, username, token string) *model.User {
 	user := &model.User{
 		Username: username, Password: "password-placeholder", Role: common.RoleCommonUser,
 		Status: common.UserStatusEnabled, Group: "default", AccessToken: &token, AuthVersion: 1,
-		AffCode: "middleware-aff-" + username,
+		AffCode: "aff-" + username,
 	}
 	require.NoError(t, model.DB.Create(user).Error)
 	return user
@@ -141,7 +130,16 @@ func TestUserAuthNeverFallsBackForRecognizedInvalidInternalJWT(t *testing.T) {
 	token, _, err := service.IssueAccessToken(identity)
 	require.NoError(t, err)
 	tampered := tamperDashboardToken(token)
-	createMiddlewarePATUser(t, "jwt-fallback-user", tampered)
+	// users.access_token is char(32), so no stored legacy token can equal a
+	// JWT; watch for the legacy lookup itself instead.
+	legacyLookups := 0
+	const callbackName = "test:jwt-fallback-legacy-lookup"
+	require.NoError(t, model.DB.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table == "users" && strings.Contains(tx.Statement.SQL.String(), "access_token") {
+			legacyLookups++
+		}
+	}))
+	t.Cleanup(func() { model.DB.Callback().Query().Remove(callbackName) })
 	router := gin.New()
 	router.GET("/protected", UserAuth(), func(c *gin.Context) {
 		c.Status(http.StatusNoContent)
@@ -154,6 +152,7 @@ func TestUserAuthNeverFallsBackForRecognizedInvalidInternalJWT(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, response.Code)
 	assert.Contains(t, response.Body.String(), "AUTH_UNAUTHORIZED")
+	assert.Zero(t, legacyLookups, "a recognized internal JWT must not fall back to the legacy token lookup")
 }
 
 func TestTryUserAuthCredentialClassification(t *testing.T) {
@@ -184,7 +183,6 @@ func TestTryUserAuthCredentialClassification(t *testing.T) {
 	}
 	accessToken, _, err := service.IssueAccessToken(identity)
 	require.NoError(t, err)
-	require.NoError(t, model.DB.AutoMigrate(&model.AuthFlow{}))
 	binding, err := service.BindVerificationOperation(service.VerificationOperation{Scope: "channel.key.read", Context: []byte(`{"channel_id":123}`)})
 	require.NoError(t, err)
 	securityProof, _, err := service.IssueSecurityProof(identity, "2fa", binding)
@@ -274,9 +272,15 @@ func TestTryUserAuthCredentialClassification(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, cacheFailureResponse.Code)
 	assert.Contains(t, cacheFailureResponse.Body.String(), "AUTH_INTERNAL_ERROR")
 
-	sqlDB, err := model.DB.DB()
+	// Close a separate handle, not the package's shared pool.
+	closedDB, err := gorm.Open(model.DB.Dialector, &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := closedDB.DB()
 	require.NoError(t, err)
 	require.NoError(t, sqlDB.Close())
+	previousDB := model.DB
+	model.DB = closedDB
+	t.Cleanup(func() { model.DB = previousDB })
 	databaseFailureRequest := httptest.NewRequest(http.MethodGet, "/optional", nil)
 	databaseFailureRequest.Header.Set("Authorization", "Bearer database-failure-key")
 	databaseFailureResponse := httptest.NewRecorder()
@@ -310,7 +314,6 @@ func TestUserAuthAppliesAccessTokenRouteRules(t *testing.T) {
 	wasMaster := common.IsMasterNode
 	common.IsMasterNode = true
 	t.Cleanup(func() { common.IsMasterNode = wasMaster })
-	require.NoError(t, model.DB.AutoMigrate(&model.CasbinRule{}, &model.AuthzRole{}))
 	require.NoError(t, authz.Init(model.DB))
 	// The channel router declares this rule when it registers the route.
 	DeclareAccessTokenPermissionRoute(http.MethodGet, "/api/channel/", authz.ChannelRead)

@@ -146,20 +146,17 @@ New API 是面向應用程式、Agent 和團隊的自託管 AI 閘道。將不�
 
 ## 快速開始
 
-### 使用 Docker 本機體驗
+### 使用 Docker Compose 本機體驗
 
-以下指令使用 SQLite 啟動單一執行個體，僅監聽本機連接埠：
+New API 需要 PostgreSQL 18 以上版本。儲存庫的 [Compose 設定](./docker-compose.yml) 會啟動 New API、PostgreSQL 18 和 Redis：
 
 ```bash
-mkdir -p data
-docker run --name new-api -d --restart unless-stopped \
-  -p 127.0.0.1:3000:3000 \
-  -e TZ=Asia/Shanghai \
-  -v "$(pwd)/data:/data" \
-  calciumion/new-api:latest
+git clone https://github.com/QuantumNous/new-api.git
+cd new-api
+docker compose up -d
 ```
 
-開啟 [http://localhost:3000](http://localhost:3000)，依初始化精靈建立管理員帳號。SQLite 資料庫存放在掛載的 `data` 目錄中，更換容器後仍會保留。
+開啟 [http://localhost:3000](http://localhost:3000)，依初始化精靈建立管理員帳號。PostgreSQL 資料保存在 `pg_data` 資料卷中，更換容器後仍會保留。Compose 檔案使用範例密碼，並在所有網路介面上開放 3000 連接埠；對外開放前請先依[部署與維運](#deployment)修改設定。
 
 ### 發起第一次請求
 
@@ -190,7 +187,7 @@ curl --fail-with-body http://localhost:3000/v1/responses \
 
 ### Docker Compose
 
-儲存庫的 [Compose 設定](./docker-compose.yml) 預設啟動 **New API + PostgreSQL + Redis**，並提供 MySQL 和獨立 ClickHouse 日誌資料庫的設定範例。
+儲存庫的 [Compose 設定](./docker-compose.yml) 預設啟動 **New API + PostgreSQL 18 + Redis**，並提供獨立 ClickHouse 日誌資料庫的設定範例。
 
 ```bash
 git clone https://github.com/QuantumNous/new-api.git
@@ -204,19 +201,23 @@ docker compose up -d
 docker compose logs -f new-api
 ```
 
+舊版 Compose 檔案使用 `postgres:15`，資料位於 `/var/lib/postgresql/data`，PostgreSQL 18 無法直接開啟。升級時先用舊映像執行 `pg_dump` 備份，再讓 PostgreSQL 18 使用空資料卷啟動並還原備份。
+
 ### 儲存與設定
 
 | 元件 | 可選方案 |
 | --- | --- |
-| 主資料庫 | SQLite、MySQL ≥ 5.7.8、PostgreSQL ≥ 9.6 |
-| 獨立日誌資料庫 | 透過 `LOG_SQL_DSN` 設定，額外支援 ClickHouse |
+| 主資料庫 | PostgreSQL 18 以上版本（必需） |
+| 獨立日誌資料庫 | 可選，透過 `LOG_SQL_DSN` 設定 PostgreSQL 或 ClickHouse |
 | 快取 | 可選 Redis 與記憶體快取；多節點需要共享限流額度時使用共享 Redis |
 | 容器平台 | Linux amd64 / arm64 |
 
+不支援 SQLite 和 MySQL，也不提供從它們遷移的工具。
+
 | 環境變數 | 用途 |
 | --- | --- |
-| `SQL_DSN` | 主資料庫連線字串；未設定時使用 SQLite |
-| `LOG_SQL_DSN` | 可選的獨立日誌資料庫連線字串 |
+| `SQL_DSN` | 必填的主資料庫連線字串，如 `postgresql://user:password@host:5432/new-api`；未設定時服務無法啟動 |
+| `LOG_SQL_DSN` | 可選的獨立日誌資料庫連線字串（PostgreSQL 或 ClickHouse）；未設定時日誌寫入主資料庫 |
 | `REDIS_CONN_STRING` | Redis 連線字串 |
 | `SESSION_SECRET` | 持久保存的驗證金鑰，所有節點必須一致 |
 | `CRYPTO_SECRET` | 預設使用 `SESSION_SECRET`；共享 Redis 的節點必須使用相同的有效值 |
@@ -244,7 +245,8 @@ cd web
 bun install --frozen-lockfile
 bun run build
 cd ..
-go run .
+# SQL_DSN 須指向 PostgreSQL 18 以上版本的資料庫
+SQL_DSN=postgresql://user:password@localhost:5432/new-api go run .
 ```
 
 在另一個終端機啟動前端開發伺服器：
@@ -264,9 +266,8 @@ bun run dev -- --port 5173
 | [relaykit/](./relaykit/README.md) | 可獨立建置的協定 DTO 與轉換 Go 模組 |
 | [plugins/tasks/](./plugins/tasks/) | JavaScript 任務外掛；編寫方式與宿主邊界見 [Task Plugin API v1](./docs/plugin-api/v1.md) |
 | `web/` | Web 控制台，參閱[前端開發約定](./web/AGENTS.md) |
-| [electron/](./electron/README.md) | 桌面封裝與打包 |
 
-貢獻前請閱讀 [AGENTS.md](./AGENTS.md)。依改動範圍執行檢查：Go 模組使用 `make test`；前端在 `web/` 下執行 `bun run typecheck`、`bun run lint`、`bun run test` 和 `bun run build`。修改 RelayKit 後還必須在 `relaykit/` 下執行 `GOWORK=off go build ./...`。
+貢獻前請閱讀 [AGENTS.md](./AGENTS.md)。依改動範圍執行檢查：Go 模組使用 `make test`（資料庫測試需要 `TEST_POSTGRES_DSN`，可用 `make test-db` 啟動本機 PostgreSQL 18 並輸出該變數）；前端在 `web/` 下執行 `bun run typecheck`、`bun run lint`、`bun run test` 和 `bun run build`。修改 RelayKit 後還必須在 `relaykit/` 下執行 `GOWORK=off go build ./...`。
 
 <a id="documentation"></a>
 

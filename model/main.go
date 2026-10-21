@@ -12,20 +12,27 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 
-	"github.com/glebarez/sqlite"
 	"gorm.io/driver/clickhouse"
-	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
-var commonGroupCol string
-var commonKeyCol string
-var commonTrueVal string
-var commonFalseVal string
+// Reserved-word columns and boolean literals for raw SQL on the primary
+// PostgreSQL database.
+const (
+	commonGroupCol = `"group"`
+	commonKeyCol   = `"key"`
+	commonTrueVal  = "true"
+	commonFalseVal = "false"
+)
 
-var logKeyCol string
-var logGroupCol string
+// minPostgreSQLVersion is server_version_num of the oldest supported release,
+// PostgreSQL 18.0.
+const minPostgreSQLVersion = 180000
+
+// Reserved-word columns on the log database, which may be ClickHouse.
+var logKeyCol = commonKeyCol
+var logGroupCol = commonGroupCol
 
 // jsonScanBytes 归一化 json 列的驱动返回值:不同驱动/协议模式下同一列可能
 // 以 []byte 或 string 返回,静默丢弃 string 会导致字段被清零而不报错。
@@ -41,26 +48,13 @@ func jsonScanBytes(value any) []byte {
 }
 
 func initCol() {
-	// init common column names
-	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		commonGroupCol = `"group"`
-		commonKeyCol = `"key"`
-		commonTrueVal = "true"
-		commonFalseVal = "false"
-	} else {
-		commonGroupCol = "`group`"
-		commonKeyCol = "`key`"
-		commonTrueVal = "1"
-		commonFalseVal = "0"
-	}
-	switch common.LogDatabaseType() {
-	case common.DatabaseTypePostgreSQL:
-		logGroupCol = `"group"`
-		logKeyCol = `"key"`
-	default:
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		logGroupCol = "`group`"
 		logKeyCol = "`key`"
+		return
 	}
+	logGroupCol = commonGroupCol
+	logKeyCol = commonKeyCol
 }
 
 var DB *gorm.DB
@@ -137,105 +131,87 @@ func normalizeClickHouseDSN(dsn string) string {
 	return parsed.String()
 }
 
+// chooseDB opens the database named by envName: PostgreSQL 18 or later, or
+// for the log database also ClickHouse.
 func chooseDB(envName string, isLog bool) (*gorm.DB, common.DatabaseType, error) {
 	dsn := os.Getenv(envName)
-	if dsn != "" {
-		if isClickHouseDSN(dsn) {
-			if !isLog {
-				return nil, "", fmt.Errorf("%s does not support ClickHouse; use SQLite, MySQL, or PostgreSQL for the primary database and LOG_SQL_DSN for ClickHouse logs", envName)
-			}
-			common.SysLog(common.LogText("using ClickHouse as log database"))
-			db, err := gorm.Open(clickhouse.Open(normalizeClickHouseDSN(dsn)), newGormConfig(false))
-			return db, common.DatabaseTypeClickHouse, err
-		}
-		if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
-			// Use PostgreSQL
-			common.SysLog(common.LogText("using PostgreSQL as database"))
-			// 同时关闭 pgx 隐式与 GORM 显式预处理语句:命名 prepared statement 与
-			// 事务池代理(PgBouncer/Neon/Supabase)不兼容,会触发 FATAL 08P01/42P05。
-			db, err := gorm.Open(postgresMigrationDialector{postgres.Dialector{Config: &postgres.Config{
-				DSN:                  dsn,
-				PreferSimpleProtocol: true,
-			}}}, newGormConfig(false))
-			return db, common.DatabaseTypePostgreSQL, err
-		}
-		if strings.HasPrefix(dsn, "local") {
-			common.SysLog(common.LogText("SQL_DSN not set, using SQLite as database"))
-			db, err := gorm.Open(sqlite.Open(common.SQLitePath), newGormConfig(true))
-			return db, common.DatabaseTypeSQLite, err
-		}
-		// Use MySQL
-		common.SysLog(common.LogText("using MySQL as database"))
-		// check parseTime
-		if !strings.Contains(dsn, "parseTime") {
-			if strings.Contains(dsn, "?") {
-				dsn += "&parseTime=true"
-			} else {
-				dsn += "?parseTime=true"
-			}
-		}
-		db, err := gorm.Open(mysqlMigrationDialector{mysql.Dialector{Config: &mysql.Config{DSN: dsn}}}, newGormConfig(true))
-		return db, common.DatabaseTypeMySQL, err
+	if isLog && isClickHouseDSN(dsn) {
+		common.SysLog(common.LogText("using ClickHouse as log database"))
+		db, err := gorm.Open(clickhouse.Open(normalizeClickHouseDSN(dsn)), newGormConfig())
+		return db, common.DatabaseTypeClickHouse, err
 	}
-	// Use SQLite
-	common.SysLog(common.LogText("SQL_DSN not set, using SQLite as database"))
-	db, err := gorm.Open(sqlite.Open(common.SQLitePath), newGormConfig(true))
-	return db, common.DatabaseTypeSQLite, err
+	if dsn == "" {
+		return nil, "", fmt.Errorf("%s is not set: new-api needs PostgreSQL 18 or later, for example %s=postgres://user:password@localhost:5432/new-api", envName, envName)
+	}
+	if !strings.HasPrefix(dsn, "postgres://") && !strings.HasPrefix(dsn, "postgresql://") {
+		if isLog {
+			return nil, "", fmt.Errorf("%s must be a PostgreSQL URL (postgres://...) or a ClickHouse URL", envName)
+		}
+		return nil, "", fmt.Errorf("%s must be a PostgreSQL URL such as postgres://user:password@localhost:5432/new-api; SQLite and MySQL are not supported, and ClickHouse is only supported as LOG_SQL_DSN", envName)
+	}
+	common.SysLog(common.LogText("using PostgreSQL as database"))
+	// 同时关闭 pgx 隐式与 GORM 显式预处理语句:命名 prepared statement 与
+	// 事务池代理(PgBouncer/Neon/Supabase)不兼容,会触发 FATAL 08P01/42P05。
+	db, err := gorm.Open(postgresMigrationDialector{postgres.Dialector{Config: &postgres.Config{
+		DSN:                  dsn,
+		PreferSimpleProtocol: true,
+	}}}, newGormConfig())
+	if err != nil {
+		return nil, "", err
+	}
+	var version int
+	if err := db.Raw("SELECT current_setting('server_version_num')::int").Scan(&version).Error; err != nil {
+		_ = closeDB(db)
+		return nil, "", fmt.Errorf("%s: read the PostgreSQL server version: %w", envName, err)
+	}
+	if version < minPostgreSQLVersion {
+		_ = closeDB(db)
+		return nil, "", fmt.Errorf("%s: PostgreSQL 18 or later is required, but the server runs PostgreSQL %d.%d", envName, version/10000, version%10000)
+	}
+	return db, common.DatabaseTypePostgreSQL, nil
 }
 
 func InitDB() (err error) {
-	db, dbType, err := chooseDB("SQL_DSN", false)
-	if err == nil {
-		common.SetMainDatabaseType(dbType)
-		if os.Getenv("LOG_SQL_DSN") == "" {
-			common.SetLogDatabaseType(dbType)
-		}
-		initCol()
-		if common.DebugEnabled {
-			db = db.Debug()
-		}
-		DB = db
-		// MySQL charset/collation startup check: ensure Chinese-capable charset
-		if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
-			if err := checkMySQLChineseSupport(DB); err != nil {
-				panic(err)
-			}
-		}
-		if err := ensureUserQuotaColumns(DB, common.MainDatabaseType()); err != nil {
-			return err
-		}
-		sqlDB, err := DB.DB()
-		if err != nil {
-			return err
-		}
-		sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100))
-		sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
-		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
-
-		if !common.IsMasterNode {
-			// Only the master node migrates. A node that cannot read the deadline
-			// keeps rejecting legacy access tokens instead of refusing to start.
-			if err := EnsureLegacyAccessTokenRetireAt(common.GetTimestamp()); err != nil {
-				common.SysError(common.LogText("initialize legacy access token deadline: %s", err.Error()))
-			}
-			return nil
-		}
-		if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
-			//_, _ = sqlDB.Exec("ALTER TABLE channels MODIFY model_mapping TEXT;") // TODO: delete this line when most users have upgraded
-		}
-		common.SysLog(common.LogText("database migration started"))
-		err = migrateDB()
-		return err
-	} else {
+	db, _, err := chooseDB("SQL_DSN", false)
+	if err != nil {
 		common.FatalLog(err)
+		return err
 	}
-	return err
+	if os.Getenv("LOG_SQL_DSN") == "" {
+		common.SetLogDatabaseType(common.DatabaseTypePostgreSQL)
+	}
+	initCol()
+	if common.DebugEnabled {
+		db = db.Debug()
+	}
+	DB = db
+	if err := ensureUserQuotaColumns(DB); err != nil {
+		return err
+	}
+	sqlDB, err := DB.DB()
+	if err != nil {
+		return err
+	}
+	sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100))
+	sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
+	sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
+
+	if !common.IsMasterNode {
+		// Only the master node migrates. A node that cannot read the deadline
+		// keeps rejecting legacy access tokens instead of refusing to start.
+		if err := EnsureLegacyAccessTokenRetireAt(common.GetTimestamp()); err != nil {
+			common.SysError(common.LogText("initialize legacy access token deadline: %s", err.Error()))
+		}
+		return nil
+	}
+	common.SysLog(common.LogText("database migration started"))
+	return migrateDB()
 }
 
 func InitLogDB() (err error) {
 	if os.Getenv("LOG_SQL_DSN") == "" {
 		LOG_DB = DB
-		common.SetLogDatabaseType(common.MainDatabaseType())
+		common.SetLogDatabaseType(common.DatabaseTypePostgreSQL)
 		initCol()
 		if common.IsMasterNode {
 			return MigrateAuditLogs()
@@ -243,37 +219,29 @@ func InitLogDB() (err error) {
 		return
 	}
 	db, dbType, err := chooseDB("LOG_SQL_DSN", true)
-	if err == nil {
-		common.SetLogDatabaseType(dbType)
-		initCol()
-		if common.DebugEnabled {
-			db = db.Debug()
-		}
-		LOG_DB = db
-		// If log DB is MySQL, also ensure Chinese-capable charset
-		if common.UsingLogDatabase(common.DatabaseTypeMySQL) {
-			if err := checkMySQLChineseSupport(LOG_DB); err != nil {
-				panic(err)
-			}
-		}
-		sqlDB, err := LOG_DB.DB()
-		if err != nil {
-			return err
-		}
-		sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100))
-		sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
-		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
-
-		if !common.IsMasterNode {
-			return nil
-		}
-		common.SysLog(common.LogText("database migration started"))
-		err = migrateLOGDB()
-		return err
-	} else {
+	if err != nil {
 		common.FatalLog(err)
+		return err
 	}
-	return err
+	common.SetLogDatabaseType(dbType)
+	initCol()
+	if common.DebugEnabled {
+		db = db.Debug()
+	}
+	LOG_DB = db
+	sqlDB, err := LOG_DB.DB()
+	if err != nil {
+		return err
+	}
+	sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100))
+	sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
+	sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
+
+	if !common.IsMasterNode {
+		return nil
+	}
+	common.SysLog(common.LogText("database migration started"))
+	return migrateLOGDB()
 }
 
 var userQuotaColumns = []string{"quota", "used_quota", "aff_quota", "aff_history"}
@@ -281,12 +249,9 @@ var userQuotaColumns = []string{"quota", "used_quota", "aff_quota", "aff_history
 // ensureUserQuotaColumns rejects a legacy 32-bit wallet schema before any
 // migrations run. The 64-bit-only build intentionally does not auto-upgrade
 // an existing wallet; operators must migrate it explicitly before starting.
-func ensureUserQuotaColumns(db *gorm.DB, dbType common.DatabaseType) error {
+func ensureUserQuotaColumns(db *gorm.DB) error {
 	if common.GetEnvOrDefaultBool("SKIP_64BIT_QUOTA_SCHEMA_CHECK", false) {
 		common.SysLog(common.LogText("SKIP_64BIT_QUOTA_SCHEMA_CHECK=true; skipping user quota schema check"))
-		return nil
-	}
-	if db == nil || dbType == common.DatabaseTypeSQLite {
 		return nil
 	}
 	if !db.Migrator().HasTable(&User{}) {
@@ -301,25 +266,13 @@ func ensureUserQuotaColumns(db *gorm.DB, dbType common.DatabaseType) error {
 			if !strings.EqualFold(actual.Name(), expected) {
 				continue
 			}
-			dataType := actual.DatabaseTypeName()
-			if !is64BitIntegerType(dbType, dataType) {
+			dataType := strings.ToLower(strings.TrimSpace(actual.DatabaseTypeName()))
+			if dataType != "bigint" && dataType != "int8" {
 				return fmt.Errorf("users.%s uses %s; 32-bit is not supported", expected, dataType)
 			}
 		}
 	}
 	return nil
-}
-
-func is64BitIntegerType(dbType common.DatabaseType, dataType string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(dataType))
-	switch dbType {
-	case common.DatabaseTypeMySQL:
-		return normalized == "bigint" || normalized == "unsigned bigint" || normalized == "bigint unsigned"
-	case common.DatabaseTypePostgreSQL:
-		return normalized == "bigint" || normalized == "int8"
-	default:
-		return false
-	}
 }
 
 func migrateDB() error {
@@ -376,6 +329,7 @@ func migrateDB() error {
 		&CasbinRule{},
 		&AuthzRole{},
 		&UserAccessToken{},
+		&SubscriptionPlan{},
 	)
 	if err != nil {
 		return err
@@ -386,19 +340,7 @@ func migrateDB() error {
 	if err := EnsureLegacyAccessTokenRetireAt(common.GetTimestamp()); err != nil {
 		return fmt.Errorf("initialize legacy access token deadline: %w", err)
 	}
-	if err := InitializeExternalIdentityClaims(); err != nil {
-		return err
-	}
-	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
-		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
-			return err
-		}
-	} else {
-		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
-			return err
-		}
-	}
-	return nil
+	return InitializeExternalIdentityClaims()
 }
 
 func migrateLOGDB() error {
@@ -500,98 +442,9 @@ func clickHouseCreateTableHasTTL(createTableSQL string) bool {
 	return strings.Contains(upperSQL, "\nTTL ") || strings.Contains(upperSQL, " TTL ")
 }
 
-type sqliteColumnDef struct {
-	Name string
-	DDL  string
-}
-
-func ensureSubscriptionPlanTableSQLite() error {
-	if !common.UsingMainDatabase(common.DatabaseTypeSQLite) {
-		return nil
-	}
-	tableName := "subscription_plans"
-	if !DB.Migrator().HasTable(tableName) {
-		createSQL := `CREATE TABLE ` + "`" + tableName + "`" + ` (
-` + "`id`" + ` integer,
-` + "`title`" + ` varchar(128) NOT NULL,
-` + "`subtitle`" + ` varchar(255) DEFAULT '',
-` + "`price_amount`" + ` decimal(10,6) NOT NULL,
-` + "`currency`" + ` varchar(8) NOT NULL DEFAULT 'USD',
-` + "`duration_unit`" + ` varchar(16) NOT NULL DEFAULT 'month',
-` + "`duration_value`" + ` integer NOT NULL DEFAULT 1,
-` + "`custom_seconds`" + ` bigint NOT NULL DEFAULT 0,
-` + "`enabled`" + ` numeric DEFAULT 1,
-` + "`sort_order`" + ` integer DEFAULT 0,
-` + "`allow_balance_pay`" + ` numeric DEFAULT 1,
-` + "`allow_wallet_overflow`" + ` numeric DEFAULT 1,
-` + "`stripe_price_id`" + ` varchar(128) DEFAULT '',
-` + "`creem_product_id`" + ` varchar(128) DEFAULT '',
-` + "`waffo_pancake_product_id`" + ` varchar(128) DEFAULT '',
-` + "`max_purchase_per_user`" + ` integer DEFAULT 0,
-` + "`upgrade_group`" + ` varchar(64) DEFAULT '',
-` + "`downgrade_group`" + ` varchar(64) DEFAULT '',
-` + "`total_amount`" + ` bigint NOT NULL DEFAULT 0,
-` + "`quota_reset_period`" + ` varchar(16) DEFAULT 'never',
-` + "`quota_reset_custom_seconds`" + ` bigint DEFAULT 0,
-` + "`created_at`" + ` bigint,
-` + "`updated_at`" + ` bigint,
-PRIMARY KEY (` + "`id`" + `)
-)`
-		return DB.Exec(createSQL).Error
-	}
-	var cols []struct {
-		Name string `gorm:"column:name"`
-	}
-	if err := DB.Raw("PRAGMA table_info(`" + tableName + "`)").Scan(&cols).Error; err != nil {
-		return err
-	}
-	existing := make(map[string]struct{}, len(cols))
-	for _, c := range cols {
-		existing[c.Name] = struct{}{}
-	}
-	required := []sqliteColumnDef{
-		{Name: "title", DDL: "`title` varchar(128) NOT NULL"},
-		{Name: "subtitle", DDL: "`subtitle` varchar(255) DEFAULT ''"},
-		{Name: "price_amount", DDL: "`price_amount` decimal(10,6) NOT NULL"},
-		{Name: "currency", DDL: "`currency` varchar(8) NOT NULL DEFAULT 'USD'"},
-		{Name: "duration_unit", DDL: "`duration_unit` varchar(16) NOT NULL DEFAULT 'month'"},
-		{Name: "duration_value", DDL: "`duration_value` integer NOT NULL DEFAULT 1"},
-		{Name: "custom_seconds", DDL: "`custom_seconds` bigint NOT NULL DEFAULT 0"},
-		{Name: "enabled", DDL: "`enabled` numeric DEFAULT 1"},
-		{Name: "sort_order", DDL: "`sort_order` integer DEFAULT 0"},
-		{Name: "allow_balance_pay", DDL: "`allow_balance_pay` numeric DEFAULT 1"},
-		{Name: "allow_wallet_overflow", DDL: "`allow_wallet_overflow` numeric DEFAULT 1"},
-		{Name: "stripe_price_id", DDL: "`stripe_price_id` varchar(128) DEFAULT ''"},
-		{Name: "creem_product_id", DDL: "`creem_product_id` varchar(128) DEFAULT ''"},
-		{Name: "waffo_pancake_product_id", DDL: "`waffo_pancake_product_id` varchar(128) DEFAULT ''"},
-		{Name: "max_purchase_per_user", DDL: "`max_purchase_per_user` integer DEFAULT 0"},
-		{Name: "upgrade_group", DDL: "`upgrade_group` varchar(64) DEFAULT ''"},
-		{Name: "downgrade_group", DDL: "`downgrade_group` varchar(64) DEFAULT ''"},
-		{Name: "total_amount", DDL: "`total_amount` bigint NOT NULL DEFAULT 0"},
-		{Name: "quota_reset_period", DDL: "`quota_reset_period` varchar(16) DEFAULT 'never'"},
-		{Name: "quota_reset_custom_seconds", DDL: "`quota_reset_custom_seconds` bigint DEFAULT 0"},
-		{Name: "created_at", DDL: "`created_at` bigint"},
-		{Name: "updated_at", DDL: "`updated_at` bigint"},
-	}
-	for _, col := range required {
-		if _, ok := existing[col.Name]; ok {
-			continue
-		}
-		if err := DB.Exec("ALTER TABLE `" + tableName + "` ADD COLUMN " + col.DDL).Error; err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // migrateTokenModelLimitsToText migrates model_limits column from varchar(1024) to text
 // This is safe to run multiple times - it checks the column type first
 func migrateTokenModelLimitsToText() error {
-	// SQLite uses type affinity, so TEXT and VARCHAR are effectively the same — no migration needed
-	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
-		return nil
-	}
-
 	tableName := "tokens"
 	columnName := "model_limits"
 
@@ -603,49 +456,24 @@ func migrateTokenModelLimitsToText() error {
 		return nil
 	}
 
-	var alterSQL string
-	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		var dataType string
-		if err := DB.Raw(`SELECT data_type FROM information_schema.columns
-			WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
-			tableName, columnName).Scan(&dataType).Error; err != nil {
-			common.SysLog(common.LogText("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
-		} else if dataType == "text" {
-			return nil
-		}
-		alterSQL = fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s TYPE text`, tableName, columnName)
-	} else if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
-		var columnType string
-		if err := DB.Raw(`SELECT COLUMN_TYPE FROM information_schema.columns
-				WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
-			tableName, columnName).Scan(&columnType).Error; err != nil {
-			common.SysLog(common.LogText("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
-		} else if strings.ToLower(columnType) == "text" {
-			return nil
-		}
-		alterSQL = fmt.Sprintf("ALTER TABLE %s MODIFY COLUMN %s text", tableName, columnName)
-	} else {
+	var dataType string
+	if err := DB.Raw(`SELECT data_type FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
+		tableName, columnName).Scan(&dataType).Error; err != nil {
+		common.SysLog(common.LogText("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
+	} else if dataType == "text" {
 		return nil
 	}
-
-	if alterSQL != "" {
-		if err := DB.Exec(alterSQL).Error; err != nil {
-			return fmt.Errorf("failed to migrate %s.%s to text: %w", tableName, columnName, err)
-		}
-		common.SysLog(common.LogText("Successfully migrated %s.%s to text", tableName, columnName))
+	if err := DB.Exec(fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s TYPE text`, tableName, columnName)).Error; err != nil {
+		return fmt.Errorf("failed to migrate %s.%s to text: %w", tableName, columnName, err)
 	}
+	common.SysLog(common.LogText("Successfully migrated %s.%s to text", tableName, columnName))
 	return nil
 }
 
 // migrateSubscriptionPlanPriceAmount migrates price_amount column from float/double to decimal(10,6)
 // This is safe to run multiple times - it checks the column type first
 func migrateSubscriptionPlanPriceAmount() {
-	// SQLite doesn't support ALTER COLUMN, and its type affinity handles this automatically
-	// Skip early to avoid GORM parsing the existing table DDL which may cause issues
-	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
-		return
-	}
-
 	tableName := "subscription_plans"
 	columnName := "price_amount"
 
@@ -659,41 +487,20 @@ func migrateSubscriptionPlanPriceAmount() {
 		return
 	}
 
-	var alterSQL string
-	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		// PostgreSQL: Check if already decimal/numeric
-		var dataType string
-		if err := DB.Raw(`SELECT data_type FROM information_schema.columns
-			WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
-			tableName, columnName).Scan(&dataType).Error; err != nil {
-			common.SysLog(common.LogText("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
-		} else if dataType == "numeric" {
-			return // Already decimal/numeric
-		}
-		alterSQL = fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s TYPE decimal(10,6) USING %s::decimal(10,6)`,
-			tableName, columnName, columnName)
-	} else if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
-		// MySQL: Check if already decimal
-		var columnType string
-		if err := DB.Raw(`SELECT COLUMN_TYPE FROM information_schema.columns
-				WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
-			tableName, columnName).Scan(&columnType).Error; err != nil {
-			common.SysLog(common.LogText("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
-		} else if strings.HasPrefix(strings.ToLower(columnType), "decimal") {
-			return // Already decimal
-		}
-		alterSQL = fmt.Sprintf("ALTER TABLE %s MODIFY COLUMN %s decimal(10,6) NOT NULL DEFAULT 0",
-			tableName, columnName)
-	} else {
-		return
+	var dataType string
+	if err := DB.Raw(`SELECT data_type FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
+		tableName, columnName).Scan(&dataType).Error; err != nil {
+		common.SysLog(common.LogText("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
+	} else if dataType == "numeric" {
+		return // Already decimal/numeric
 	}
-
-	if alterSQL != "" {
-		if err := DB.Exec(alterSQL).Error; err != nil {
-			common.SysLog(common.LogText("Warning: failed to migrate %s.%s to decimal: %v", tableName, columnName, err))
-		} else {
-			common.SysLog(common.LogText("Successfully migrated %s.%s to decimal(10,6)", tableName, columnName))
-		}
+	alterSQL := fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s TYPE decimal(10,6) USING %s::decimal(10,6)`,
+		tableName, columnName, columnName)
+	if err := DB.Exec(alterSQL).Error; err != nil {
+		common.SysLog(common.LogText("Warning: failed to migrate %s.%s to decimal: %v", tableName, columnName, err))
+	} else {
+		common.SysLog(common.LogText("Successfully migrated %s.%s to decimal(10,6)", tableName, columnName))
 	}
 }
 
@@ -714,98 +521,6 @@ func CloseDB() error {
 		}
 	}
 	return closeDB(DB)
-}
-
-// checkMySQLChineseSupport ensures the MySQL connection and current schema
-// default charset/collation can store Chinese characters. It allows common
-// Chinese-capable charsets (utf8mb4, utf8, gbk, big5, gb18030) and panics otherwise.
-func checkMySQLChineseSupport(db *gorm.DB) error {
-	// 仅检测：当前库默认字符集/排序规则 + 各表的排序规则（隐含字符集）
-
-	// Read current schema defaults
-	var schemaCharset, schemaCollation string
-	err := db.Raw("SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = DATABASE()").Row().Scan(&schemaCharset, &schemaCollation)
-	if err != nil {
-		return fmt.Errorf("Failed to read schema default charset/collation: %v", err)
-	}
-
-	toLower := func(s string) string { return strings.ToLower(s) }
-	// Allowed charsets that can store Chinese text
-	allowedCharsets := map[string]string{
-		"utf8mb4": "utf8mb4_",
-		"utf8":    "utf8_",
-		"gbk":     "gbk_",
-		"big5":    "big5_",
-		"gb18030": "gb18030_",
-	}
-	isChineseCapable := func(cs, cl string) bool {
-		csLower := toLower(cs)
-		clLower := toLower(cl)
-		if prefix, ok := allowedCharsets[csLower]; ok {
-			if clLower == "" {
-				return true
-			}
-			return strings.HasPrefix(clLower, prefix)
-		}
-		// 如果仅提供了排序规则，尝试按排序规则前缀判断
-		for _, prefix := range allowedCharsets {
-			if strings.HasPrefix(clLower, prefix) {
-				return true
-			}
-		}
-		return false
-	}
-
-	// 1) 当前库默认值必须支持中文
-	if !isChineseCapable(schemaCharset, schemaCollation) {
-		return fmt.Errorf("Schema default charset/collation is not Chinese-capable: schema(%s/%s). Please set to utf8mb4/utf8/gbk/big5/gb18030",
-			schemaCharset, schemaCollation)
-	}
-
-	// 2) 所有物理表的排序规则（隐含字符集）必须支持中文
-	type tableInfo struct {
-		Name      string
-		Collation *string
-	}
-	var tables []tableInfo
-	if err := db.Raw("SELECT TABLE_NAME, TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'").Scan(&tables).Error; err != nil {
-		return fmt.Errorf("Failed to read table collations: %v", err)
-	}
-
-	var badTables []string
-	for _, t := range tables {
-		// NULL 或空表示继承库默认设置，已在上面校验库默认，视为通过
-		if t.Collation == nil || *t.Collation == "" {
-			continue
-		}
-		cl := *t.Collation
-		// 仅凭排序规则判断是否中文可用
-		ok := false
-		lower := strings.ToLower(cl)
-		for _, prefix := range allowedCharsets {
-			if strings.HasPrefix(lower, prefix) {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			badTables = append(badTables, fmt.Sprintf("%s(%s)", t.Name, cl))
-		}
-	}
-
-	if len(badTables) > 0 {
-		// 限制输出数量以避免日志过长
-		maxShow := 20
-		shown := badTables
-		if len(shown) > maxShow {
-			shown = shown[:maxShow]
-		}
-		return fmt.Errorf(
-			"Found tables not Chinese-capable. Please fix their collation/charset. Examples (showing up to %d): %v",
-			maxShow, shown,
-		)
-	}
-	return nil
 }
 
 var (

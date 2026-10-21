@@ -11,19 +11,18 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/controller"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 const docParsePluginSource = `export const meta = {apiVersion:1,key:"doc-parse",name:"Document Parser",version:"1.0.0",author:{name:"Test"},models:["doc-parse-v1"],fetchMode:"batch"};
@@ -38,12 +37,9 @@ export function buildContentRequest(ctx){const item=(ctx.data.artifacts||[]).fin
 
 func TestDocumentPluginRunsGenericBatchArtifactChain(t *testing.T) {
 	service.InitHttpClient()
-	originalDB := model.DB
-	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, database.AutoMigrate(&model.TaskPlugin{}, &model.Channel{}, &model.Task{}))
-	model.DB = database
-	t.Cleanup(func() { model.DB = originalDB; jsplugin.DefaultRegistry.Unregister("doc-parse") })
+	pgtest.Reset(t, model.DB)
+	database := model.DB
+	t.Cleanup(func() { jsplugin.DefaultRegistry.Unregister("doc-parse") })
 
 	source := docParsePluginSource
 	uploadBody, err := common.Marshal(map[string]any{"source": source, "remark": "phase 4 acceptance"})

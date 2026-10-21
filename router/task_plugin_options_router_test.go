@@ -9,24 +9,18 @@ import (
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func TestGetTaskPluginOptionsAdminForbiddenRootAllowed(t *testing.T) {
 	wasMaster := common.IsMasterNode
 	common.IsMasterNode = true
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.CasbinRule{}, &model.AuthzRole{}))
-	require.NoError(t, authz.Init(db))
+	pgtest.Reset(t, model.DB)
+	require.NoError(t, authz.Init(model.DB))
 	t.Cleanup(func() { common.IsMasterNode = wasMaster })
 
 	gin.SetMode(gin.TestMode)

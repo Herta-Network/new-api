@@ -6,9 +6,10 @@ DEV_POSTGRES_SERVICE = postgres
 DEV_API_SERVICE = new-api
 DEV_POSTGRES_DB = new-api
 DEV_POSTGRES_USER = root
-DEV_SQLITE_PATH ?= one-api.db
+TEST_DB_CONTAINER = new-api-test-postgres
+TEST_DB_PORT ?= 55432
 
-.PHONY: all build-web build-all-web start-api dev dev-api dev-api-rebuild dev-web reset-setup test
+.PHONY: all build-web build-all-web start-api dev dev-api dev-api-rebuild dev-web reset-setup test test-db
 
 all: build-all-web start-api
 
@@ -40,15 +41,31 @@ dev-web:
 dev: dev-api dev-web
 
 # The main package embeds the ignored web/dist output and is covered after build-web.
+# Database tests need a PostgreSQL 18 server: run `make test-db` and export the
+# TEST_POSTGRES_DSN it prints, or point it at any UTF8 database you can create
+# schemas in.
 test:
+	@if [ -z "$$TEST_POSTGRES_DSN" ]; then \
+		echo "TEST_POSTGRES_DSN is not set. Run 'make test-db' and export the DSN it prints."; \
+		exit 1; \
+	fi
 	@echo "Testing root Go module..."
 	@root_module=$$(GOWORK=off go list -m); \
 		root_packages=$$(GOWORK=off go list -e ./... | grep -vxF "$$root_module"); \
-		GOWORK=off go test $$root_packages
+		GOWORK=off go test -count=1 $$root_packages
 	@echo "Testing relaykit Go module..."
-	@cd relaykit && GOWORK=off go test ./...
+	@cd relaykit && GOWORK=off go test -count=1 ./...
 	@echo "Testing tokenkit Go module..."
-	@cd tokenkit && GOWORK=off go test ./...
+	@cd tokenkit && GOWORK=off go test -count=1 ./...
+
+test-db:
+	@if ! docker ps --format '{{.Names}}' | grep -qx "$(TEST_DB_CONTAINER)"; then \
+		docker run -d --rm --name $(TEST_DB_CONTAINER) \
+			-e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=newapi_test \
+			-p 127.0.0.1:$(TEST_DB_PORT):5432 postgres:18-alpine >/dev/null; \
+		until docker exec $(TEST_DB_CONTAINER) pg_isready -U postgres -d newapi_test >/dev/null 2>&1; do sleep 1; done; \
+	fi
+	@echo "export TEST_POSTGRES_DSN='postgres://postgres:postgres@127.0.0.1:$(TEST_DB_PORT)/newapi_test?sslmode=disable'"
 
 reset-setup:
 	@echo "Resetting local setup wizard state..."
@@ -61,15 +78,7 @@ reset-setup:
 			-c "DELETE FROM options WHERE key IN ('SelfUseModeEnabled', 'DemoSiteEnabled');"; \
 		echo "Restarting docker dev api so setup status is recalculated..."; \
 		docker compose -f $(DEV_COMPOSE_FILE) restart $(DEV_API_SERVICE); \
-	elif db_path="$${SQLITE_PATH:-$(DEV_SQLITE_PATH)}"; db_path="$${db_path%%\?*}"; [ -f "$$db_path" ]; then \
-		db_path="$${SQLITE_PATH:-$(DEV_SQLITE_PATH)}"; \
-		db_path="$${db_path%%\?*}"; \
-		echo "Detected local SQLite database: $$db_path"; \
-		sqlite3 "$$db_path" \
-			"DELETE FROM setups; DELETE FROM users WHERE role = 100; DELETE FROM options WHERE key IN ('SelfUseModeEnabled', 'DemoSiteEnabled');"; \
-		echo "SQLite setup state reset. Restart the local api process before testing the setup wizard."; \
 	else \
-		echo "No running docker dev PostgreSQL or local SQLite database found."; \
-		echo "Start the dev stack with 'make dev-api', or set SQLITE_PATH/DEV_SQLITE_PATH to your local SQLite database."; \
+		echo "No running docker dev PostgreSQL found. Start the dev stack with 'make dev-api'."; \
 		exit 1; \
 	fi

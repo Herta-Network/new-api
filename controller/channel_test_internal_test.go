@@ -192,8 +192,7 @@ func TestCopyChannelRejectsInvalidLegacyProxySettings(t *testing.T) {
 }
 
 func TestDeleteChannelResetsProxyCacheWhenPreReadFails(t *testing.T) {
-	db := setupModelListControllerTestDB(t)
-	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.AuditLog{}))
+	setupModelListControllerTestDB(t)
 	service.ResetProxyClientCache()
 	t.Cleanup(service.ResetProxyClientCache)
 
@@ -216,7 +215,6 @@ func TestDeleteChannelResetsProxyCacheWhenPreReadFails(t *testing.T) {
 
 func TestDeleteChannelBatchReportsAndAuditsActualDeletedCount(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
-	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.AuditLog{}))
 	channel := &model.Channel{Name: "existing", Key: "test-key"}
 	require.NoError(t, db.Create(channel).Error)
 
@@ -477,8 +475,7 @@ func TestRunChannelTestWorkersStopsAfterCancellation(t *testing.T) {
 }
 
 func TestTestAllChannelsRejectsExistingActiveTask(t *testing.T) {
-	db := setupModelListControllerTestDB(t)
-	require.NoError(t, db.AutoMigrate(&model.SystemTask{}, &model.SystemTaskLock{}))
+	setupModelListControllerTestDB(t)
 
 	existing, err := model.CreateSystemTask(model.SystemTaskTypeChannelTest, nil, nil)
 	require.NoError(t, err)

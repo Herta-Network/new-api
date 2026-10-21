@@ -43,6 +43,7 @@
    - **容器名称**：可自定义，默认为 `new-api`
    - **端口映射**：默认为 `3000:3000`
    - **环境变量**：
+     - `SQL_DSN`：PostgreSQL 数据库连接字符串（**必填**，只支持 PostgreSQL 18 及以上，未设置时无法启动）
      - `SESSION_SECRET`：会话密钥（**必填**，多机部署时必须一致）
      - `CRYPTO_SECRET`：加密密钥（使用 Redis 时必填）
 5. 点击 **确认** 开始安装
@@ -65,8 +66,22 @@ services:
     volumes:
       - ./data:/data
     environment:
+      - SQL_DSN=postgresql://root:your_db_password@postgres:5432/new-api  # 密码与下方 POSTGRES_PASSWORD 保持一致
       - SESSION_SECRET=your_session_secret_here  # 请修改为随机字符串
       - TZ=Asia/Shanghai
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:18
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: your_db_password  # 请修改为强密码
+      POSTGRES_DB: new-api
+    volumes:
+      - ./postgres:/var/lib/postgresql  # PostgreSQL 18 镜像的数据目录
 ```
 
 1. 在终端中进入目录并启动：
@@ -86,7 +101,8 @@ docker-compose up -d
 | ------------------- | ------------------ | ------ |
 | `SESSION_SECRET`    | 会话密钥，多机部署必须一致      | **必填** |
 | `CRYPTO_SECRET`     | 加密密钥，使用 Redis 时必填  | 条件必填   |
-| `SQL_DSN`           | 数据库连接字符串（使用外部数据库时） | 可选     |
+| `SQL_DSN`           | PostgreSQL 18 及以上的连接字符串，如 `postgresql://用户:密码@主机:5432/new-api` | **必填** |
+| `LOG_SQL_DSN`       | 独立日志库连接字符串，可用 PostgreSQL 或 ClickHouse；不设置时日志写入主库 | 可选     |
 | `REDIS_CONN_STRING` | Redis 连接字符串        | 可选     |
 
 ### 生成随机密钥
@@ -115,11 +131,11 @@ head -c 16 /dev/urandom | xxd -p
 
 ### Q3：数据如何持久化？
 
-使用 Docker 卷映射数据目录：
+业务数据保存在 PostgreSQL 中。按上面的 Compose 示例，为 `postgres` 容器映射 `/var/lib/postgresql`（PostgreSQL 18 镜像的数据目录，不是旧版的 `/var/lib/postgresql/data`），并定期用 `pg_dump` 备份：
 
 ```yaml
 volumes:
-  - ./data:/data
+  - ./postgres:/var/lib/postgresql
 ```
 
 ### Q4：如何更新版本？

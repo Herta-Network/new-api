@@ -11,11 +11,10 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 type emailHTTPTransport func(*http.Request) (*http.Response, error)
@@ -192,12 +191,10 @@ func TestEmailProviderCannotActivateIncompleteResend(t *testing.T) {
 }
 
 func TestResendSettingsChangesKeepActiveDeliveryWorking(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.Option{}))
-	previousDB, previousRedis := model.DB, common.RedisEnabled
-	model.DB, common.RedisEnabled = db, false
-	t.Cleanup(func() { model.DB, common.RedisEnabled = previousDB, previousRedis })
+	pgtest.Reset(t, model.DB)
+	previousRedis := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = previousRedis })
 
 	tests := []struct {
 		name, provider, key, value string

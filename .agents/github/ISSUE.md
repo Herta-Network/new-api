@@ -92,7 +92,7 @@ Search these yourself before filing. Do not send the user to "read the docs firs
 
 - new-api version / commit / image tag (not `latest` / `unknown`):
 - Deploy source (repo release / official image / main source / other):
-- Database (sqlite / mysql / postgres):
+- Database (postgres version; separate log database postgres / clickhouse, if any):
 
 ## Problem facts
 

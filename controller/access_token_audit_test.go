@@ -13,50 +13,39 @@ import (
 	"testing"
 	"time"
 
-	sqlmysql "github.com/go-sql-driver/mysql"
 	"gorm.io/driver/clickhouse"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 func setupAccessTokenAudit(t *testing.T) (*model.User, string) {
 	t.Helper()
-	previousDB, previousLogDB := model.DB, model.LOG_DB
-	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
 	previousRedis := common.RedisEnabled
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
+	pgtest.Reset(t, model.DB)
 	require.NoError(t, i18n.Init())
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Log{}, &model.AuditLog{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.UserAccessToken{}, &model.Option{},
-		&model.AuthFlow{}, &model.TwoFA{}, &model.TwoFABackupCode{}, &model.PasskeyCredential{}, &model.UserOAuthBinding{}))
-	model.DB, model.LOG_DB = db, db
-	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))
 	common.RedisEnabled = false
 	previousMaster := common.IsMasterNode
 	common.IsMasterNode = true
-	require.NoError(t, authz.Init(db))
+	require.NoError(t, authz.Init(model.DB))
 	t.Cleanup(func() {
-		model.DB, model.LOG_DB = previousDB, previousLogDB
 		common.IsMasterNode = previousMaster
-		common.SetDatabaseTypes(previousMain, previousLog)
 		common.RedisEnabled = previousRedis
 	})
-	token := "legacy-opaque-token"
+	// Legacy tokens fill the CHAR(32) column, which PostgreSQL returns padded.
+	token := "legacy-opaque-token-0123456789ab"
 	user := &model.User{Username: "audit-owner", Password: "placeholder", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AccessToken: &token, AuthVersion: 1, AffCode: "audit-owner"}
-	require.NoError(t, db.Create(user).Error)
+	require.NoError(t, model.DB.Create(user).Error)
 	return user, token
 }
 
@@ -826,65 +815,27 @@ type releasedAuditLog struct {
 
 func (releasedAuditLog) TableName() string { return "logs" }
 
-// External tests create a new database per case on a loopback-only disposable
-// instance. They never drop databases or tables supplied through an environment variable.
-func newAuditTestDatabase(t *testing.T, kind, dsn string) (*gorm.DB, string) {
+// newClickHouseTestDatabase creates a new database on the loopback-only
+// disposable ClickHouse instance named by dsn and returns a connection to it
+// and its DSN. It never drops databases or tables supplied through an
+// environment variable.
+func newClickHouseTestDatabase(t *testing.T, dsn string) (*gorm.DB, string) {
 	t.Helper()
-	if kind == "sqlite" {
-		path := t.TempDir() + "/audit.db"
-		db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
-		require.NoError(t, err)
-		return db, path
-	}
-	require.NotEmpty(t, dsn)
 	name := fmt.Sprintf("newapi_audit_%d", time.Now().UnixNano())
-	var original, isolated gorm.Dialector
-	var newDSN string
-	if kind == "mysql" {
-		config, err := sqlmysql.ParseDSN(dsn)
-		require.NoError(t, err)
-		require.Equal(t, "tcp", config.Net)
-		host, _, err := net.SplitHostPort(config.Addr)
-		require.NoError(t, err)
-		require.True(t, net.ParseIP(host).IsLoopback(), "database tests only permit loopback instances")
-		original = mysql.Open(dsn)
-		config.DBName = name
-		newDSN = config.FormatDSN()
-		isolated = mysql.Open(newDSN)
-	} else {
-		parsed, err := url.Parse(dsn)
-		require.NoError(t, err)
-		require.True(t, net.ParseIP(parsed.Hostname()).IsLoopback(), "database tests only permit loopback instances")
-		parsed.Path = "/" + name
-		newDSN = parsed.String()
-		if kind == "clickhouse" {
-			original = clickhouse.Open(dsn)
-			isolated = clickhouse.Open(newDSN)
-		} else {
-			original = postgres.Open(dsn)
-			isolated = postgres.Open(newDSN)
-		}
-	}
-	admin, err := gorm.Open(original, &gorm.Config{})
+	parsed, err := url.Parse(dsn)
+	require.NoError(t, err)
+	require.True(t, net.ParseIP(parsed.Hostname()).IsLoopback(), "database tests only permit loopback instances")
+	parsed.Path = "/" + name
+	newDSN := parsed.String()
+	admin, err := gorm.Open(clickhouse.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	// No IF NOT EXISTS: a collision fails before any test data can be written.
-	createSQL := "CREATE DATABASE " + name
-	if kind == "mysql" {
-		createSQL += " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-	}
-	require.NoError(t, admin.Exec(createSQL).Error)
-	sqlDB, err := admin.DB()
+	require.NoError(t, admin.Exec("CREATE DATABASE "+name).Error)
+	closeTestDatabase(admin)
+	db, err := gorm.Open(clickhouse.Open(newDSN), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, sqlDB.Close())
-	db, err := gorm.Open(isolated, &gorm.Config{})
-	require.NoError(t, err)
-	t.Logf("isolated database: %s (%s)", name, kind)
-	t.Cleanup(func() {
-		connection, err := db.DB()
-		if err == nil {
-			_ = connection.Close()
-		}
-	})
+	t.Logf("isolated database: %s (clickhouse)", name)
+	t.Cleanup(func() { closeTestDatabase(db) })
 	return db, newDSN
 }
 
@@ -1025,161 +976,138 @@ func TestAuditOtherDatabaseEncoding(t *testing.T) {
 }
 
 func TestAuditDatabaseMatrix(t *testing.T) {
-	previousDB, previousLogDB := model.DB, model.LOG_DB
-	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
 	previousRedis := common.RedisEnabled
-	previousMaster, previousSQLite := common.IsMasterNode, common.SQLitePath
+	previousMaster := common.IsMasterNode
 	common.IsMasterNode = true
 	common.RedisEnabled = false
 	t.Cleanup(func() {
-		common.IsMasterNode, common.SQLitePath = previousMaster, previousSQLite
-		model.DB, model.LOG_DB = previousDB, previousLogDB
-		common.SetDatabaseTypes(previousMain, previousLog)
+		common.IsMasterNode = previousMaster
 		common.RedisEnabled = previousRedis
 	})
-	cases := []struct {
-		name, env string
-		typ       common.DatabaseType
-	}{
-		{"sqlite", "", common.DatabaseTypeSQLite}, {"mysql", "AUDIT_MYSQL_DSN", common.DatabaseTypeMySQL}, {"postgres", "AUDIT_POSTGRES_DSN", common.DatabaseTypePostgreSQL},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			dsn := os.Getenv(tc.env)
-			if tc.env != "" && dsn == "" {
-				t.Skip(tc.env + " is not configured")
+	for _, upgrade := range []bool{false, true} {
+		t.Run(fmt.Sprintf("upgrade=%v", upgrade), func(t *testing.T) {
+			db, _ := newIsolatedDatabase(t)
+			model.DB, model.LOG_DB = db, db
+			var version string
+			require.NoError(t, db.Raw("SELECT version()").Scan(&version).Error)
+			t.Logf("database version: %s", version)
+			if upgrade {
+				require.NoError(t, db.AutoMigrate(&releasedAuditUser{}, &releasedAuditLog{}))
+				legacy := "released-token"
+				require.NoError(t, db.Create(&releasedAuditUser{Username: "released-owner", Password: "placeholder", AccessToken: &legacy, AffCode: "released-aff", Quota: 1234}).Error)
+				require.NoError(t, db.Create(&releasedAuditLog{UserId: 1, Type: model.LogTypeLogin, Content: "historical login", CreatedAt: 100, RequestId: "legacy-request"}).Error)
 			}
-			for _, upgrade := range []bool{false, true} {
-				t.Run(fmt.Sprintf("upgrade=%v", upgrade), func(t *testing.T) {
-					db, isolatedDSN := newAuditTestDatabase(t, tc.name, dsn)
-					t.Setenv("LOG_SQL_DSN", "")
-					if tc.name == "sqlite" {
-						common.SQLitePath = isolatedDSN
-						t.Setenv("SQL_DSN", "local")
-					} else {
-						t.Setenv("SQL_DSN", isolatedDSN)
-					}
-					model.DB, model.LOG_DB = db, db
-					common.SetDatabaseTypes(tc.typ, tc.typ)
-					versionSQL := "SELECT version()"
-					if tc.name == "sqlite" {
-						versionSQL = "SELECT sqlite_version()"
-					}
-					var version string
-					require.NoError(t, db.Raw(versionSQL).Scan(&version).Error)
-					t.Logf("database version: %s", version)
-					if upgrade {
-						require.NoError(t, db.AutoMigrate(&releasedAuditUser{}, &releasedAuditLog{}))
-						legacy := "released-token"
-						require.NoError(t, db.Create(&releasedAuditUser{Username: "released-owner", Password: "placeholder", AccessToken: &legacy, AffCode: "released-aff", Quota: 1234}).Error)
-						require.NoError(t, db.Create(&releasedAuditLog{UserId: 1, Type: model.LogTypeLogin, Content: "historical login", CreatedAt: 100, RequestId: "legacy-request"}).Error)
-					}
-					for range 2 {
-						require.NoError(t, model.InitDB())
-						require.NoError(t, model.InitLogDB())
-					}
-					if !upgrade {
-						require.NoError(t, db.Create(&model.User{Username: "fresh-owner", Password: "placeholder", AffCode: "fresh-aff"}).Error)
-					}
-					status, err := model.GetUserAccessTokenStatus(1)
-					require.NoError(t, err)
-					assert.Equal(t, upgrade, status.Exists)
-					assert.Nil(t, status.CreatedAt)
-					if upgrade {
-						assert.Equal(t, model.AccessTokenFingerprint("released-token"), status.TokenRef)
-						legacyUser, validationErr := model.ValidateAccessToken("released-token")
-						require.NoError(t, validationErr)
-						require.NotNil(t, legacyUser)
-						var user model.User
-						require.NoError(t, db.First(&user, 1).Error)
-						assert.Equal(t, 1234, user.Quota)
-						var old model.Log
-						require.NoError(t, db.First(&old).Error)
-						assert.Equal(t, "historical login", old.Content)
-					}
-					require.NoError(t, db.Model(&model.User{}).Where("id = ?", 1).Update("access_token", "matrix-token").Error)
-					require.Error(t, db.Create(&model.User{Username: "duplicate", Password: "placeholder", AffCode: "duplicate-aff", AccessToken: common.GetPointer("matrix-token")}).Error, "PAT uniqueness must survive upgrade")
-					scoped, scopedToken := createScopedAccessToken(t, 1, 0, "profile:read")
-					found, err := model.FindUserAccessTokenByHash(model.AccessTokenFingerprint(scoped))
-					require.NoError(t, err)
-					assert.Equal(t, scopedToken.Id, found.Id)
-					assert.Equal(t, []string{"profile:read"}, found.GetScopes())
-					require.Error(t, db.Create(&model.UserAccessToken{UserId: 1, Name: "duplicate", TokenHash: scopedToken.TokenHash, TokenHint: "dupe", Scopes: found.Scopes}).Error, "token hashes stay unique")
-					model.RecordAuditLog(nil, model.AuditLog{ActorRole: common.RoleAdminUser, UserId: 1, Username: "owner", CreatedAt: 99, Category: model.AuditCategoryAccessToken, TokenRef: scopedToken.TokenHash, Ip: "192.0.2.1", Success: true})
-					byRef, _, err := model.GetAuditLogs(model.AuditLogFilter{UserId: 1, TokenRef: scopedToken.TokenHash}, 0, 10, common.RoleCommonUser)
-					require.NoError(t, err)
-					require.Len(t, byRef, 1, "audit rows of a scoped token are found by its token_ref")
-					_, err = model.DeleteUserAccessToken(1, scopedToken.Id)
-					require.NoError(t, err)
-					require.NoError(t, model.LOG_DB.Where("token_ref = ?", scopedToken.TokenHash).Delete(&model.AuditLog{}).Error)
-					for _, timestamp := range []int64{101, 102, 103} {
-						model.RecordAuditLog(nil, model.AuditLog{ActorRole: common.RoleAdminUser, UserId: 1, Username: "owner", CreatedAt: timestamp, Category: model.AuditCategoryAccessToken, TokenRef: model.AccessTokenFingerprint("matrix-token"), Ip: "192.0.2.1", Success: timestamp != 102})
-					}
-					first, total, err := model.GetAuditLogs(model.AuditLogFilter{UserId: 1}, 0, 2, common.RoleCommonUser)
-					require.NoError(t, err)
-					assert.EqualValues(t, 3, total)
-					require.Len(t, first, 2)
-					assert.EqualValues(t, 103, first[0].CreatedAt)
-					second, _, err := model.GetAuditLogs(model.AuditLogFilter{UserId: 1}, 2, 2, common.RoleCommonUser)
-					require.NoError(t, err)
-					require.Len(t, second, 1)
-					assert.EqualValues(t, 101, second[0].CreatedAt)
-					failure := false
-					failed, _, err := model.GetAuditLogs(model.AuditLogFilter{UserId: 1, Success: &failure}, 0, 10, 1)
-					require.NoError(t, err)
-					require.Len(t, failed, 1)
-					assert.EqualValues(t, 102, failed[0].CreatedAt)
-					status, err = model.GetUserAccessTokenStatus(1)
-					require.NoError(t, err)
-					require.NotNil(t, status.LastUsedAt)
-					assert.EqualValues(t, 103, *status.LastUsedAt)
-					_, err = model.RevokeUserAccessToken(1)
-					require.NoError(t, err)
-					_, err = model.RevokeUserAccessToken(1)
-					require.NoError(t, err)
-					require.NoError(t, model.MigrateAuditLogs())
-					_, total, err = model.GetAuditLogs(model.AuditLogFilter{UserId: 1}, 0, 10, 1)
-					require.NoError(t, err)
-					assert.EqualValues(t, 3, total)
-					verifyAuditRoleStorage(t)
-					verifyAuditJSONStorage(t)
-					require.NoError(t, authz.Init(model.DB))
-					assert.False(t, authz.Can(1, common.RoleAdminUser, authz.AuditRead))
-					require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
-						return authz.SetUserPermissionsInTx(tx, 1, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: true}})
-					}))
-					require.NoError(t, authz.ReloadPolicy())
-					assert.True(t, authz.Can(1, common.RoleAdminUser, authz.AuditRead))
-					require.NoError(t, authz.Init(model.DB))
-					require.NoError(t, authz.Init(model.DB))
-					assert.True(t, authz.Can(1, common.RoleAdminUser, authz.AuditRead))
-					require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
-						return authz.SetUserPermissionsInTx(tx, 1, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: false}})
-					}))
-					require.NoError(t, authz.ReloadPolicy())
-					assert.False(t, authz.Can(1, common.RoleAdminUser, authz.AuditRead))
-					assert.True(t, authz.Can(1, common.RoleRootUser, authz.AuditRead))
-				})
+			for range 2 {
+				require.NoError(t, model.InitDB())
+				require.NoError(t, model.InitLogDB())
 			}
+			if !upgrade {
+				require.NoError(t, db.Create(&model.User{Username: "fresh-owner", Password: "placeholder", AffCode: "fresh-aff"}).Error)
+			}
+			status, err := model.GetUserAccessTokenStatus(1)
+			require.NoError(t, err)
+			assert.Equal(t, upgrade, status.Exists)
+			assert.Nil(t, status.CreatedAt)
+			if upgrade {
+				assert.Equal(t, model.AccessTokenFingerprint("released-token"), status.TokenRef)
+				legacyUser, validationErr := model.ValidateAccessToken("released-token")
+				require.NoError(t, validationErr)
+				require.NotNil(t, legacyUser)
+				var user model.User
+				require.NoError(t, db.First(&user, 1).Error)
+				assert.Equal(t, 1234, user.Quota)
+				var old model.Log
+				require.NoError(t, db.First(&old).Error)
+				assert.Equal(t, "historical login", old.Content)
+			}
+			require.NoError(t, db.Model(&model.User{}).Where("id = ?", 1).Update("access_token", "matrix-token").Error)
+			require.Error(t, db.Create(&model.User{Username: "duplicate", Password: "placeholder", AffCode: "duplicate-aff", AccessToken: common.GetPointer("matrix-token")}).Error, "PAT uniqueness must survive upgrade")
+			scoped, scopedToken := createScopedAccessToken(t, 1, 0, "profile:read")
+			found, err := model.FindUserAccessTokenByHash(model.AccessTokenFingerprint(scoped))
+			require.NoError(t, err)
+			assert.Equal(t, scopedToken.Id, found.Id)
+			assert.Equal(t, []string{"profile:read"}, found.GetScopes())
+			require.Error(t, db.Create(&model.UserAccessToken{UserId: 1, Name: "duplicate", TokenHash: scopedToken.TokenHash, TokenHint: "dupe", Scopes: found.Scopes}).Error, "token hashes stay unique")
+			model.RecordAuditLog(nil, model.AuditLog{ActorRole: common.RoleAdminUser, UserId: 1, Username: "owner", CreatedAt: 99, Category: model.AuditCategoryAccessToken, TokenRef: scopedToken.TokenHash, Ip: "192.0.2.1", Success: true})
+			byRef, _, err := model.GetAuditLogs(model.AuditLogFilter{UserId: 1, TokenRef: scopedToken.TokenHash}, 0, 10, common.RoleCommonUser)
+			require.NoError(t, err)
+			require.Len(t, byRef, 1, "audit rows of a scoped token are found by its token_ref")
+			_, err = model.DeleteUserAccessToken(1, scopedToken.Id)
+			require.NoError(t, err)
+			require.NoError(t, model.LOG_DB.Where("token_ref = ?", scopedToken.TokenHash).Delete(&model.AuditLog{}).Error)
+			for _, timestamp := range []int64{101, 102, 103} {
+				model.RecordAuditLog(nil, model.AuditLog{ActorRole: common.RoleAdminUser, UserId: 1, Username: "owner", CreatedAt: timestamp, Category: model.AuditCategoryAccessToken, TokenRef: model.AccessTokenFingerprint("matrix-token"), Ip: "192.0.2.1", Success: timestamp != 102})
+			}
+			first, total, err := model.GetAuditLogs(model.AuditLogFilter{UserId: 1}, 0, 2, common.RoleCommonUser)
+			require.NoError(t, err)
+			assert.EqualValues(t, 3, total)
+			require.Len(t, first, 2)
+			assert.EqualValues(t, 103, first[0].CreatedAt)
+			second, _, err := model.GetAuditLogs(model.AuditLogFilter{UserId: 1}, 2, 2, common.RoleCommonUser)
+			require.NoError(t, err)
+			require.Len(t, second, 1)
+			assert.EqualValues(t, 101, second[0].CreatedAt)
+			failure := false
+			failed, _, err := model.GetAuditLogs(model.AuditLogFilter{UserId: 1, Success: &failure}, 0, 10, 1)
+			require.NoError(t, err)
+			require.Len(t, failed, 1)
+			assert.EqualValues(t, 102, failed[0].CreatedAt)
+			status, err = model.GetUserAccessTokenStatus(1)
+			require.NoError(t, err)
+			require.NotNil(t, status.LastUsedAt)
+			assert.EqualValues(t, 103, *status.LastUsedAt)
+			_, err = model.RevokeUserAccessToken(1)
+			require.NoError(t, err)
+			_, err = model.RevokeUserAccessToken(1)
+			require.NoError(t, err)
+			require.NoError(t, model.MigrateAuditLogs())
+			_, total, err = model.GetAuditLogs(model.AuditLogFilter{UserId: 1}, 0, 10, 1)
+			require.NoError(t, err)
+			assert.EqualValues(t, 3, total)
+			verifyAuditRoleStorage(t)
+			verifyAuditJSONStorage(t)
+			require.NoError(t, authz.Init(model.DB))
+			assert.False(t, authz.Can(1, common.RoleAdminUser, authz.AuditRead))
+			require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
+				return authz.SetUserPermissionsInTx(tx, 1, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: true}})
+			}))
+			require.NoError(t, authz.ReloadPolicy())
+			assert.True(t, authz.Can(1, common.RoleAdminUser, authz.AuditRead))
+			require.NoError(t, authz.Init(model.DB))
+			require.NoError(t, authz.Init(model.DB))
+			assert.True(t, authz.Can(1, common.RoleAdminUser, authz.AuditRead))
+			require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
+				return authz.SetUserPermissionsInTx(tx, 1, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: false}})
+			}))
+			require.NoError(t, authz.ReloadPolicy())
+			assert.False(t, authz.Can(1, common.RoleAdminUser, authz.AuditRead))
+			assert.True(t, authz.Can(1, common.RoleRootUser, authz.AuditRead))
 		})
 	}
 }
 
 func TestIndependentAuditLogStores(t *testing.T) {
-	_, _ = setupAccessTokenAudit(t)
+	user, _ := setupAccessTokenAudit(t)
 	previousMaster := common.IsMasterNode
 	common.IsMasterNode = true
 	t.Cleanup(func() { common.IsMasterNode = previousMaster })
-	for _, tc := range []struct{ kind, env string }{{"mysql", "AUDIT_MYSQL_DSN"}, {"postgres", "AUDIT_POSTGRES_DSN"}, {"clickhouse", "AUDIT_CLICKHOUSE_DSN"}} {
+	for _, kind := range []string{"postgres", "clickhouse"} {
 		for _, upgrade := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/upgrade=%v", tc.kind, upgrade), func(t *testing.T) {
-				dsn := os.Getenv(tc.env)
-				if dsn == "" {
-					t.Skip(tc.env + " is not configured")
+			t.Run(fmt.Sprintf("%s/upgrade=%v", kind, upgrade), func(t *testing.T) {
+				var logDB *gorm.DB
+				var isolatedDSN string
+				if kind == "clickhouse" {
+					dsn := os.Getenv("AUDIT_CLICKHOUSE_DSN")
+					if dsn == "" {
+						t.Skip("AUDIT_CLICKHOUSE_DSN is not configured")
+					}
+					logDB, isolatedDSN = newClickHouseTestDatabase(t, dsn)
+				} else {
+					logDB, isolatedDSN = openTestSchema(t)
 				}
-				logDB, isolatedDSN := newAuditTestDatabase(t, tc.kind, dsn)
+				keepPackageDatabases(t)
 				if upgrade {
-					if tc.kind == "clickhouse" {
+					if kind == "clickhouse" {
 						require.NoError(t, logDB.Exec(releasedClickHouseLogSchema).Error)
 					} else {
 						require.NoError(t, logDB.AutoMigrate(&releasedAuditLog{}))
@@ -1195,21 +1123,21 @@ func TestIndependentAuditLogStores(t *testing.T) {
 					require.NoError(t, model.LOG_DB.Where("request_id = ?", "legacy-split-request").Take(&old).Error)
 					assert.Equal(t, "retained historical login", old.Content)
 				}
-				require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", 1).Update("access_token", "independent-pat").Error)
-				model.RecordAuditLog(nil, model.AuditLog{ActorRole: common.RoleAdminUser, UserId: 1, Username: "independent", Category: model.AuditCategoryAccessToken, TokenRef: model.AccessTokenFingerprint("independent-pat"), Ip: "192.0.2.8", Success: false, Status: 403})
-				entries, total, err := model.GetAuditLogs(model.AuditLogFilter{UserId: 1}, 0, 20, common.RoleAdminUser)
+				require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", user.Id).Update("access_token", "independent-pat").Error)
+				model.RecordAuditLog(nil, model.AuditLog{ActorRole: common.RoleAdminUser, UserId: user.Id, Username: "independent", Category: model.AuditCategoryAccessToken, TokenRef: model.AccessTokenFingerprint("independent-pat"), Ip: "192.0.2.8", Success: false, Status: 403})
+				entries, total, err := model.GetAuditLogs(model.AuditLogFilter{UserId: user.Id}, 0, 20, common.RoleAdminUser)
 				require.NoError(t, err)
 				assert.EqualValues(t, 1, total)
 				require.Len(t, entries, 1)
 				assert.False(t, entries[0].Success)
-				status, err := model.GetUserAccessTokenStatus(1)
+				status, err := model.GetUserAccessTokenStatus(user.Id)
 				require.NoError(t, err)
 				require.NotNil(t, status.LastUsedAt)
 				assert.Equal(t, "192.0.2.8", status.LastUsedIp)
-				model.RecordLog(1, model.LogTypeTopup, common.NewMessage("independent business"))
+				model.RecordLog(user.Id, model.LogTypeTopup, common.NewMessage("independent business"))
 				_, err = model.DeleteOldLogBatch(context.Background(), time.Now().Unix()+1, 100)
 				require.NoError(t, err)
-				_, total, err = model.GetAuditLogs(model.AuditLogFilter{UserId: 1}, 0, 20, 1)
+				_, total, err = model.GetAuditLogs(model.AuditLogFilter{UserId: user.Id}, 0, 20, 1)
 				require.NoError(t, err)
 				assert.EqualValues(t, 1, total)
 				var mainCount int64
@@ -1217,7 +1145,7 @@ func TestIndependentAuditLogStores(t *testing.T) {
 				assert.Zero(t, mainCount)
 				verifyAuditRoleStorage(t)
 				verifyAuditJSONStorage(t)
-				if tc.kind == "clickhouse" {
+				if kind == "clickhouse" {
 					var create string
 					require.NoError(t, model.LOG_DB.Raw("SHOW CREATE TABLE audit_logs").Scan(&create).Error)
 					assert.NotContains(t, strings.ToUpper(create), "TTL")

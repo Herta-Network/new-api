@@ -147,20 +147,17 @@ New API は、アプリケーション、Agent、チーム向けのセルフホ�
 
 ## クイックスタート
 
-### Docker でローカル実行
+### Docker Compose でローカル実行
 
-SQLite を使う単一インスタンスを、ローカルホスト限定で起動します。
+New API には PostgreSQL 18 以降が必要です。リポジトリの [Compose 設定](./docker-compose.yml) で New API、PostgreSQL 18、Redis を起動します。
 
 ```bash
-mkdir -p data
-docker run --name new-api -d --restart unless-stopped \
-  -p 127.0.0.1:3000:3000 \
-  -e TZ=Asia/Shanghai \
-  -v "$(pwd)/data:/data" \
-  calciumion/new-api:latest
+git clone https://github.com/QuantumNous/new-api.git
+cd new-api
+docker compose up -d
 ```
 
-[http://localhost:3000](http://localhost:3000) を開き、初期設定ウィザードで管理者アカウントを作成します。SQLite データベースはマウントした `data` ディレクトリに保存され、コンテナを置き換えても残ります。
+[http://localhost:3000](http://localhost:3000) を開き、初期設定ウィザードで管理者アカウントを作成します。PostgreSQL のデータは `pg_data` ボリュームに保存され、コンテナを置き換えても残ります。Compose ファイルはサンプルパスワードを使い、ポート 3000 をすべてのインターフェースで公開します。外部に公開する前に[デプロイと運用](#deployment)に従って設定してください。
 
 ### 最初のリクエスト
 
@@ -191,7 +188,7 @@ curl --fail-with-body http://localhost:3000/v1/responses \
 
 ### Docker Compose
 
-リポジトリの [Compose 設定](./docker-compose.yml) は、既定で **New API + PostgreSQL + Redis** を起動します。MySQL と独立した ClickHouse ログデータベースの設定例も含まれます。
+リポジトリの [Compose 設定](./docker-compose.yml) は、既定で **New API + PostgreSQL 18 + Redis** を起動します。独立した ClickHouse ログデータベースの設定例も含まれます。
 
 ```bash
 git clone https://github.com/QuantumNous/new-api.git
@@ -205,19 +202,23 @@ docker compose up -d
 docker compose logs -f new-api
 ```
 
+以前の Compose ファイルは `postgres:15` を使い、データを `/var/lib/postgresql/data` に保存していました。PostgreSQL 18 はこのデータを開けません。アップグレード時は旧イメージで `pg_dump` を実行してバックアップし、空のボリュームで PostgreSQL 18 を起動してから復元してください。
+
 ### ストレージと設定
 
 | コンポーネント | 選択肢 |
 | --- | --- |
-| メインデータベース | SQLite、MySQL ≥ 5.7.8、PostgreSQL ≥ 9.6 |
-| 独立したログデータベース | `LOG_SQL_DSN` で設定。ClickHouse にも対応 |
+| メインデータベース | PostgreSQL 18 以降（必須） |
+| 独立したログデータベース | 任意。`LOG_SQL_DSN` で PostgreSQL または ClickHouse を設定 |
 | キャッシュ | 任意の Redis とメモリキャッシュ。ノード間でレート制限を共有する場合は Redis を共有 |
 | コンテナのプラットフォーム | Linux amd64 / arm64 |
 
+SQLite と MySQL には対応しておらず、それらからの移行ツールもありません。
+
 | 環境変数 | 用途 |
 | --- | --- |
-| `SQL_DSN` | メインデータベースへの接続。未設定なら SQLite |
-| `LOG_SQL_DSN` | 任意の独立ログデータベースへの接続 |
+| `SQL_DSN` | 必須のメインデータベース接続。例：`postgresql://user:password@host:5432/new-api`。未設定ではサービスが起動しません |
+| `LOG_SQL_DSN` | 任意の独立ログデータベース（PostgreSQL または ClickHouse）。未設定ならログはメインデータベースに保存 |
 | `REDIS_CONN_STRING` | Redis 接続文字列 |
 | `SESSION_SECRET` | 永続的な認証用シークレット。全ノードで同じ値を使用 |
 | `CRYPTO_SECRET` | 既定は `SESSION_SECRET`。Redis を共有するノードは同じ実効値を使用 |
@@ -245,7 +246,8 @@ cd web
 bun install --frozen-lockfile
 bun run build
 cd ..
-go run .
+# SQL_DSN には PostgreSQL 18 以降のデータベースを指定
+SQL_DSN=postgresql://user:password@localhost:5432/new-api go run .
 ```
 
 別のターミナルでフロントエンド開発サーバーを起動します。
@@ -265,9 +267,8 @@ bun run dev -- --port 5173
 | [relaykit/](./relaykit/README.md) | プロトコル DTO と変換を提供する、独立してビルド可能な Go モジュール |
 | [plugins/tasks/](./plugins/tasks/) | JavaScript タスクプラグイン。作成方法とホストの境界は [Task Plugin API v1](./docs/plugin-api/v1.md) を参照 |
 | `web/` | Web 管理画面。[フロントエンドの規約](./web/AGENTS.md)を参照 |
-| [electron/](./electron/README.md) | デスクトップアプリのラッパーとパッケージング |
 
-貢献前に [AGENTS.md](./AGENTS.md) を確認してください。変更に応じて、Go モジュールは `make test`、フロントエンドは `web/` で `bun run typecheck`、`bun run lint`、`bun run test`、`bun run build` を実行します。RelayKit を変更した場合は、`relaykit/` で `GOWORK=off go build ./...` も実行してください。
+貢献前に [AGENTS.md](./AGENTS.md) を確認してください。変更に応じて、Go モジュールは `make test`（データベーステストには `TEST_POSTGRES_DSN` が必要。`make test-db` がローカルの PostgreSQL 18 を起動して値を表示）、フロントエンドは `web/` で `bun run typecheck`、`bun run lint`、`bun run test`、`bun run build` を実行します。RelayKit を変更した場合は、`relaykit/` で `GOWORK=off go build ./...` も実行してください。
 
 <a id="documentation"></a>
 

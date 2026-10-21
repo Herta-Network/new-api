@@ -595,8 +595,7 @@ func TestShouldSendUpstreamModelUpdateNotification(t *testing.T) {
 }
 
 func TestDetectAllChannelUpstreamModelUpdatesRejectsExistingActiveTask(t *testing.T) {
-	db := setupModelListControllerTestDB(t)
-	require.NoError(t, db.AutoMigrate(&model.SystemTask{}, &model.SystemTaskLock{}))
+	setupModelListControllerTestDB(t)
 
 	existing, err := model.CreateSystemTask(model.SystemTaskTypeModelUpdate, nil, nil)
 	require.NoError(t, err)
