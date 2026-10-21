@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
@@ -32,53 +33,17 @@ import (
 func setupManageUserTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	require.NoError(t, i18n.Init())
-	previousDB, previousLogDB := model.DB, model.LOG_DB
 	previousRedisEnabled, previousSecret := common.RedisEnabled, common.SessionSecret
-	previousMainDatabaseType, previousLogDatabaseType := common.MainDatabaseType(), common.LogDatabaseType()
-	dialect := os.Getenv("TEST_MANAGE_USER_DIALECT")
-	if dialect == "" {
-		dialect = "sqlite"
-	}
-	databaseTypes := map[string]common.DatabaseType{
-		"sqlite": common.DatabaseTypeSQLite, "mysql": common.DatabaseTypeMySQL, "postgres": common.DatabaseTypePostgreSQL,
-	}
-	require.Contains(t, databaseTypes, dialect)
-	dsn := os.Getenv("TEST_" + strings.ToUpper(dialect) + "_DSN")
-	db, _ := newAuditTestDatabase(t, dialect, dsn)
-	logDB := db
+	pgtest.Reset(t, model.DB)
 	if os.Getenv("TEST_MANAGE_USER_SEPARATE_LOG_DB") == "1" {
-		logDB, _ = newAuditTestDatabase(t, dialect, dsn)
+		useSeparateLogDatabase(t)
 	}
-	model.DB, model.LOG_DB = db, logDB
 	common.RedisEnabled = false
 	common.SessionSecret = "manage-user-test-secret"
-	common.SetDatabaseTypes(databaseTypes[dialect], databaseTypes[dialect])
-
 	t.Cleanup(func() {
-		model.DB, model.LOG_DB = previousDB, previousLogDB
 		common.RedisEnabled, common.SessionSecret = previousRedisEnabled, previousSecret
-		common.SetDatabaseTypes(previousMainDatabaseType, previousLogDatabaseType)
-		sqlDB, err := db.DB()
-		if err == nil {
-			_ = sqlDB.Close()
-		}
-		if logDB != db {
-			sqlLogDB, err := logDB.DB()
-			if err == nil {
-				_ = sqlLogDB.Close()
-			}
-		}
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.AuthFlow{}, &model.TwoFA{}, &model.PasskeyCredential{}, &model.UserAccessToken{}))
-	require.NoError(t, logDB.AutoMigrate(&model.Log{}, &model.AuditLog{}))
-	versionQuery := "SELECT version()"
-	if dialect == "sqlite" {
-		versionQuery = "SELECT sqlite_version()"
-	}
-	var version string
-	require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
-	t.Logf("database: %s %s, separate log database: %v", dialect, version, logDB != db)
-	return db
+	return model.DB
 }
 
 func performManageUserRequest(t *testing.T, body string) *httptest.ResponseRecorder {
@@ -181,6 +146,7 @@ func TestManageUserDemoteAdvancesAuthVersionAndRevokesSessionsOnce(t *testing.T)
 			sessionUpdateCount++
 		}
 	}))
+	t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove("test:count_demote_session_updates")) })
 
 	identity, proof := manageUserProof(t, db, service.VerificationOperation{Scope: service.VerificationScopeAdminUserManage, Context: []byte(fmt.Sprintf(`{"user_id":%d,"action":"demote"}`, user.Id))})
 	recorder := performVerifiedManageUserRequest(t, fmt.Sprintf(`{"id":%d,"action":"demote"}`, user.Id), identity, proof)
@@ -339,6 +305,7 @@ func TestManageUserQuotaFailuresDoNotRecordTopup(t *testing.T) {
 						tx.AddError(errors.New("quota update unavailable"))
 					}
 				}))
+				t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove("test:fail_quota_update")) })
 			}
 			recorder := performManageUserRequest(t, fmt.Sprintf(`{"id":%d,"action":"add_quota","mode":%q,"value":%d}`, user.Id, tc.mode, tc.value))
 			assert.Contains(t, recorder.Body.String(), `"success":false`)
@@ -380,6 +347,7 @@ func TestManageUserQuotaLogFailureKeepsSuccessfulAdjustment(t *testing.T) {
 					tx.AddError(errors.New("quota log unavailable"))
 				}
 			}))
+			t.Cleanup(func() { require.NoError(t, model.LOG_DB.Callback().Create().Remove("test:fail_quota_log")) })
 			recorder := performManageUserRequest(t, fmt.Sprintf(`{"id":%d,"action":"add_quota","mode":"add","value":500}`, user.Id))
 			assert.Contains(t, recorder.Body.String(), `"success":true`)
 			require.NoError(t, db.First(&user, user.Id).Error)
@@ -551,12 +519,7 @@ func TestManageUserQuotaConcurrentSnapshots(t *testing.T) {
 	var committed []model.UserQuotaAdjustment
 	for range 2 {
 		result := <-results
-		if result.err != nil {
-			require.True(t, common.UsingMainDatabase(common.DatabaseTypeSQLite), "row-locking databases must serialize both adjustments: %v", result.err)
-			assert.Contains(t, strings.ToLower(result.err.Error()), "locked")
-			assert.Nil(t, result.adjustment)
-			continue
-		}
+		require.NoError(t, result.err, "row locking must serialize both adjustments")
 		require.NotNil(t, result.adjustment)
 		assert.Equal(t, result.value, result.adjustment.After-result.adjustment.Before)
 		committed = append(committed, *result.adjustment)
@@ -624,6 +587,7 @@ func TestManageUserQuotaCacheUsesCommittedIntegerDifference(t *testing.T) {
 						tx.AddError(errors.New("quota rollback"))
 					}
 				}))
+				t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove("test:cache_quota_rollback")) })
 			}
 			recorder := performManageUserRequest(t, fmt.Sprintf(`{"id":%d,"action":"add_quota","mode":%q,"value":%d}`, user.Id, tc.mode, tc.value))
 			assert.Contains(t, recorder.Body.String(), fmt.Sprintf(`"success":%t`, !tc.failUpdate))

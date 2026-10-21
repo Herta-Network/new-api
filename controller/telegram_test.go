@@ -60,7 +60,6 @@ type telegramOAuthFixture struct {
 func setupTelegramOAuthTest(t *testing.T) *telegramOAuthFixture {
 	t.Helper()
 	user, identity := setupSecurityEnrollmentTest(t)
-	require.NoError(t, model.DB.AutoMigrate(&model.ExternalIdentityClaim{}, &model.Option{}))
 	previousEnabled := common.TelegramOAuthEnabled
 	previousSettings := *system_setting.GetTelegramSettings()
 	previousAddress := system_setting.ServerAddress

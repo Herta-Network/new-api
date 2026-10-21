@@ -41,7 +41,6 @@ func stringInt(value int) string {
 func setupTokenAutoGroupsControllerTest(t *testing.T) *model.User {
 	t.Helper()
 	db := setupTokenControllerTestDB(t)
-	require.NoError(t, db.AutoMigrate(&model.User{}))
 	user := &model.User{
 		Id:       101,
 		Username: "token-auto-user",

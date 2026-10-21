@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -25,15 +26,11 @@ import (
 
 func setupGenericTaskTest(t *testing.T) *model.Task {
 	t.Helper()
-	originalDB := model.DB
 	previousRedisEnabled := common.RedisEnabled
 	common.RedisEnabled = false
-	// The dialect harness lets the same fixture run against MySQL and
-	// PostgreSQL when TEST_TASK_DB_DIALECT selects them; SQLite stays the default.
-	database, _ := openTaskDialectDatabase(t, &model.Task{}, &model.Channel{}, &model.User{})
-	model.DB = database
+	pgtest.Reset(t, model.DB)
+	database := model.DB
 	t.Cleanup(func() {
-		model.DB = originalDB
 		common.RedisEnabled = previousRedisEnabled
 	})
 
