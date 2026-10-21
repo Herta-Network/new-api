@@ -563,7 +563,8 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'payment.order_reconcile': 'Reconciled a payment order with its gateway',
   'payment.order_close': 'Closed a payment order',
   'payment.order_fulfil': 'Fulfilled a paid payment order',
-  'payment.order_complete': 'Marked payment order {{order_no}} as paid: {{note}}',
+  'payment.order_complete':
+    'Marked payment order {{order_no}} as paid: {{note}}',
   'payment.unmatched_resolve': 'Resolved unmatched payment {{id}}: {{note}}',
   'payment.method_create': 'Created payment method {{name}} ({{platform}})',
   'payment.method_update': 'Updated payment method {{name}} ({{platform}})',
