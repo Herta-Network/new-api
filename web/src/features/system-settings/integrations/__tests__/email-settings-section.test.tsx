@@ -318,6 +318,57 @@ describe('email delivery settings', () => {
     }
   )
 
+  it('saves an SMTP From Address that includes a display name', async () => {
+    const request = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true } })
+    const user = renderEmail()
+    const from = screen.getByRole('textbox', { name: 'From Address' })
+    await user.clear(from)
+    await user.type(from, '通知中心 <noreply@example.com>')
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1))
+    expect(request).toHaveBeenCalledWith('/api/option/', {
+      key: 'SMTPFrom',
+      value: '通知中心 <noreply@example.com>',
+    })
+  })
+
+  it.each(['New API noreply@example.com', 'New API <noreply>'])(
+    'rejects %s as an SMTP From Address without saving',
+    async (value) => {
+      const request = vi
+        .spyOn(api, 'put')
+        .mockResolvedValue({ data: { success: true } })
+      const user = renderEmail()
+      const from = screen.getByRole('textbox', { name: 'From Address' })
+      await user.clear(from)
+      await user.type(from, value)
+      await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+      expect(
+        await screen.findByText(
+          'Enter an email address or Name <email address>, or leave blank'
+        )
+      ).toBeVisible()
+      expect(from).toHaveAttribute('aria-invalid', 'true')
+      expect(request).not.toHaveBeenCalled()
+    }
+  )
+
+  it('rejects line breaks in an SMTP From Address', () => {
+    const parsed = createEmailSchema((key) => key).safeParse({
+      ...defaults,
+      ResendSenderName: '',
+      SMTPFrom: 'New API\r\nBcc: other@example.com <noreply@example.com>',
+    })
+    expect(parsed.success).toBe(false)
+    if (!parsed.success) {
+      expect(parsed.error.issues).toEqual([
+        expect.objectContaining({ path: ['SMTPFrom'] }),
+      ])
+    }
+  })
+
   it('validates provider values on the form boundary', () => {
     expect(
       createEmailSchema((key) => key).safeParse({
