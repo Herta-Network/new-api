@@ -25,6 +25,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -291,6 +292,23 @@ func (g *stripeGateway) Reconcile(ctx context.Context, req CloseRequest) (Reconc
 	return Reconciliation{}, fmt.Errorf("cancel Stripe payment intent %s failed", o.TradeNo)
 }
 
+// QueryPayment reports the claimed intent when it succeeded with exactly the
+// payment expectation; unlike Reconcile it never cancels the intent.
+func (g *stripeGateway) QueryPayment(ctx context.Context, o *Order) (string, error) {
+	if o.TradeNo == "" {
+		return "", nil
+	}
+	charge := Charge{Amount: o.PaymentAmount, Currency: o.PaymentCurrency}
+	intent, err := g.matchingIntent(ctx, o.OrderNo, charge, o.TradeNo)
+	if err != nil {
+		return "", err
+	}
+	if intent.Status != stripe.PaymentIntentStatusSucceeded || intent.AmountReceived != toStripeAmount(charge.Amount, charge.Currency) {
+		return "", nil
+	}
+	return intent.ID, nil
+}
+
 // stripeVerdict maps a terminal intent status to the close verdict: a
 // succeeded intent settles the order, a canceled one lets it close. Any
 // other status is not final.
@@ -379,6 +397,10 @@ func (g *stripeGateway) ConfirmPayment(ctx context.Context, o *Order, notice *No
 	return nil
 }
 
+// ErrStripeWebhookMissing reports a webhook endpoint Stripe does not know,
+// such as one deleted in the Stripe dashboard.
+var ErrStripeWebhookMissing = errors.New("the Stripe webhook endpoint does not exist")
+
 // StripeWebhookEndpoint is a registered webhook endpoint. Secret, the
 // signing secret, is only returned when the endpoint is created.
 type StripeWebhookEndpoint struct {
@@ -430,6 +452,10 @@ func (w *StripeWebhooks) UpdateURL(ctx context.Context, id, url string) error {
 	}
 	params.Context = ctx
 	if _, err := w.api.WebhookEndpoints.Update(id, params); err != nil {
+		var stripeErr *stripe.Error
+		if errors.As(err, &stripeErr) && stripeErr.HTTPStatusCode == http.StatusNotFound {
+			return fmt.Errorf("%w: %w", ErrStripeWebhookMissing, err)
+		}
 		return fmt.Errorf("update Stripe webhook endpoint: %w", err)
 	}
 	return nil

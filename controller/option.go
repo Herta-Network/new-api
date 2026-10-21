@@ -108,6 +108,10 @@ func GetOptions(c *gin.Context) {
 	options = append(options, &model.Option{
 		Key: "ResendKeyConfigured", Value: strconv.FormatBool(strings.TrimSpace(common.OptionMap["ResendApiKey"]) != ""),
 	})
+	options = append(options, &model.Option{
+		Key:   "PaymentExchangeRateKeyConfigured",
+		Value: strconv.FormatBool(strings.TrimSpace(operation_setting.GetPaymentSetting().ExchangeRateAPIKey) != ""),
+	})
 	common.OptionMapRWMutex.Unlock()
 	// Display the same effective expressions used by pricing and settlement,
 	// including built-in defaults absent from persisted administrator options.
@@ -210,6 +214,10 @@ func UpdateOption(c *gin.Context) {
 			common.ApiErrorT(c, "Compliance confirmation fields cannot be changed through the general settings API")
 			return
 		}
+	}
+	if err := operation_setting.ValidatePaymentOption(option.Key, option.Value.(string)); err != nil {
+		common.ApiError(c, err)
+		return
 	}
 	if option.Key == "TaskPublicAddress" && option.Value.(string) != "" {
 		if err := service.ValidateTaskArtifactBaseURL(option.Value.(string)); err != nil {

@@ -208,6 +208,11 @@ type Gateway interface {
 	// Reconcile consults the provider before a pending order closes locally.
 	// An error wrapping ErrUnconfirmed keeps the order pending.
 	Reconcile(ctx context.Context, req CloseRequest) (Reconciliation, error)
+	// QueryPayment asks the provider whether the order's checkout was paid,
+	// without changing anything there: it returns the trade number of a
+	// payment that matches the order's payment expectation, or "" when the
+	// provider reports none (yet).
+	QueryPayment(ctx context.Context, o *Order) (string, error)
 	// ParseCallback authenticates a callback and extracts what it reports.
 	ParseCallback(ctx context.Context, n Notification) (*Notice, error)
 	// CheckOrder binds an authenticated notice to the order it names.

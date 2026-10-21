@@ -1,5 +1,4 @@
 // Partly ported from perfect-panel/server at commit 944dc363cc6a:
-//   - internal/module/billing/internal/billingtest/stripe.go (fakeStripe)
 //   - the EPay signature vector of internal/payment/epay/epay_test.go
 //   - cases of internal/gateway/gateway_test.go, internal/payment/money_test.go,
 //     internal/payment/epay/epay_security_test.go,
@@ -10,9 +9,8 @@
 // The original is licensed under GPL-3.0 and is redistributed here under the
 // AGPL-3.0 of new-api, as GPL-3.0 section 13 permits.
 //
-// Changed in new-api: one test file with testify; the fake Stripe API
-// answers automatic-payment-method intents, replays idempotent creations
-// and updates webhook endpoints, and refuses customer calls.
+// Changed in new-api: one test file with testify; the fake Stripe API it
+// uses lives in gatewaytest.
 
 package gateway
 
@@ -27,11 +25,11 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/service/payment/gateway/gatewaytest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stripe/stripe-go/v81"
@@ -802,195 +800,11 @@ func TestCryptomusConfirmPayment(t *testing.T) {
 
 // ---- Stripe ----
 
-// fakeStripe is an in-process Stripe API answering the PaymentIntent and
-// webhook endpoint calls the gateway makes. Any other call, such as
-// creating a customer, fails the test.
-type fakeStripe struct {
-	t        testing.TB
-	backends *stripe.Backends
-
-	mu      sync.Mutex
-	intents map[string]map[string]any
-	// replays holds the creation answer of each idempotency key, replayed
-	// as Stripe does.
-	replays  map[string]map[string]any
-	created  []url.Values
-	keys     []string
-	canceled []string
-	webhooks map[string]map[string]any
-}
-
-func newFakeStripe(t testing.TB) *fakeStripe {
-	t.Helper()
-	fake := &fakeStripe{t: t, intents: map[string]map[string]any{}, replays: map[string]map[string]any{}, webhooks: map[string]map[string]any{}}
-	server := httptest.NewServer(fake)
-	t.Cleanup(server.Close)
-	fake.backends = stripe.NewBackendsWithConfig(&stripe.BackendConfig{
-		URL:               stripe.String(server.URL),
-		HTTPClient:        server.Client(),
-		MaxNetworkRetries: stripe.Int64(0),
-		LeveledLogger:     &stripe.LeveledLogger{Level: stripe.LevelNull},
-	})
-	return fake
-}
-
-func (f *fakeStripe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		f.t.Errorf("parse form: %v", err)
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	path := strings.TrimPrefix(r.URL.Path, "/v1/")
-	switch {
-	case r.Method == http.MethodPost && path == "payment_intents":
-		key := r.Header.Get("Idempotency-Key")
-		if replay, ok := f.replays[key]; ok {
-			w.Header().Set("Idempotent-Replayed", "true")
-			f.write(w, replay)
-			return
-		}
-		f.created = append(f.created, r.PostForm)
-		f.keys = append(f.keys, key)
-		id := fmt.Sprintf("pi_%d", len(f.created))
-		var amount int64
-		_, _ = fmt.Sscan(r.PostForm.Get("amount"), &amount)
-		intent := fakeIntent(id, amount, r.PostForm.Get("currency"), "requires_payment_method",
-			r.PostForm.Get("metadata[newapi_order_no]"), r.PostForm.Get("metadata[newapi_method_id]"))
-		f.intents[id] = intent
-		f.replays[key] = maps.Clone(intent)
-		f.write(w, intent)
-	case r.Method == http.MethodPost && strings.HasPrefix(path, "payment_intents/") && strings.HasSuffix(path, "/cancel"):
-		id := strings.TrimSuffix(strings.TrimPrefix(path, "payment_intents/"), "/cancel")
-		// Like Stripe, a succeeded, processing or canceled intent cannot be
-		// canceled.
-		intent, ok := f.intents[id]
-		if !ok || intent["status"] == "succeeded" || intent["status"] == "processing" || intent["status"] == "canceled" {
-			w.WriteHeader(http.StatusBadRequest)
-			f.write(w, map[string]any{"error": map[string]any{"type": "invalid_request_error", "code": "payment_intent_unexpected_state"}})
-			return
-		}
-		intent["status"] = "canceled"
-		f.canceled = append(f.canceled, id)
-		f.write(w, intent)
-	case r.Method == http.MethodGet && strings.HasPrefix(path, "payment_intents/"):
-		intent, ok := f.intents[strings.TrimPrefix(path, "payment_intents/")]
-		if !ok {
-			w.WriteHeader(http.StatusNotFound)
-			f.write(w, map[string]any{"error": map[string]any{"type": "invalid_request_error", "message": "No such payment_intent"}})
-			return
-		}
-		f.write(w, intent)
-	case r.Method == http.MethodPost && path == "webhook_endpoints":
-		id := fmt.Sprintf("we_%d", len(f.webhooks)+1)
-		endpoint := map[string]any{
-			"id": id, "object": "webhook_endpoint", "url": r.PostForm.Get("url"), "api_version": r.PostForm.Get("api_version"),
-			"enabled_events": formList(r.PostForm, "enabled_events"), "status": "enabled",
-		}
-		f.webhooks[id] = endpoint
-		f.write(w, mergeMaps(endpoint, map[string]any{"secret": "whsec_" + id}))
-	case r.Method == http.MethodPost && strings.HasPrefix(path, "webhook_endpoints/"):
-		endpoint, ok := f.webhooks[strings.TrimPrefix(path, "webhook_endpoints/")]
-		if !ok {
-			w.WriteHeader(http.StatusNotFound)
-			f.write(w, map[string]any{"error": map[string]any{"type": "invalid_request_error"}})
-			return
-		}
-		endpoint["url"] = r.PostForm.Get("url")
-		endpoint["enabled_events"] = formList(r.PostForm, "enabled_events")
-		if r.PostForm.Get("disabled") == "false" {
-			endpoint["status"] = "enabled"
-		}
-		f.write(w, endpoint)
-	case r.Method == http.MethodDelete && strings.HasPrefix(path, "webhook_endpoints/"):
-		id := strings.TrimPrefix(path, "webhook_endpoints/")
-		delete(f.webhooks, id)
-		f.write(w, map[string]any{"id": id, "object": "webhook_endpoint", "deleted": true})
-	default:
-		f.t.Errorf("unexpected Stripe request %s %s", r.Method, r.URL.Path)
-		w.WriteHeader(http.StatusNotFound)
-	}
-}
-
-func fakeIntent(id string, amount int64, currency, status, orderNo, methodID string) map[string]any {
-	metadata := map[string]string{}
-	if orderNo != "" {
-		metadata["newapi_order_no"] = orderNo
-		metadata["newapi_method_id"] = methodID
-	}
-	return map[string]any{
-		"id": id, "object": "payment_intent", "amount": amount, "amount_received": 0, "currency": currency,
-		"client_secret": id + "_secret", "status": status, "metadata": metadata,
-		"automatic_payment_methods": map[string]any{"enabled": true},
-	}
-}
-
-func formList(form url.Values, name string) []string {
-	var values []string
-	for i := 0; form.Has(fmt.Sprintf("%s[%d]", name, i)); i++ {
-		values = append(values, form.Get(fmt.Sprintf("%s[%d]", name, i)))
-	}
-	return values
-}
-
-func mergeMaps(a, b map[string]any) map[string]any {
-	merged := maps.Clone(a)
-	maps.Copy(merged, b)
-	return merged
-}
-
-func (f *fakeStripe) write(w http.ResponseWriter, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	content, err := common.Marshal(body)
-	if err != nil {
-		f.t.Errorf("encode response: %v", err)
-	}
-	_, _ = w.Write(content)
-}
-
-// seed stores an existing PaymentIntent.
-func (f *fakeStripe) seed(intent map[string]any) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.intents[intent["id"].(string)] = intent
-}
-
-func (f *fakeStripe) set(id, field string, value any) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.intents[id][field] = value
-}
-
-func (f *fakeStripe) status(id string) string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	status, _ := f.intents[id]["status"].(string)
-	return status
-}
-
-// webhook returns a copy of endpoint id, or nil.
-func (f *fakeStripe) webhook(id string) map[string]any {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return maps.Clone(f.webhooks[id])
-}
-
-func (f *fakeStripe) disableWebhook(id string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.webhooks[id]["status"] = "disabled"
-}
-
-func (f *fakeStripe) snapshot() (created []url.Values, keys, canceled []string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]url.Values(nil), f.created...), append([]string(nil), f.keys...), append([]string(nil), f.canceled...)
-}
-
 const stripeTestConfig = `{"public_key":"pk_test_a","secret_key":"sk_test_a","webhook_secret":"whsec_test"}`
 
-func openFakeStripe(t *testing.T, fake *fakeStripe, methodID int64) Gateway {
+func openFakeStripe(t *testing.T, fake *gatewaytest.FakeStripe, methodID int64) Gateway {
 	t.Helper()
-	return mustOpen(t, NewRegistry(WithStripeBackends(fake.backends)), Method{ID: methodID, Platform: PlatformStripe, Config: stripeTestConfig})
+	return mustOpen(t, NewRegistry(WithStripeBackends(fake.Backends)), Method{ID: methodID, Platform: PlatformStripe, Config: stripeTestConfig})
 }
 
 func claimAs(winner string, err error) func(context.Context, string) (string, error) {
@@ -1006,7 +820,7 @@ func claimAs(winner string, err error) func(context.Context, string) (string, er
 }
 
 func TestStripeStartPaymentCreatesAndReusesTheIntent(t *testing.T) {
-	fake := newFakeStripe(t)
+	fake := gatewaytest.NewFakeStripe(t)
 	gw := openFakeStripe(t, fake, 7)
 	order := &Order{OrderNo: "order-1", PaymentAmount: 1990, PaymentCurrency: "USD"}
 	checkout := Checkout{Order: order, Charge: Charge{1990, "USD"}, Subject: "Top-up", Claim: claimAs("", nil)}
@@ -1014,7 +828,7 @@ func TestStripeStartPaymentCreatesAndReusesTheIntent(t *testing.T) {
 	action, err := gw.StartPayment(context.Background(), checkout)
 	require.NoError(t, err)
 	assert.Equal(t, Action{Type: ActionStripe, Stripe: &StripeAction{PublishableKey: "pk_test_a", ClientSecret: "pi_1_secret"}}, *action)
-	created, keys, _ := fake.snapshot()
+	created, keys, _ := fake.Snapshot()
 	require.Len(t, created, 1)
 	assert.Equal(t, []string{"newapi:pi:order-1"}, keys)
 	assert.Equal(t, "1990", created[0].Get("amount"))
@@ -1031,7 +845,7 @@ func TestStripeStartPaymentCreatesAndReusesTheIntent(t *testing.T) {
 	action, err = gw.StartPayment(context.Background(), checkout)
 	require.NoError(t, err)
 	assert.Equal(t, "pi_1_secret", action.Stripe.ClientSecret)
-	created, _, _ = fake.snapshot()
+	created, _, _ = fake.Snapshot()
 	assert.Len(t, created, 1)
 
 	// The stored intent must still match the order before it is reused.
@@ -1045,20 +859,20 @@ func TestStripeStartPaymentCreatesAndReusesTheIntent(t *testing.T) {
 	}
 	_, err = openFakeStripe(t, fake, 8).StartPayment(context.Background(), checkout)
 	assert.Error(t, err, "another payment method's intent is not reused")
-	fake.set("pi_1", "status", "canceled")
+	fake.Set("pi_1", "status", "canceled")
 	_, err = gw.StartPayment(context.Background(), checkout)
 	assert.Error(t, err, "a canceled intent is not offered again")
 }
 
 func TestStripeClaimFailureCancelsTheIntent(t *testing.T) {
-	fake := newFakeStripe(t)
+	fake := gatewaytest.NewFakeStripe(t)
 	gw := openFakeStripe(t, fake, 7)
 	order := &Order{OrderNo: "order-1", PaymentAmount: 1990, PaymentCurrency: "USD"}
 	checkout := Checkout{Order: order, Charge: Charge{1990, "USD"}, Claim: claimAs("", errors.New("database is down"))}
 
 	_, err := gw.StartPayment(context.Background(), checkout)
 	require.Error(t, err)
-	_, _, canceled := fake.snapshot()
+	_, _, canceled := fake.Snapshot()
 	assert.Equal(t, []string{"pi_1"}, canceled)
 
 	// A retry replays the idempotent creation; the replayed intent is the
@@ -1066,33 +880,33 @@ func TestStripeClaimFailureCancelsTheIntent(t *testing.T) {
 	checkout.Claim = claimAs("", nil)
 	_, err = gw.StartPayment(context.Background(), checkout)
 	assert.Error(t, err)
-	created, _, _ := fake.snapshot()
+	created, _, _ := fake.Snapshot()
 	assert.Len(t, created, 1, "the retry creates no second intent")
 }
 
 func TestStripeClaimLostCancelsOwnIntent(t *testing.T) {
-	fake := newFakeStripe(t)
-	fake.seed(fakeIntent("pi_winner", 1990, "usd", "requires_payment_method", "order-1", "7"))
+	fake := gatewaytest.NewFakeStripe(t)
+	fake.Seed(gatewaytest.Intent("pi_winner", 1990, "usd", "requires_payment_method", "order-1", "7"))
 	gw := openFakeStripe(t, fake, 7)
 	order := &Order{OrderNo: "order-1", PaymentAmount: 1990, PaymentCurrency: "USD"}
 
 	action, err := gw.StartPayment(context.Background(), Checkout{Order: order, Charge: Charge{1990, "USD"}, Claim: claimAs("pi_winner", nil)})
 	require.NoError(t, err)
 	assert.Equal(t, "pi_winner_secret", action.Stripe.ClientSecret)
-	_, _, canceled := fake.snapshot()
+	_, _, canceled := fake.Snapshot()
 	assert.Equal(t, []string{"pi_1"}, canceled)
-	assert.Equal(t, "requires_payment_method", fake.status("pi_winner"))
+	assert.Equal(t, "requires_payment_method", fake.Status("pi_winner"))
 }
 
 func TestStripeChargesInStripeUnits(t *testing.T) {
-	fake := newFakeStripe(t)
+	fake := gatewaytest.NewFakeStripe(t)
 	gw := openFakeStripe(t, fake, 7)
 	for i, charge := range []Charge{{100100, "JPY"}, {1250, "KWD"}} {
 		order := &Order{OrderNo: fmt.Sprintf("order-%d", i), PaymentAmount: charge.Amount, PaymentCurrency: charge.Currency}
 		_, err := gw.StartPayment(context.Background(), Checkout{Order: order, Charge: charge, Claim: claimAs("", nil)})
 		require.NoError(t, err)
 	}
-	created, _, _ := fake.snapshot()
+	created, _, _ := fake.Snapshot()
 	require.Len(t, created, 2)
 	assert.Equal(t, "1001", created[0].Get("amount"), "whole yen")
 	assert.Equal(t, "12500", created[1].Get("amount"), "fils")
@@ -1111,11 +925,11 @@ func stripeEvent(t *testing.T, secret, eventType string, intent map[string]any) 
 }
 
 func TestStripeParseCallback(t *testing.T) {
-	gw := openFakeStripe(t, newFakeStripe(t), 7)
+	gw := openFakeStripe(t, gatewaytest.NewFakeStripe(t), 7)
 	// Stripe counts yen: 1001 is 100100 hundredths.
-	succeeded := fakeIntent("pi_1", 1001, "jpy", "succeeded", "order-1", "7")
+	succeeded := gatewaytest.Intent("pi_1", 1001, "jpy", "succeeded", "order-1", "7")
 	succeeded["amount_received"] = 1001
-	failed := fakeIntent("pi_1", 1001, "jpy", "requires_payment_method", "order-1", "7")
+	failed := gatewaytest.Intent("pi_1", 1001, "jpy", "requires_payment_method", "order-1", "7")
 
 	notice, err := gw.ParseCallback(context.Background(), stripeEvent(t, "whsec_test", "payment_intent.succeeded", succeeded))
 	require.NoError(t, err)
@@ -1133,10 +947,10 @@ func TestStripeParseCallback(t *testing.T) {
 	assert.Equal(t, int64(100100), notice.Amount, "a lifecycle event reports the requested amount")
 
 	for name, n := range map[string]Notification{
-		"another site's intent":  stripeEvent(t, "whsec_test", "payment_intent.succeeded", fakeIntent("pi_2", 100, "usd", "succeeded", "", "")),
-		"another payment method": stripeEvent(t, "whsec_test", "payment_intent.succeeded", fakeIntent("pi_3", 100, "usd", "succeeded", "order-1", "8")),
+		"another site's intent":  stripeEvent(t, "whsec_test", "payment_intent.succeeded", gatewaytest.Intent("pi_2", 100, "usd", "succeeded", "", "")),
+		"another payment method": stripeEvent(t, "whsec_test", "payment_intent.succeeded", gatewaytest.Intent("pi_3", 100, "usd", "succeeded", "order-1", "8")),
 		"an unsubscribed event":  stripeEvent(t, "whsec_test", "charge.succeeded", map[string]any{"id": "ch_1", "object": "charge"}),
-		"a canceled foreign one": stripeEvent(t, "whsec_test", "payment_intent.canceled", fakeIntent("pi_4", 100, "usd", "canceled", "", "")),
+		"a canceled foreign one": stripeEvent(t, "whsec_test", "payment_intent.canceled", gatewaytest.Intent("pi_4", 100, "usd", "canceled", "", "")),
 	} {
 		notice, err := gw.ParseCallback(context.Background(), n)
 		require.NoError(t, err, name)
@@ -1166,11 +980,11 @@ func TestStripeConfirmPayment(t *testing.T) {
 		{name: "other method", change: map[string]any{"metadata": map[string]string{"newapi_order_no": "order-1", "newapi_method_id": "8"}}, wantErr: true},
 	}
 	for _, tt := range tests {
-		fake := newFakeStripe(t)
-		intent := fakeIntent("pi_1", 1990, "usd", "succeeded", "order-1", "7")
+		fake := gatewaytest.NewFakeStripe(t)
+		intent := gatewaytest.Intent("pi_1", 1990, "usd", "succeeded", "order-1", "7")
 		intent["amount_received"] = 1990
 		maps.Copy(intent, tt.change)
-		fake.seed(intent)
+		fake.Seed(intent)
 		err := openFakeStripe(t, fake, 7).ConfirmPayment(context.Background(), order, notice)
 		if tt.wantErr {
 			assert.Error(t, err, tt.name)
@@ -1195,10 +1009,10 @@ func TestStripeReconcile(t *testing.T) {
 	}
 	order := &Order{OrderNo: "order-1", PaymentAmount: 1990, PaymentCurrency: "USD", TradeNo: "pi_1"}
 	for _, tt := range tests {
-		fake := newFakeStripe(t)
-		fake.seed(fakeIntent("pi_1", 1990, "usd", tt.status, "order-1", "7"))
+		fake := gatewaytest.NewFakeStripe(t)
+		fake.Seed(gatewaytest.Intent("pi_1", 1990, "usd", tt.status, "order-1", "7"))
 		got, err := openFakeStripe(t, fake, 7).Reconcile(context.Background(), CloseRequest{Order: order})
-		_, _, canceled := fake.snapshot()
+		_, _, canceled := fake.Snapshot()
 		if tt.wantErr != nil {
 			assert.ErrorIs(t, err, tt.wantErr, tt.status)
 		} else {
@@ -1208,36 +1022,87 @@ func TestStripeReconcile(t *testing.T) {
 		assert.Equal(t, tt.wantCanceled, len(canceled) == 1, tt.status)
 	}
 
-	fake := newFakeStripe(t)
+	fake := gatewaytest.NewFakeStripe(t)
 	gw := openFakeStripe(t, fake, 7)
 	got, err := gw.Reconcile(context.Background(), CloseRequest{Order: &Order{OrderNo: "order-1", PaymentAmount: 1990, PaymentCurrency: "USD"}})
 	require.NoError(t, err)
 	assert.Equal(t, Reconciliation{RequireStableCheckout: true}, got, "no intent was claimed")
-	fake.seed(fakeIntent("pi_1", 1000, "usd", "succeeded", "order-1", "7"))
+	fake.Seed(gatewaytest.Intent("pi_1", 1000, "usd", "succeeded", "order-1", "7"))
 	_, err = gw.Reconcile(context.Background(), CloseRequest{Order: order})
 	assert.Error(t, err, "an intent of another amount is not trusted")
 }
 
+// A user's "check payment" asks every gateway without touching the payment:
+// an unpaid Stripe intent stays payable.
+func TestQueryPaymentChangesNothing(t *testing.T) {
+	ctx := context.Background()
+
+	fake := gatewaytest.NewFakeStripe(t)
+	fake.Seed(gatewaytest.Intent("pi_1", 1990, "usd", "requires_payment_method", "order-1", "7"))
+	stripeGW := openFakeStripe(t, fake, 7)
+	stripeOrder := &Order{OrderNo: "order-1", PaymentAmount: 1990, PaymentCurrency: "USD", TradeNo: "pi_1"}
+	tradeNo, err := stripeGW.QueryPayment(ctx, stripeOrder)
+	require.NoError(t, err)
+	assert.Empty(t, tradeNo)
+	_, _, canceled := fake.Snapshot()
+	assert.Empty(t, canceled, "a query never cancels the intent")
+	fake.Set("pi_1", "status", "succeeded")
+	fake.Set("pi_1", "amount_received", 1990)
+	tradeNo, err = stripeGW.QueryPayment(ctx, stripeOrder)
+	require.NoError(t, err)
+	assert.Equal(t, "pi_1", tradeNo)
+	tradeNo, err = stripeGW.QueryPayment(ctx, &Order{OrderNo: "order-2", PaymentAmount: 1990, PaymentCurrency: "USD"})
+	require.NoError(t, err)
+	assert.Empty(t, tradeNo, "no intent was claimed")
+
+	epayAnswer := `{"code":1,"pid":1001,"trade_no":"T1","out_trade_no":"order-1","type":"alipay","money":"19.90","status":0}`
+	epayGW := epayServer(t, `{"url":"SERVER","pid":"1001","key":"secret"}`, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(epayAnswer))
+	})
+	epayOrder := &Order{OrderNo: "order-1", PaymentAmount: 1990, PaymentCurrency: "CNY"}
+	tradeNo, err = epayGW.QueryPayment(ctx, epayOrder)
+	require.NoError(t, err)
+	assert.Empty(t, tradeNo)
+	epayAnswer = strings.Replace(epayAnswer, `"status":0`, `"status":1`, 1)
+	tradeNo, err = epayGW.QueryPayment(ctx, epayOrder)
+	require.NoError(t, err)
+	assert.Equal(t, "T1", tradeNo)
+	epayOrder.PaymentAmount = 2000
+	_, err = epayGW.QueryPayment(ctx, epayOrder)
+	assert.Error(t, err, "a payment of another amount is not reported as the order's")
+
+	cryptomusAnswer := `{"state":0,"result":{"uuid":"uuid-1","order_id":"order-1","amount":"10.00","currency":"USD","payment_status":"check"}}`
+	cryptomusGW := cryptomusServer(t, func(string, map[string]any) string { return cryptomusAnswer })
+	cryptomusOrder := &Order{OrderNo: "order-1", PaymentAmount: 1000, PaymentCurrency: "USD", TradeNo: "uuid-1"}
+	tradeNo, err = cryptomusGW.QueryPayment(ctx, cryptomusOrder)
+	require.NoError(t, err)
+	assert.Empty(t, tradeNo)
+	cryptomusAnswer = strings.Replace(cryptomusAnswer, `"check"`, `"paid"`, 1)
+	tradeNo, err = cryptomusGW.QueryPayment(ctx, cryptomusOrder)
+	require.NoError(t, err)
+	assert.Equal(t, "uuid-1", tradeNo)
+}
+
 func TestStripeWebhookEndpoints(t *testing.T) {
-	fake := newFakeStripe(t)
-	webhooks := NewRegistry(WithStripeBackends(fake.backends)).StripeWebhooks("sk_test_a")
+	fake := gatewaytest.NewFakeStripe(t)
+	webhooks := NewRegistry(WithStripeBackends(fake.Backends)).StripeWebhooks("sk_test_a")
 	ctx := context.Background()
 
 	endpoint, err := webhooks.Create(ctx, "https://www.example.test/api/payment/notify/stripe/tok")
 	require.NoError(t, err)
 	assert.Equal(t, StripeWebhookEndpoint{ID: "we_1", URL: "https://www.example.test/api/payment/notify/stripe/tok", Secret: "whsec_we_1"}, endpoint)
-	registered := fake.webhook("we_1")
+	registered := fake.Webhook("we_1")
 	assert.Equal(t, stripe.APIVersion, registered["api_version"])
 	assert.Equal(t, []string{"payment_intent.succeeded", "payment_intent.payment_failed", "payment_intent.canceled"}, registered["enabled_events"])
 
-	fake.disableWebhook("we_1")
+	fake.DisableWebhook("we_1")
 	require.NoError(t, webhooks.UpdateURL(ctx, "we_1", "https://pay.example.test/api/payment/notify/stripe/tok"))
-	assert.Equal(t, "https://pay.example.test/api/payment/notify/stripe/tok", fake.webhook("we_1")["url"])
-	assert.Equal(t, "enabled", fake.webhook("we_1")["status"], "an endpoint Stripe disabled is enabled again")
+	assert.Equal(t, "https://pay.example.test/api/payment/notify/stripe/tok", fake.Webhook("we_1")["url"])
+	assert.Equal(t, "enabled", fake.Webhook("we_1")["status"], "an endpoint Stripe disabled is enabled again")
 	assert.Error(t, webhooks.UpdateURL(ctx, "we_404", "https://pay.example.test/x"))
 
 	require.NoError(t, webhooks.Delete(ctx, "we_1"))
-	assert.Nil(t, fake.webhook("we_1"))
+	assert.Nil(t, fake.Webhook("we_1"))
 }
 
 // ---- exchange rates ----

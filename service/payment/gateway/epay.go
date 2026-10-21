@@ -176,16 +176,43 @@ func (g *epayGateway) Reconcile(ctx context.Context, req CloseRequest) (Reconcil
 		}
 		return Reconciliation{}, nil
 	}
+	tradeNo, err := g.paidTrade(o, result)
+	if err != nil {
+		return Reconciliation{}, err
+	}
+	return Reconciliation{TradeNo: tradeNo}, nil
+}
+
+// QueryPayment reports the trade of a paid order; the query changes nothing
+// at the gateway.
+func (g *epayGateway) QueryPayment(ctx context.Context, o *Order) (string, error) {
+	if o.PaymentCurrency == "" {
+		return "", nil
+	}
+	result, err := g.queryOrder(ctx, o.OrderNo)
+	if err != nil {
+		return "", err
+	}
+	if !result.paid {
+		return "", nil
+	}
+	return g.paidTrade(o, result)
+}
+
+// paidTrade returns the trade of a query answer that reports the order paid:
+// it must name the order, this merchant and payment type, and exactly the
+// payment expectation. A status-only answer names no trade to settle with.
+func (g *epayGateway) paidTrade(o *Order, result *epayQueryResult) (string, error) {
 	if result.statusOnly {
-		return Reconciliation{}, fmt.Errorf("cannot safely reconcile paid EPay order %s: gateway query has no transaction details", o.OrderNo)
+		return "", fmt.Errorf("paid EPay order %s cannot settle: the gateway query has no transaction details", o.OrderNo)
 	}
 	amount, err := ParseAmount(result.money)
 	if err != nil || result.orderNo != o.OrderNo || result.merchantID != g.config.PID ||
 		(g.config.Type != "" && result.paymentType != g.config.Type) ||
 		amount != o.PaymentAmount || ValidateTradeNo(result.tradeNo) != nil {
-		return Reconciliation{}, fmt.Errorf("EPay order %s query does not match the payment expectation", o.OrderNo)
+		return "", fmt.Errorf("EPay order %s query does not match the payment expectation", o.OrderNo)
 	}
-	return Reconciliation{TradeNo: result.tradeNo}, nil
+	return result.tradeNo, nil
 }
 
 // ParseCallback verifies the MD5 signature and the callback fields: the

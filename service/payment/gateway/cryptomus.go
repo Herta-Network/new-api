@@ -233,21 +233,12 @@ func (g *cryptomusGateway) Reconcile(ctx context.Context, req CloseRequest) (Rec
 	if o.PaymentCurrency == "" && o.TradeNo == "" {
 		return Reconciliation{RequireStableCheckout: true}, nil
 	}
-	// The trade number is claimed right after invoice creation, but a
-	// checkout may have crashed between the two steps; the order-number
-	// lookup still finds the invoice the gateway holds for this order.
-	invoice, err := g.getInvoice(ctx, o.TradeNo, o.OrderNo)
+	invoice, err := g.matchingInvoice(ctx, o)
 	if err != nil {
 		// Even an explicit payment-not-found answer cannot close a started
 		// checkout: invoice creation may still be in flight after a timeout,
 		// before its UUID was stored locally.
 		return Reconciliation{}, fmt.Errorf("cannot safely expire Cryptomus order %s: %w: %w", o.OrderNo, err, ErrUnconfirmed)
-	}
-	// Validate identity and the immutable amount before trusting any state.
-	amount, err := parseCryptomusMoney(invoice.Amount)
-	if err != nil || invoice.OrderNo != o.OrderNo || (o.TradeNo != "" && invoice.UUID != o.TradeNo) ||
-		amount != o.PaymentAmount || !strings.EqualFold(invoice.Currency, o.PaymentCurrency) {
-		return Reconciliation{}, fmt.Errorf("cryptomus order %s query does not match the payment expectation: %w", o.OrderNo, ErrUnconfirmed)
 	}
 	if cryptomusPaidStatus(invoice.state()) {
 		return Reconciliation{TradeNo: invoice.UUID}, nil
@@ -259,6 +250,40 @@ func (g *cryptomusGateway) Reconcile(ctx context.Context, req CloseRequest) (Rec
 		return Reconciliation{RequireStableCheckout: true}, nil
 	}
 	return Reconciliation{}, fmt.Errorf("cannot safely expire Cryptomus order %s with invoice status %q: %w", o.OrderNo, invoice.state(), ErrUnconfirmed)
+}
+
+// QueryPayment reports the invoice of a paid order; the lookup changes
+// nothing at the gateway.
+func (g *cryptomusGateway) QueryPayment(ctx context.Context, o *Order) (string, error) {
+	if o.PaymentCurrency == "" && o.TradeNo == "" {
+		return "", nil
+	}
+	invoice, err := g.matchingInvoice(ctx, o)
+	if err != nil {
+		return "", err
+	}
+	if cryptomusPaidStatus(invoice.state()) {
+		return invoice.UUID, nil
+	}
+	return "", nil
+}
+
+// matchingInvoice loads the order's invoice and checks its identity and
+// immutable amount before any of its state is trusted. The trade number is
+// claimed right after invoice creation, but a checkout may have crashed
+// between the two steps; the order-number lookup still finds the invoice
+// the gateway holds for the order.
+func (g *cryptomusGateway) matchingInvoice(ctx context.Context, o *Order) (*cryptomusInvoice, error) {
+	invoice, err := g.getInvoice(ctx, o.TradeNo, o.OrderNo)
+	if err != nil {
+		return nil, err
+	}
+	amount, err := parseCryptomusMoney(invoice.Amount)
+	if err != nil || invoice.OrderNo != o.OrderNo || (o.TradeNo != "" && invoice.UUID != o.TradeNo) ||
+		amount != o.PaymentAmount || !strings.EqualFold(invoice.Currency, o.PaymentCurrency) {
+		return nil, fmt.Errorf("cryptomus order %s query does not match the payment expectation", o.OrderNo)
+	}
+	return invoice, nil
 }
 
 // ParseCallback verifies the webhook signature and the payload: an invoice

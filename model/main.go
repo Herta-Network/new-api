@@ -376,8 +376,15 @@ func migrateDB() error {
 		&CasbinRule{},
 		&AuthzRole{},
 		&UserAccessToken{},
+		&PaymentMethod{},
+		&PaymentOrder{},
+		&PaymentUnmatched{},
+		&PaymentExchangeRate{},
 	)
 	if err != nil {
+		return err
+	}
+	if err := ensureBalancePaymentMethod(DB); err != nil {
 		return err
 	}
 	if err := InitializeUserAuthVersions(); err != nil {
