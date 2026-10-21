@@ -12,6 +12,8 @@ type PageInfo struct {
 
 	Total int `json:"total"` // 总条数，后设置
 	Items any `json:"items"` // 数据，后设置
+	// TotalCapped reports that counting stopped at Total and more items match.
+	TotalCapped bool `json:"total_capped,omitempty"`
 }
 
 func (p *PageInfo) GetStartIdx() int {

@@ -523,14 +523,16 @@ func (f LogFilter) apply(tx *gorm.DB) (*gorm.DB, error) {
 	return tx, nil
 }
 
-func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int64, err error) {
+// GetAllLogs returns one page of the logs that match filter and how many match,
+// counted up to logSearchCountLimit; capped reports that more match.
+func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int64, capped bool, err error) {
 	tx, err := filter.apply(LOG_DB)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
-	err = tx.Model(&Log{}).Count(&total).Error
+	total, capped, err = countLogsUpToLimit(tx)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	order := "logs.created_at desc, logs.id desc"
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
@@ -538,7 +540,7 @@ func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int
 	}
 	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		assignDisplayLogIds(logs, startIdx)
@@ -572,7 +574,7 @@ func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int
 		} else {
 			// Bulk query channels from DB
 			if err = DB.Table("channels").Select("id, name").Where("id IN ?", channelIds.Items()).Find(&channels).Error; err != nil {
-				return logs, total, err
+				return logs, total, capped, err
 			}
 		}
 		channelMap := make(map[int]string, len(channels))
@@ -584,20 +586,33 @@ func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int
 		}
 	}
 
-	return logs, total, err
+	return logs, total, capped, err
 }
 
+// logSearchCountLimit is where the log lists stop counting: a count reads
+// every log it counts, and a large log table would make each page slow.
 const logSearchCountLimit = 10000
 
-func GetUserLogs(userId int, filter LogFilter, startIdx int, num int) (logs []*Log, total int64, err error) {
+// countLogsUpToLimit counts the logs tx selects up to logSearchCountLimit and
+// reports whether more match. It leaves tx unchanged for the page query.
+func countLogsUpToLimit(tx *gorm.DB) (total int64, capped bool, err error) {
+	matching := tx.Session(&gorm.Session{}).Model(&Log{}).Select("1").Limit(logSearchCountLimit + 1)
+	if err := tx.Session(&gorm.Session{NewDB: true}).Table("(?) AS matching", matching).Count(&total).Error; err != nil {
+		return 0, false, err
+	}
+	return min(total, logSearchCountLimit), total > logSearchCountLimit, nil
+}
+
+// GetUserLogs is GetAllLogs for one user's own logs.
+func GetUserLogs(userId int, filter LogFilter, startIdx int, num int) (logs []*Log, total int64, capped bool, err error) {
 	tx, err := filter.apply(LOG_DB.Where("logs.user_id = ?", userId))
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
-	err = tx.Model(&Log{}).Limit(logSearchCountLimit).Count(&total).Error
+	total, capped, err = countLogsUpToLimit(tx)
 	if err != nil {
 		common.SysError(common.LogText("failed to count user logs: %s", err.Error()))
-		return nil, 0, common.NewMessage("Failed to query logs")
+		return nil, 0, false, common.NewMessage("Failed to query logs")
 	}
 	order := "logs.id desc"
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
@@ -606,11 +621,11 @@ func GetUserLogs(userId int, filter LogFilter, startIdx int, num int) (logs []*L
 	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
 		common.SysError(common.LogText("failed to search user logs: %s", err.Error()))
-		return nil, 0, common.NewMessage("Failed to query logs")
+		return nil, 0, false, common.NewMessage("Failed to query logs")
 	}
 
 	formatUserLogs(logs, startIdx)
-	return logs, total, err
+	return logs, total, capped, err
 }
 
 // StreamAllLogs calls fn with each log matching filter, newest first, as an
