@@ -25,32 +25,6 @@ import { DEFAULT_DISCOUNT_RATE } from '../constants'
 // ============================================================================
 
 /**
- * Format Creem price with currency symbol (USD/EUR); still used by the legacy
- * payment settings page until it is removed.
- */
-export function formatCreemPrice(
-  price: number,
-  currency: 'USD' | 'EUR'
-): string {
-  const symbol = currency === 'EUR' ? '€' : '$'
-  return `${symbol}${price.toFixed(2)}`
-}
-
-/**
- * Format large quota numbers with K/M suffix; still used by the legacy
- * payment settings page until it is removed.
- */
-export function formatQuotaShort(quota: number): string {
-  if (quota >= 1000000) {
-    return `${(quota / 1000000).toFixed(1)}M`
-  }
-  if (quota >= 1000) {
-    return `${(quota / 1000).toFixed(1)}K`
-  }
-  return quota.toString()
-}
-
-/**
  * Get discount label for display (e.g., "20% OFF")
  */
 export function getDiscountLabel(discount: number, t: TFunction): string {

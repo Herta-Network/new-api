@@ -16,29 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { getServerMessage } from '@/lib/server-error-message'
-
 import type { PaymentInfo } from '../types'
 
 // ============================================================================
 // Payment Helpers
 // ============================================================================
-
-/**
- * Payment endpoints answer errors as {"message": "error", "data": text}. When
- * the response also carries a message_key, this is its translation; callers
- * fall back to the text they already read.
- */
-export function getPaymentErrorTranslation(
-  response: unknown
-): string | undefined {
-  if (!response || typeof response !== 'object') return undefined
-  const body = response as Record<string, unknown>
-  if (typeof body.message_key !== 'string' || !body.message_key) {
-    return undefined
-  }
-  return getServerMessage(body)
-}
 
 const AMOUNT_PATTERN = /^(\d{1,12})(?:\.(\d{1,2}))?$/
 

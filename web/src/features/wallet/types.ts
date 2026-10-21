@@ -34,18 +34,6 @@ export type AffiliateCodeResponse = ApiResponse<string>
 export type AffiliateTransferResponse = ApiResponse
 
 /**
- * Creem product configuration, still read by the legacy payment settings
- * page until it is removed.
- */
-export interface CreemProduct {
-  name: string
-  productId: string
-  price: number
-  quota: number
-  currency: 'USD' | 'EUR'
-}
-
-/**
  * Redemption settings (GET /api/user/topup/info)
  */
 export interface RedemptionInfo {
