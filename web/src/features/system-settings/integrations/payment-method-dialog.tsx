@@ -17,15 +17,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
+import { ShieldAlert } from 'lucide-react'
 import { useEffect } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch, type Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
-import * as z from 'zod'
 
 import { Dialog } from '@/components/dialog'
+import { PasswordInput } from '@/components/password-input'
 import { ReactIconByName } from '@/components/react-icon-by-name'
+import { StatusBadge } from '@/components/status-badge'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Combobox } from '@/components/ui/combobox'
 import {
   Form,
   FormControl,
@@ -36,159 +38,198 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
 
-const createPaymentMethodDialogSchema = (t: (key: string) => string) =>
-  z.object({
-    name: z.string().min(1, t('Payment method name is required')),
-    type: z.string().min(1, t('Payment type key is required')),
-    icon: z.string().optional(),
-    min_topup: z.string().optional(),
-  })
-
-type PaymentMethodDialogFormValues = z.infer<
-  ReturnType<typeof createPaymentMethodDialogSchema>
->
+import {
+  SettingsForm,
+  SettingsSwitchContent,
+  SettingsSwitchItem,
+} from '../components/settings-form-layout'
+import {
+  createPaymentMethodSchema,
+  editablePaymentFields,
+  paymentMethodFormDefaults,
+  toPaymentMethodRequest,
+  usesFeeRate,
+  usesFixedFee,
+  type PaymentMethodFormValues,
+} from './payment-method-form'
+import {
+  BALANCE_PAYMENT_PLATFORM,
+  PAYMENT_FEE_MODE_OPTIONS,
+  useSavePaymentMethod,
+  type PaymentMethod,
+  type PaymentPlatform,
+} from './payment-methods-api'
 
 const PAYMENT_METHOD_FORM_ID = 'payment-method-form'
-
-export type PaymentMethodData = {
-  name: string
-  type: string
-  icon?: string
-  min_topup?: string
-  color?: string
-}
 
 type PaymentMethodDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSave: (data: PaymentMethodData) => void
-  editData?: PaymentMethodData | null
+  /** The method to edit; null creates a gateway method. */
+  method: PaymentMethod | null
+  platforms: PaymentPlatform[]
+  /** Site currency the fixed fee is entered in. */
+  currency: string
 }
 
-const PAYMENT_TYPE_ICON_NAMES: Record<string, string> = {
-  alipay: 'SiAlipay',
-  stripe: 'SiStripe',
-  waffo_pancake: 'LuCreditCard',
-  wxpay: 'SiWechat',
-}
-
-const getDefaultIconName = (type: string) => PAYMENT_TYPE_ICON_NAMES[type] ?? ''
-
-export function PaymentMethodDialog({
-  open,
-  onOpenChange,
-  onSave,
-  editData,
-}: PaymentMethodDialogProps) {
+export function PaymentMethodDialog(props: PaymentMethodDialogProps) {
   const { t } = useTranslation()
-  const isEditMode = !!editData
-  const paymentMethodDialogSchema = createPaymentMethodDialogSchema(t)
-  const paymentTypeOptions = [
-    {
-      iconName: 'SiAlipay',
-      label: `${t('Alipay')} (Epay: alipay)`,
-      name: t('Alipay'),
-      value: 'alipay',
-    },
-    {
-      iconName: 'SiWechat',
-      label: `${t('WeChat Pay')} (Epay: wxpay)`,
-      name: t('WeChat Pay'),
-      value: 'wxpay',
-    },
-    {
-      iconName: 'SiStripe',
-      label: `${t('Stripe')} (stripe)`,
-      name: t('Stripe'),
-      value: 'stripe',
-    },
-    {
-      iconName: 'LuCreditCard',
-      label: 'Waffo Pancake (waffo_pancake)',
-      name: 'Waffo Pancake',
-      value: 'waffo_pancake',
-    },
-  ]
-  const getPaymentTypeOption = (value: string) =>
-    paymentTypeOptions.find((option) => option.value === value)
+  const saveMethod = useSavePaymentMethod()
+  const secretsSet = props.method?.secrets_set ?? {}
+  const fieldsOf = (platform: string) =>
+    props.platforms.find((item) => item.platform === platform)?.fields ?? []
 
-  const form = useForm<PaymentMethodDialogFormValues>({
-    resolver: zodResolver(paymentMethodDialogSchema),
-    defaultValues: {
-      name: '',
-      type: '',
-      icon: '',
-      min_topup: '',
-    },
+  const form = useForm<PaymentMethodFormValues>({
+    // The schema follows the platform chosen in the form.
+    resolver: (values, context, options) =>
+      (
+        zodResolver(
+          createPaymentMethodSchema(fieldsOf(values.platform), secretsSet)
+        ) as Resolver<PaymentMethodFormValues>
+      )(values, context, options),
+    defaultValues: paymentMethodFormDefaults([], null, ''),
   })
-
-  const iconValue = form.watch('icon')
+  const [platform, feeMode] = useWatch({
+    control: form.control,
+    name: ['platform', 'fee_mode'],
+  })
+  const fields = editablePaymentFields(fieldsOf(platform))
+  const isBalance = platform === BALANCE_PAYMENT_PLATFORM
+  const isEditing = props.method !== null
 
   useEffect(() => {
-    if (editData) {
-      form.reset({
-        name: editData.name,
-        type: editData.type,
-        icon: editData.icon ?? getDefaultIconName(editData.type),
-        min_topup: editData.min_topup ?? '',
-      })
-    } else {
-      form.reset({
-        name: '',
-        type: '',
-        icon: '',
-        min_topup: '',
-      })
-    }
-  }, [editData, form, open])
+    if (!props.open) return
+    const initialPlatform =
+      props.method?.platform ?? props.platforms[0]?.platform ?? ''
+    form.reset(
+      paymentMethodFormDefaults(
+        props.platforms.find((item) => item.platform === initialPlatform)
+          ?.fields ?? [],
+        props.method,
+        initialPlatform
+      )
+    )
+  }, [props.open, props.method, props.platforms, form])
 
-  const handleSubmit = (values: PaymentMethodDialogFormValues) => {
-    const data: PaymentMethodData = {
-      name: values.name,
-      type: values.type,
-    }
-    if (values.icon && values.icon.trim() !== '') {
-      data.icon = values.icon.trim()
-    }
-    if (values.min_topup && values.min_topup.trim() !== '') {
-      data.min_topup = values.min_topup
-    }
-    onSave(data)
-    form.reset()
-    onOpenChange(false)
+  const onSubmit = async (values: PaymentMethodFormValues) => {
+    await saveMethod.mutateAsync({
+      id: props.method?.id,
+      input: toPaymentMethodRequest(values, fieldsOf(values.platform)),
+    })
+    props.onOpenChange(false)
   }
 
   return (
     <Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title={isEditMode ? t('Edit payment method') : t('Add payment method')}
-      description={t('Configure a payment method for user recharge options.')}
-      contentClassName='sm:max-w-[500px]'
-      contentHeight='auto'
-      bodyClassName='space-y-4'
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+      title={isEditing ? t('Edit payment method') : t('Add payment method')}
+      contentClassName='max-h-[min(85dvh,var(--dialog-available-height))] overflow-y-auto sm:max-w-2xl'
       footer={
         <>
           <Button
             type='button'
             variant='outline'
-            onClick={() => onOpenChange(false)}
+            onClick={() => props.onOpenChange(false)}
+            disabled={saveMethod.isPending}
           >
             {t('Cancel')}
           </Button>
-          <Button type='submit' form={PAYMENT_METHOD_FORM_ID}>
-            {isEditMode ? t('Update') : t('Add')}
+          <Button
+            type='submit'
+            form={PAYMENT_METHOD_FORM_ID}
+            disabled={saveMethod.isPending}
+          >
+            {saveMethod.isPending ? t('Saving...') : t('Save')}
           </Button>
         </>
       }
     >
       <Form {...form}>
-        <form
+        <SettingsForm
           id={PAYMENT_METHOD_FORM_ID}
-          onSubmit={form.handleSubmit(handleSubmit)}
-          className='space-y-4'
+          onSubmit={(event) => {
+            // A failed save keeps the dialog open; the shared mutation
+            // error handler reports the server's reason.
+            void form
+              .handleSubmit(onSubmit)(event)
+              .catch(() => undefined)
+          }}
+          autoComplete='off'
         >
+          {isEditing ? (
+            <FormItem>
+              <FormLabel>{t('Platform')}</FormLabel>
+              <Input
+                value={
+                  isBalance
+                    ? t('Balance')
+                    : (props.platforms.find(
+                        (item) => item.platform === platform
+                      )?.name ?? platform)
+                }
+                disabled
+                readOnly
+              />
+              <FormDescription>
+                {t('The platform cannot be changed after creation.')}
+              </FormDescription>
+            </FormItem>
+          ) : (
+            <FormField
+              control={form.control}
+              name='platform'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Platform')}</FormLabel>
+                  <Select
+                    items={props.platforms.map((item) => ({
+                      value: item.platform,
+                      label: item.name,
+                    }))}
+                    value={field.value}
+                    onValueChange={(value) => {
+                      const next = String(value ?? '')
+                      field.onChange(next)
+                      form.setValue(
+                        'config',
+                        paymentMethodFormDefaults(fieldsOf(next), null, next)
+                          .config
+                      )
+                    }}
+                  >
+                    <FormControl>
+                      <SelectTrigger className='w-full'>
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        {props.platforms.map((item) => (
+                          <SelectItem key={item.platform} value={item.platform}>
+                            {item.name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
+
           <FormField
             control={form.control}
             name='name'
@@ -196,61 +237,10 @@ export function PaymentMethodDialog({
               <FormItem>
                 <FormLabel>{t('Name')}</FormLabel>
                 <FormControl>
-                  <Input placeholder={t('e.g., Alipay, WeChat')} {...field} />
+                  <Input {...field} />
                 </FormControl>
                 <FormDescription>
-                  {t('Display name for this payment method.')}
-                </FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            control={form.control}
-            name='type'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('Payment type key')}</FormLabel>
-                <FormControl>
-                  <Combobox
-                    options={paymentTypeOptions}
-                    value={field.value}
-                    onValueChange={(value) => {
-                      if (value === null) return
-                      const currentIcon = form.getValues('icon')?.trim()
-                      const currentName = form.getValues('name')?.trim()
-                      const previousOption = getPaymentTypeOption(field.value)
-                      const nextOption = getPaymentTypeOption(value)
-
-                      field.onChange(value)
-                      if (
-                        nextOption?.iconName &&
-                        (!currentIcon ||
-                          currentIcon === previousOption?.iconName)
-                      ) {
-                        form.setValue('icon', nextOption.iconName, {
-                          shouldDirty: true,
-                        })
-                      }
-                      if (
-                        nextOption?.name &&
-                        (!currentName || currentName === previousOption?.name)
-                      ) {
-                        form.setValue('name', nextOption.name, {
-                          shouldDirty: true,
-                        })
-                      }
-                    }}
-                    placeholder={t('Select or enter payment type key')}
-                    searchPlaceholder={t('Search payment type keys...')}
-                    allowCustomValue
-                  />
-                </FormControl>
-                <FormDescription className='leading-relaxed'>
-                  {t(
-                    'Used to decide the payment flow. Built-in keys include stripe for Stripe and waffo_pancake for Waffo Pancake; other values are sent to Epay as the type parameter.'
-                  )}
+                  {t('Shown to buyers when they choose how to pay')}
                 </FormDescription>
                 <FormMessage />
               </FormItem>
@@ -270,11 +260,11 @@ export function PaymentMethodDialog({
                       {...field}
                       className='flex-1'
                     />
-                    {iconValue && (
+                    {field.value && (
                       <ReactIconByName
-                        name={iconValue}
+                        name={field.value}
                         className='text-muted-foreground size-5 shrink-0'
-                        title={iconValue}
+                        title={field.value}
                       />
                     )}
                   </div>
@@ -291,26 +281,241 @@ export function PaymentMethodDialog({
 
           <FormField
             control={form.control}
-            name='min_topup'
+            name='sort'
             render={({ field }) => (
               <FormItem>
-                <FormLabel>{t('Minimum top-up (optional)')}</FormLabel>
+                <FormLabel>{t('Sort')}</FormLabel>
                 <FormControl>
-                  <Input
-                    type='number'
-                    step='0.01'
-                    placeholder={t('e.g., 50')}
-                    {...field}
-                  />
+                  <Input type='number' step={1} {...field} />
                 </FormControl>
                 <FormDescription>
-                  {t('Optional minimum recharge amount for this method.')}
+                  {t('Methods with a higher value are listed first')}
                 </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
           />
-        </form>
+
+          <FormField
+            control={form.control}
+            name='description'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Description')}</FormLabel>
+                <FormControl>
+                  <Textarea rows={2} {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='enabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Enabled')}</FormLabel>
+                  <FormDescription>
+                    {t('Offer this payment method to buyers')}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
+
+          {!isBalance && (
+            <>
+              {platform === 'epay' && (
+                <Alert>
+                  <ShieldAlert aria-hidden='true' />
+                  <AlertTitle>{t('Epay safety reminder')}</AlertTitle>
+                  <AlertDescription>
+                    {t(
+                      'Epay is a payment protocol, not a specific official website. Verify the provider yourself and do not trust random third-party Epay deployments.'
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {fields.map((platformField) => (
+                <FormField
+                  key={`${platform}-${platformField.key}`}
+                  control={form.control}
+                  name={`config.${platformField.key}`}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className='flex items-center gap-2'>
+                        {t(platformField.label)}
+                        {platformField.secret &&
+                          secretsSet[platformField.key] && (
+                            <StatusBadge
+                              label={t('Configured')}
+                              variant='success'
+                              copyable={false}
+                            />
+                          )}
+                      </FormLabel>
+                      <FormControl>
+                        {platformField.secret ? (
+                          <PasswordInput
+                            {...field}
+                            value={field.value ?? ''}
+                            autoComplete='new-password'
+                            placeholder={
+                              secretsSet[platformField.key]
+                                ? t('Enter new key to update')
+                                : undefined
+                            }
+                          />
+                        ) : (
+                          <Input {...field} value={field.value ?? ''} />
+                        )}
+                      </FormControl>
+                      {platformField.secret &&
+                        secretsSet[platformField.key] && (
+                          <FormDescription>
+                            {t('Leave blank to keep the existing key')}
+                          </FormDescription>
+                        )}
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ))}
+
+              {platform === 'stripe' && (
+                <p className='text-muted-foreground text-sm'>
+                  {t(
+                    'Saving registers the Stripe webhook for the callback URL automatically.'
+                  )}
+                </p>
+              )}
+
+              <FormField
+                control={form.control}
+                name='domain'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Callback domain')}</FormLabel>
+                    <FormControl>
+                      <Input placeholder='https://pay.example.com' {...field} />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Gateways send payment callbacks to this public address. Leave blank to use the server address.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='fee_mode'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Payment fee')}</FormLabel>
+                    <Select
+                      items={PAYMENT_FEE_MODE_OPTIONS.map((option) => ({
+                        value: String(option.value),
+                        label: t(option.labelKey),
+                      }))}
+                      value={field.value}
+                      onValueChange={(value) =>
+                        field.onChange(String(value ?? ''))
+                      }
+                    >
+                      <FormControl>
+                        <SelectTrigger className='w-full'>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent alignItemWithTrigger={false}>
+                        <SelectGroup>
+                          {PAYMENT_FEE_MODE_OPTIONS.map((option) => (
+                            <SelectItem
+                              key={option.value}
+                              value={String(option.value)}
+                            >
+                              {t(option.labelKey)}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                    <FormDescription>
+                      {t(
+                        'Charged to the buyer on top of the price; it does not change the credited quota.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {usesFeeRate(Number(feeMode)) && (
+                <FormField
+                  control={form.control}
+                  name='fee_rate'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Fee rate (%)')}</FormLabel>
+                      <FormControl>
+                        <Input
+                          type='number'
+                          inputMode='decimal'
+                          min={0}
+                          max={100}
+                          step={0.01}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t('For example, 2.9 charges 2.9% of the price')}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+
+              {usesFixedFee(Number(feeMode)) && (
+                <FormField
+                  control={form.control}
+                  name='fee_fixed'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        {t('Fixed fee ({{currency}})', {
+                          currency: props.currency,
+                        })}
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          type='number'
+                          inputMode='decimal'
+                          min={0}
+                          step={0.01}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+            </>
+          )}
+        </SettingsForm>
       </Form>
     </Dialog>
   )

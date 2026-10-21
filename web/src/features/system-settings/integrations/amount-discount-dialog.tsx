@@ -63,6 +63,8 @@ type AmountDiscountDialogProps = {
   onOpenChange: (open: boolean) => void
   onSave: (data: AmountDiscountData) => void
   editData?: AmountDiscountData | null
+  /** Site currency the amount is in. */
+  currency: string
 }
 
 export function AmountDiscountDialog({
@@ -70,6 +72,7 @@ export function AmountDiscountDialog({
   onOpenChange,
   onSave,
   editData,
+  currency,
 }: AmountDiscountDialogProps) {
   const { t } = useTranslation()
   const isEditMode = !!editData
@@ -147,7 +150,9 @@ export function AmountDiscountDialog({
             name='amount'
             render={({ field }) => (
               <FormItem>
-                <FormLabel>{t('Recharge Amount (USD)')}</FormLabel>
+                <FormLabel>
+                  {t('Top-up amount ({{currency}})', { currency })}
+                </FormLabel>
                 <FormControl>
                   <Input
                     type='number'

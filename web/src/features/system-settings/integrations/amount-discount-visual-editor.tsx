@@ -35,11 +35,14 @@ import {
 type AmountDiscountVisualEditorProps = {
   value: string
   onChange: (value: string) => void
+  /** Site currency the amounts are in. */
+  currency: string
 }
 
 export function AmountDiscountVisualEditor({
   value,
   onChange,
+  currency,
 }: AmountDiscountVisualEditorProps) {
   const { t } = useTranslation()
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -152,7 +155,9 @@ export function AmountDiscountVisualEditor({
                 id: 'amount',
                 header: t('Recharge Amount'),
                 cell: (discount) => (
-                  <span className='font-mono text-sm'>${discount.amount}</span>
+                  <span className='font-mono text-sm'>
+                    {discount.amount} {currency}
+                  </span>
                 ),
               },
               {
@@ -202,7 +207,7 @@ export function AmountDiscountVisualEditor({
                 <div className='mb-3 flex items-start justify-between'>
                   <div className='flex-1'>
                     <div className='mb-2 font-mono text-base font-medium'>
-                      ${discount.amount}
+                      {discount.amount} {currency}
                     </div>
                     <StatusBadge
                       variant={discount.discountRate < 1 ? 'info' : 'neutral'}
@@ -258,6 +263,7 @@ export function AmountDiscountVisualEditor({
         onOpenChange={setDialogOpen}
         onSave={handleSave}
         editData={editData}
+        currency={currency}
       />
     </div>
   )
