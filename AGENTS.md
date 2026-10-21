@@ -21,6 +21,7 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 - The Go gateway handles management APIs, upstream relay, billing, and background tasks across `router/`, `middleware/`, `controller/`, `service/`, `model/`, and `relay/`.
 - `relaykit/` is an independent Go module for protocol DTOs and conversions; transport, authentication, database access, and billing stay in the host.
 - `tokenkit/` is an independent Go module for text and image token counting and estimation; request parsing, file loading, and billing stay in the host.
+- Payments (EPay, Stripe, Cryptomus, and wallet balance) follow ppanel's gateway design: `service/payment/gateway/` is the protocol layer and never touches the database, `service/payment/` runs pricing, checkout, callbacks, and reconciliation, and `model/payment_*.go` holds payment methods, orders, and their state transitions.
 - JavaScript task plugins live in `plugins/tasks/`, run through `pkg/jsplugin/`, and integrate with host task polling and settlement.
 - `web/` is the React frontend (see `web/AGENTS.md`).
 
@@ -107,6 +108,14 @@ Inside `relaykit/`, use `kitutil.*` from `relaykit/relayconvert/kitutil/json.go`
 - Standard `SELECT ... FOR UPDATE` row locks built with GORM query methods in `model/` MUST use `lockForUpdate(tx)`. Do not use the legacy GORM v1 pattern `tx.Set("gorm:query_option", "FOR UPDATE")`, because GORM v2 silently ignores it and no lock is acquired. Do not duplicate `clause.Locking{Strength: "UPDATE"}` at call sites.
 - Queries on the log database must also work on ClickHouse: use `logGroupCol` / `logKeyCol` for reserved-word columns and branch with `common.UsingLogDatabase(...)` where the engines differ.
 - Avoid GORM boolean default tags such as `gorm:"default:true"` when the default is a business rule already enforced by code; when the default GORM reads back from the database does not match the tag, `AutoMigrate` issues `ALTER TABLE` again on every restart. Prefer setting these defaults in request/model normalization, hooks, constructors, or service logic. If a boolean column default is unavoidable, verify on PostgreSQL 18 that a second startup issues no `ALTER TABLE`.
+
+**Payments:**
+
+- Amounts are `int64` minor units (hundredths) of a named currency. Convert currencies with `gateway.ConvertAmount` and a decimal-string rate; never use floating point for money.
+- An order's payment expectation (amount, currency, rate) and its trade number are written once with compare-and-set updates (`SetPaymentExpectation`, `ClaimPaymentTrade`). Settlement locks the order with `lockForUpdate` and credits the wallet or subscription in the same transaction.
+- Settle a callback only after its signature verifies, its amount and currency equal the order's payment expectation, and the gateway confirms the payment. A verified payment that cannot be settled is recorded with `RecordPaymentUnmatched` and still acknowledged, so the gateway stops retrying; temporary failures return an error so it retries.
+- Build callback URLs with `gateway.NotifyURL` from the payment method's domain or the configured server address, never from the request Host header.
+- Files in `service/payment/gateway/` ported from ppanel keep their GPL-3.0 header listing what new-api changed; record further changes there too (see `THIRD-PARTY-LICENSES.md`).
 
 **Relay and provider behavior:**
 

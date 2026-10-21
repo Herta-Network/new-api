@@ -22,6 +22,9 @@
       "name": "充值"
     },
     {
+      "name": "支付"
+    },
+    {
       "name": "两步验证"
     },
     {
@@ -2097,6 +2100,1047 @@
           "充值"
         ],
         "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/notify/{platform}/{token}": {
+      "get": {
+        "summary": "支付回调",
+        "deprecated": false,
+        "description": "🔓 无需鉴权（支付平台回调），按支付方式 token 定位，验签后结算",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": []
+      },
+      "post": {
+        "summary": "支付回调",
+        "deprecated": false,
+        "description": "🔓 无需鉴权（支付平台回调），按支付方式 token 定位，验签后结算；请求体最大 64 KiB",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/payment/info": {
+      "get": {
+        "summary": "获取支付信息",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）。站点货币、最低充值、金额选项与折扣",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/methods": {
+      "get": {
+        "summary": "获取可用支付方式",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "purpose",
+            "in": "query",
+            "description": "topup 或 subscription",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/quote": {
+      "post": {
+        "summary": "支付报价",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）。返回价格、调整、手续费和应付总额，不建单",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "purpose": {
+                    "type": "string",
+                    "description": "topup 或 subscription"
+                  },
+                  "payment_method_id": {
+                    "type": "integer"
+                  },
+                  "amount": {
+                    "type": "string",
+                    "description": "充值面额（站点货币，最多两位小数）；仅 topup"
+                  },
+                  "plan_id": {
+                    "type": "integer",
+                    "description": "套餐 ID；仅 subscription"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/orders": {
+      "get": {
+        "summary": "获取我的支付订单",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "p",
+            "in": "query",
+            "description": "页码",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "每页数量",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "创建支付订单",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）。受严格限流；建单后立即发起支付，返回 type 为 url / stripe / paid",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "purpose": {
+                    "type": "string",
+                    "description": "topup 或 subscription"
+                  },
+                  "payment_method_id": {
+                    "type": "integer"
+                  },
+                  "amount": {
+                    "type": "string",
+                    "description": "充值面额（站点货币，最多两位小数）；仅 topup"
+                  },
+                  "plan_id": {
+                    "type": "integer",
+                    "description": "套餐 ID；仅 subscription"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/orders/{no}": {
+      "get": {
+        "summary": "获取我的支付订单详情",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "no",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/orders/{no}/checkout": {
+      "post": {
+        "summary": "继续支付",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）。受严格限流；对待支付订单重新发起或复用支付",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "no",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/orders/{no}/sync": {
+      "post": {
+        "summary": "同步订单支付状态",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）。受严格限流；向支付平台查询，已付款则结算",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "no",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/orders/{no}/close": {
+      "post": {
+        "summary": "关闭我的订单",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）。受严格限流；先向支付平台确认未付款",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "no",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/admin/orders": {
+      "get": {
+        "summary": "获取全部支付订单",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "p",
+            "in": "query",
+            "description": "页码",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "每页数量",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "1 待支付 / 2 已支付 / 3 已关闭 / 5 已完成",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "purpose",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "platform",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order_no",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/admin/orders/{no}/reconcile": {
+      "post": {
+        "summary": "对账",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）。向支付平台查询并按结果结算或保持待支付",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "no",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/admin/orders/{no}/close": {
+      "post": {
+        "summary": "关闭订单",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "no",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/admin/orders/{no}/fulfil": {
+      "post": {
+        "summary": "补发",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）。对已支付但入账失败的订单重新入账",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "no",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/admin/orders/{no}/complete": {
+      "post": {
+        "summary": "手工标记已付款",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）。没有支付平台凭据时使用，必须填写备注并记审计",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "no",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "note": {
+                    "type": "string",
+                    "description": "必填，最多 500 字"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/admin/unmatched": {
+      "get": {
+        "summary": "获取未匹配付款",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "p",
+            "in": "query",
+            "description": "页码",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "每页数量",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "resolved",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/admin/unmatched/{id}/resolve": {
+      "post": {
+        "summary": "处理未匹配付款",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）。必须填写备注",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "example": 0
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "note": {
+                    "type": "string",
+                    "description": "必填，最多 500 字"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/settings/platforms": {
+      "get": {
+        "summary": "获取支付平台字段说明",
+        "deprecated": false,
+        "description": "👑 需要超级管理员权限（Root）",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/settings/methods": {
+      "get": {
+        "summary": "获取支付方式",
+        "deprecated": false,
+        "description": "👑 需要超级管理员权限（Root）。密钥字段返回空字符串，secrets_set 标明已配置的密钥",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "创建支付方式",
+        "deprecated": false,
+        "description": "👑 需要超级管理员权限（Root）。Stripe 会自动注册 webhook",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "platform": {
+                    "type": "string",
+                    "description": "epay / stripe / cryptomus / balance，创建后不可修改"
+                  },
+                  "icon": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "sort": {
+                    "type": "integer"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "domain": {
+                    "type": "string"
+                  },
+                  "config": {
+                    "type": "object",
+                    "description": "按平台区分的配置；密钥字段留空表示保留原值"
+                  },
+                  "fee_mode": {
+                    "type": "integer",
+                    "description": "0 不收 / 1 按比例 / 2 固定 / 3 比例加固定"
+                  },
+                  "fee_rate_bp": {
+                    "type": "integer",
+                    "description": "比例手续费，万分比"
+                  },
+                  "fee_fixed": {
+                    "type": "integer",
+                    "description": "固定手续费，站点货币的分"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/settings/methods/{id}": {
+      "put": {
+        "summary": "更新支付方式",
+        "deprecated": false,
+        "description": "👑 需要超级管理员权限（Root）。有待支付订单时不能修改 config 或 domain",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "example": 0
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "platform": {
+                    "type": "string",
+                    "description": "epay / stripe / cryptomus / balance，创建后不可修改"
+                  },
+                  "icon": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "sort": {
+                    "type": "integer"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "domain": {
+                    "type": "string"
+                  },
+                  "config": {
+                    "type": "object",
+                    "description": "按平台区分的配置；密钥字段留空表示保留原值"
+                  },
+                  "fee_mode": {
+                    "type": "integer",
+                    "description": "0 不收 / 1 按比例 / 2 固定 / 3 比例加固定"
+                  },
+                  "fee_rate_bp": {
+                    "type": "integer",
+                    "description": "比例手续费，万分比"
+                  },
+                  "fee_fixed": {
+                    "type": "integer",
+                    "description": "固定手续费，站点货币的分"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "删除支付方式",
+        "deprecated": false,
+        "description": "👑 需要超级管理员权限（Root）。余额支付方式（id = -1）和有待支付订单的方式不能删除",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "example": 0
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/settings/methods/{id}/webhook/sync": {
+      "post": {
+        "summary": "同步 Stripe webhook",
+        "deprecated": false,
+        "description": "👑 需要超级管理员权限（Root）",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "example": 0
+          }
+        ],
         "responses": {
           "200": {
             "description": "成功",
