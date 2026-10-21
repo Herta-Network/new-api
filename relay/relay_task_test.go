@@ -15,13 +15,13 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -29,25 +29,13 @@ import (
 
 func setupRelayChannelDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	previousDB := model.DB
-	previousType := common.MainDatabaseType()
 	previousCache := common.MemoryCacheEnabled
-	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := database.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, database.AutoMigrate(&model.Channel{}))
-	model.DB = database
-	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	pgtest.Reset(t, model.DB)
 	common.MemoryCacheEnabled = false
 	t.Cleanup(func() {
-		model.DB = previousDB
-		common.SetMainDatabaseType(previousType)
 		common.MemoryCacheEnabled = previousCache
-		require.NoError(t, sqlDB.Close())
 	})
-	return database
+	return model.DB
 }
 
 func TestRealtimeFetchAppliesChannelHeaderOverrides(t *testing.T) {
@@ -84,11 +72,8 @@ func TestRealtimeFetchAppliesChannelHeaderOverrides(t *testing.T) {
 
 func TestRealtimeFetchRefundsTaskItFindsFailed(t *testing.T) {
 	database := setupRelayChannelDB(t)
-	require.NoError(t, database.AutoMigrate(&model.Task{}, &model.User{}, &model.Log{}))
-	previousLogDB := model.LOG_DB
 	previousFactory := service.GetTaskAdaptorFunc
 	previousRedis := common.RedisEnabled
-	model.LOG_DB = database
 	common.RedisEnabled = false
 	service.GetTaskAdaptorFunc = func(platform constant.TaskPlatform) service.TaskPollingAdaptor {
 		if adaptor := GetTaskAdaptor(platform); adaptor != nil {
@@ -97,7 +82,6 @@ func TestRealtimeFetchRefundsTaskItFindsFailed(t *testing.T) {
 		return nil
 	}
 	t.Cleanup(func() {
-		model.LOG_DB = previousLogDB
 		service.GetTaskAdaptorFunc = previousFactory
 		common.RedisEnabled = previousRedis
 	})

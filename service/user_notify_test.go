@@ -12,14 +12,13 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 // A low-balance reminder goes out once, on the charge that takes a wallet or
@@ -101,27 +100,19 @@ func TestQuotaReminderFiresOncePerDrop(t *testing.T) {
 // on, in that administrator's saved language. Until an administrator chooses,
 // root receives them and other administrators do not; other users never do.
 func TestChannelNoticesFollowEachAdministratorsSwitch(t *testing.T) {
-	previousDB := model.DB
 	previousCache, previousRedis := common.MemoryCacheEnabled, common.RedisEnabled
 	previousNotifyLimit := constant.NotifyLimitCount
 	previousClient, previousWorker := httpClient, system_setting.WorkerUrl
 	fetch := system_setting.GetFetchSetting()
 	previousFetch := *fetch
 	t.Cleanup(func() {
-		model.DB = previousDB
 		common.MemoryCacheEnabled, common.RedisEnabled = previousCache, previousRedis
 		constant.NotifyLimitCount = previousNotifyLimit
 		httpClient, system_setting.WorkerUrl = previousClient, previousWorker
 		*fetch = previousFetch
 	})
-	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := database.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.User{}))
-	model.DB = database
+	pgtest.Reset(t, model.DB)
+	database := model.DB
 	common.MemoryCacheEnabled, common.RedisEnabled = false, false
 	constant.NotifyLimitCount = 100
 

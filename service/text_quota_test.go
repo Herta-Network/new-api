@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -20,78 +20,27 @@ import (
 	hosttypes "github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
-// The configured DSNs must point at isolated test databases. Each dialect runs
-// the real reservation, settlement and log paths with the same billing cases.
-func TestFixedPriceBillingDatabaseMatrix(t *testing.T) {
-	for _, dialect := range []struct {
-		name   common.DatabaseType
-		env    string
-		logEnv string
-	}{
-		{common.DatabaseTypeSQLite, "", ""},
-		{common.DatabaseTypeMySQL, "TEST_FIXED_MYSQL_DSN", "TEST_FIXED_MYSQL_LOG_DSN"},
-		{common.DatabaseTypePostgreSQL, "TEST_FIXED_POSTGRES_DSN", "TEST_FIXED_POSTGRES_LOG_DSN"},
-	} {
-		t.Run(string(dialect.name), func(t *testing.T) {
-			var driver gorm.Dialector = sqlite.Open(":memory:")
-			if dialect.env != "" {
-				dsn := os.Getenv(dialect.env)
-				if dsn == "" {
-					t.Skip(dialect.env + " is not configured")
-				}
-				if dialect.name == common.DatabaseTypeMySQL {
-					driver = mysql.Open(dsn)
-				} else {
-					driver = postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
-				}
-			}
-			db, err := gorm.Open(driver, &gorm.Config{})
-			require.NoError(t, err)
-			sqlDB, err := db.DB()
-			require.NoError(t, err)
-			sqlDB.SetMaxOpenConns(1)
-			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-			logDB := db
-			if logDSN := os.Getenv(dialect.logEnv); logDSN != "" || dialect.name == common.DatabaseTypeSQLite {
-				var logDriver gorm.Dialector = sqlite.Open(":memory:")
-				if dialect.name == common.DatabaseTypeMySQL {
-					logDriver = mysql.Open(logDSN)
-				} else if dialect.name == common.DatabaseTypePostgreSQL {
-					logDriver = postgres.New(postgres.Config{DSN: logDSN, PreferSimpleProtocol: true})
-				}
-				logDB, err = gorm.Open(logDriver, &gorm.Config{})
-				require.NoError(t, err)
-				logSQL, err := logDB.DB()
-				require.NoError(t, err)
-				logSQL.SetMaxOpenConns(1)
-				t.Cleanup(func() { require.NoError(t, logSQL.Close()) })
-			}
-			oldDB, oldLogDB := model.DB, model.LOG_DB
-			oldMainType, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()
-			model.DB, model.LOG_DB = db, logDB
-			common.SetDatabaseTypes(dialect.name, dialect.name)
-			t.Cleanup(func() { model.DB, model.LOG_DB = oldDB, oldLogDB; common.SetDatabaseTypes(oldMainType, oldLogType) })
-			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}))
-			require.NoError(t, logDB.AutoMigrate(&model.Log{}))
-			versionQuery := "select version()"
-			if dialect.name == common.DatabaseTypeSQLite {
-				versionQuery = "select sqlite_version()"
-			}
-			var version string
-			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
-			t.Logf("database: %s", version)
-			runFixedPriceAccountingCases(t, db, logDB)
-		})
-	}
+// Runs the real reservation, settlement and log paths with consume logs in a
+// separate log database, so every case also proves where its log lands.
+func TestFixedPriceBillingAccounting(t *testing.T) {
+	truncate(t)
+	logDB, err := gorm.Open(postgres.New(postgres.Config{DSN: pgtest.NewSchema(t), PreferSimpleProtocol: true}), &gorm.Config{})
+	require.NoError(t, err)
+	logSQL, err := logDB.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, logSQL.Close()) })
+	require.NoError(t, logDB.AutoMigrate(&model.Log{}))
+	oldLogDB := model.LOG_DB
+	model.LOG_DB = logDB
+	t.Cleanup(func() { model.LOG_DB = oldLogDB })
+	runFixedPriceAccountingCases(t, model.DB, logDB)
 }
 
 func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
