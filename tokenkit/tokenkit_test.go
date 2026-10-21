@@ -9,6 +9,7 @@ import (
 	"github.com/dlclark/regexp2/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tiktoken-go/tokenizer"
 	"github.com/tiktoken-go/tokenizer/codec"
 )
 
@@ -129,11 +130,11 @@ var preTokenizerSamples = []string{
 	strings.Repeat("😀", 600),
 	strings.Repeat("e\u0301", 800),
 	strings.Repeat("9", 5000),
-	// Invalid UTF-8, which the codec splits itself.
+	// Invalid UTF-8, which regexp2 reads as U+FFFD for each invalid byte.
 	"abc\xff\xfedef",
 	"héllo\xc3",
 	"\x80 hello \xe4\xb8",
-	strings.Repeat("\xff", 2000),
+	strings.Repeat("\xff", 600),
 }
 
 // The pre-tokenizers cut text where the split patterns of tiktoken-go do.
@@ -188,5 +189,47 @@ func TestCountMatchesCodec(t *testing.T) {
 			assert.Equal(t, want, Count(model, text), "%s %q", model, text)
 			assert.Equal(t, want, Count(model, text), "%s %q cached", model, text)
 		}
+	}
+}
+
+// longestInput records the longest text its codec is asked to count.
+type longestInput struct {
+	tokenizer.Codec
+	longest int
+}
+
+func (c *longestInput) Count(text string) (int, error) {
+	c.longest = max(c.longest, len(text))
+	return c.Codec.Count(text)
+}
+
+// A piece that spans runs of alternating classes is never cut as one long run.
+// It reaches the encoder in parts of at most maxPieceBytes, so BPE stays
+// linear, and the count stays within 0.5% of encoding it whole.
+func TestCountBoundsEncoderInput(t *testing.T) {
+	for _, tc := range []struct {
+		model string
+		text  string
+	}{
+		{"gpt-4", strings.Repeat("\u2764\ufe0f", 2000)},
+		{"gpt-4", strings.Repeat("!!\u0301", 3000)},
+		{"gpt-5.6-sol", strings.Repeat("!!\u0301", 3000)},
+		{"gpt-5.6-sol", "!" + strings.Repeat("\n/", 4000)},
+		{"gpt-4", strings.Repeat("\u2764\ufe0f", 2000) + "\xff"},
+		{"gpt-4", strings.Repeat("\xff", 5000)},
+	} {
+		var base tokenizer.Codec = codec.NewO200kBase()
+		nextPiece := nextO200kPiece
+		if usesCl100k(tc.model) {
+			base, nextPiece = codec.NewCl100kBase(), nextCl100kPiece
+		}
+		recorder := &longestInput{Codec: base}
+		got := newEncoding(recorder, nextPiece).countText(tc.text)
+		whole, err := base.Count(tc.text)
+		require.NoError(t, err)
+
+		assert.LessOrEqual(t, recorder.longest, maxPieceBytes, "%s %q", tc.model, tc.text[:12])
+		assert.InEpsilon(t, whole, got, 0.005, "%s %q", tc.model, tc.text[:12])
+		assert.Equal(t, got, Count(tc.model, tc.text), "%s %q", tc.model, tc.text[:12])
 	}
 }

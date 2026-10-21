@@ -24,6 +24,15 @@ var (
 // runs, and a cut changes the count only inside the run (under 0.5% for CJK).
 const maxRunBytes = 1024
 
+// maxPieceBytes bounds a piece passed to the encoder at once. A piece can also
+// span runs of alternating classes, which maxRunBytes never cuts: symbols with
+// combining marks between them, or line breaks and slashes after symbols.
+// Text that maxRunBytes does not cut has every run shorter than maxRunBytes,
+// and a piece of at most two such runs fits in maxPieceBytes and is counted
+// exactly; invalid UTF-8 triples in size when read as U+FFFD, so its runs can
+// be cut sooner. Longer pieces are cut every maxPieceBytes.
+const maxPieceBytes = 2 * maxRunBytes
+
 // Piece cache bounds. The cache is a set-associative table that never grows:
 // a piece may sit in any slot of the set its hash picks, and a new piece takes
 // the first empty slot of its set or replaces one the hash picks. An encoding
@@ -70,9 +79,13 @@ func Count(model, text string) int {
 	if usesCl100k(model) {
 		e = cl100kBase()
 	}
+	return e.countText(text)
+}
+
+// countText returns the token count of text.
+func (e *encoding) countText(text string) int {
 	if !utf8.ValidString(text) {
-		// regexp2 reads each invalid byte as U+FFFD; leave such text to it.
-		return countChunks(text, e.codecCount)
+		return countChunks(text, e.countInvalid)
 	}
 	return countChunks(text, e.count)
 }
@@ -97,6 +110,12 @@ func countChunks(text string, count func(chunk string) int) int {
 	return total + count(text[start:])
 }
 
+// countInvalid returns the token count of a chunk that is not valid UTF-8,
+// which regexp2 reads with U+FFFD for each invalid byte.
+func (e *encoding) countInvalid(chunk string) int {
+	return e.count(string([]rune(chunk)))
+}
+
 // count returns the token count of chunk, which must be valid UTF-8.
 func (e *encoding) count(chunk string) int {
 	total := 0
@@ -107,10 +126,20 @@ func (e *encoding) count(chunk string) int {
 }
 
 // pieceCount returns the token count of one piece, from the cache when the
-// piece is short enough to keep.
+// piece is short enough to keep, and in parts when it is longer than
+// maxPieceBytes.
 func (e *encoding) pieceCount(piece string) int {
 	if len(piece) > maxCachedPieceBytes {
-		return e.codecCount(piece)
+		total := 0
+		for len(piece) > maxPieceBytes {
+			cut := maxPieceBytes
+			for !utf8.RuneStart(piece[cut]) {
+				cut--
+			}
+			total += e.codecCount(piece[:cut])
+			piece = piece[cut:]
+		}
+		return total + e.codecCount(piece)
 	}
 	h := maphash.String(e.seed, piece)
 	set := (*[pieceCacheWays]atomic.Pointer[countedPiece])(e.pieces[h%pieceCacheSlots&^(pieceCacheWays-1):])
