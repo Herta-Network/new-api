@@ -10,9 +10,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,19 +21,14 @@ import (
 
 func setupAuthSessionTestDB(t *testing.T) *model.User {
 	t.Helper()
-	previousDB, previousRedis := model.DB, common.RedisEnabled
+	previousRedis := common.RedisEnabled
 	previousActiveLimit := common.UserSessionActiveLimit
 	previousIssuanceLimit := common.UserSessionIssuanceLimit
 	previousIssuanceWindow := common.UserSessionIssuanceWindowSeconds
 	previousRevokedRetention := common.UserSessionRevokedRetentionDays
 	previousAlertThreshold := common.UserSessionHourlyAlertThreshold
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuthFlow{}, &model.UserAccessToken{}))
-	model.DB = db
+	pgtest.Reset(t, model.DB)
+	db := model.DB
 	common.RedisEnabled = false
 	common.UserSessionActiveLimit = common.DefaultUserSessionActiveLimit
 	common.UserSessionIssuanceLimit = common.DefaultUserSessionIssuanceLimit
@@ -41,14 +36,12 @@ func setupAuthSessionTestDB(t *testing.T) *model.User {
 	common.UserSessionRevokedRetentionDays = common.DefaultUserSessionRevokedRetentionDays
 	common.UserSessionHourlyAlertThreshold = common.DefaultUserSessionHourlyAlertThreshold
 	t.Cleanup(func() {
-		model.DB = previousDB
 		common.RedisEnabled = previousRedis
 		common.UserSessionActiveLimit = previousActiveLimit
 		common.UserSessionIssuanceLimit = previousIssuanceLimit
 		common.UserSessionIssuanceWindowSeconds = previousIssuanceWindow
 		common.UserSessionRevokedRetentionDays = previousRevokedRetention
 		common.UserSessionHourlyAlertThreshold = previousAlertThreshold
-		_ = sqlDB.Close()
 	})
 	user := &model.User{
 		Username:    "session-user",
@@ -294,7 +287,7 @@ func TestCleanupAuthArtifactsRemovesOnlyExpiredRecords(t *testing.T) {
 	var flows []model.AuthFlow
 	require.NoError(t, model.DB.Find(&flows).Error)
 	require.Len(t, flows, 1)
-	assert.Equal(t, "recent-flow", flows[0].TokenHash)
+	assert.Equal(t, "recent-flow", strings.TrimRight(flows[0].TokenHash, " "), "char(64) pads the short fixture hash")
 	var kept []string
 	require.NoError(t, model.DB.Model(&model.UserAccessToken{}).Order("id").Pluck("token_hash", &kept).Error)
 	assert.Equal(t, []string{"within-retention", "never-expires"}, kept)
