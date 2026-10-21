@@ -806,7 +806,10 @@ func DeleteOldLogBatch(ctx context.Context, targetTimestamp int64, limit int) (i
 		return total, nil
 	}
 
-	result := LOG_DB.WithContext(ctx).Where("created_at < ?", targetTimestamp).Limit(limit).Delete(&Log{})
+	// PostgreSQL has no DELETE ... LIMIT and GORM drops the Limit, so pick the
+	// batch in a subquery. It reads the oldest ids from idx_created_at_id.
+	oldest := LOG_DB.Model(&Log{}).Select("id").Where("created_at < ?", targetTimestamp).Order("created_at, id").Limit(limit)
+	result := LOG_DB.WithContext(ctx).Where("id IN (?)", oldest).Delete(&Log{})
 	if nil != result.Error {
 		return 0, result.Error
 	}
