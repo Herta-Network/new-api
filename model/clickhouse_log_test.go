@@ -106,7 +106,7 @@ func TestBuildLogLikeConditionUsesStandardEscape(t *testing.T) {
 	t.Cleanup(func() {
 		common.SetLogDatabaseType(originalLogDatabaseType)
 	})
-	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
+	common.SetLogDatabaseType(common.DatabaseTypePostgreSQL)
 
 	condition, pattern, err := buildLogLikeCondition("logs.model_name", "gpt_4%")
 

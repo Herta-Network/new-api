@@ -160,6 +160,18 @@ func NewSchema(tb testing.TB) string {
 	return dsn
 }
 
+// NewSchemaDB opens a connection to a new empty schema from NewSchema. The
+// connection is closed and the schema dropped when the test ends.
+func NewSchemaDB(tb testing.TB) *gorm.DB {
+	tb.Helper()
+	db, err := open(NewSchema(tb))
+	if err != nil {
+		tb.Fatalf("pgtest: connect: %v", err)
+	}
+	tb.Cleanup(func() { closeDB(db) })
+	return db
+}
+
 func open(dsn string) (*gorm.DB, error) {
 	return gorm.Open(postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true}), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
