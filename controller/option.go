@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/payment"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/console_setting"
@@ -20,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 )
 
@@ -437,6 +440,15 @@ func UpdateOption(c *gin.Context) {
 	recordManageAudit(c, "option.update", map[string]any{
 		"key": option.Key,
 	})
+	if option.Key == "ServerAddress" {
+		// Stripe webhooks of methods without a callback domain point at
+		// the server address.
+		gopool.Go(func() {
+			if err := payment.SyncStripeWebhooks(context.Background()); err != nil {
+				common.SysError(common.LogText("sync Stripe webhooks after the server address changed: %v", err))
+			}
+		})
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

@@ -209,6 +209,51 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/subscription/epay/notify", controller.SubscriptionEpayNotify)
 		apiRouter.GET("/subscription/epay/return", controller.SubscriptionEpayReturn)
 		apiRouter.POST("/subscription/epay/return", anonymousRequestBodyLimit, controller.SubscriptionEpayReturn)
+		// Payments: gateway callbacks (no auth), the buyer, administrators
+		// (orders) and the root (payment methods).
+		paymentRoute := apiRouter.Group("/payment")
+		{
+			paymentRoute.GET("/notify/:platform/:token", controller.PaymentNotify)
+			paymentRoute.POST("/notify/:platform/:token", anonymousRequestBodyLimit, controller.PaymentNotify)
+
+			buyerRoute := paymentRoute.Group("")
+			buyerRoute.Use(middleware.UserAuth())
+			{
+				buyerRoute.GET("/info", controller.GetPaymentInfo)
+				buyerRoute.GET("/methods", controller.GetBuyerPaymentMethods)
+				buyerRoute.POST("/quote", controller.QuotePayment)
+				buyerRoute.GET("/orders", controller.ListUserPaymentOrders)
+				buyerRoute.GET("/orders/:no", controller.GetUserPaymentOrder)
+				buyerRoute.POST("/orders", middleware.CriticalRateLimit(), controller.CreatePaymentOrder)
+				buyerRoute.POST("/orders/:no/checkout", middleware.CriticalRateLimit(), controller.CheckoutPaymentOrder)
+				buyerRoute.POST("/orders/:no/sync", middleware.CriticalRateLimit(), controller.SyncPaymentOrder)
+				buyerRoute.POST("/orders/:no/close", middleware.CriticalRateLimit(), controller.CloseUserPaymentOrder)
+			}
+
+			paymentAdminRoute := paymentRoute.Group("/admin")
+			paymentAdminRoute.Use(middleware.AdminAuth())
+			{
+				paymentAdminRoute.GET("/orders", controller.AdminListPaymentOrders)
+				paymentAdminRoute.POST("/orders/:no/reconcile", controller.AdminReconcilePaymentOrder)
+				paymentAdminRoute.POST("/orders/:no/close", controller.AdminClosePaymentOrder)
+				paymentAdminRoute.POST("/orders/:no/fulfil", controller.AdminFulfilPaymentOrder)
+				paymentAdminRoute.POST("/orders/:no/complete", controller.AdminCompletePaymentOrder)
+				paymentAdminRoute.GET("/unmatched", controller.AdminListPaymentUnmatched)
+				paymentAdminRoute.POST("/unmatched/:id/resolve", controller.AdminResolvePaymentUnmatched)
+			}
+
+			paymentSettingsRoute := paymentRoute.Group("/settings")
+			paymentSettingsRoute.Use(middleware.RootAuth())
+			{
+				paymentSettingsRoute.GET("/platforms", controller.GetPaymentPlatforms)
+				paymentSettingsRoute.GET("/methods", controller.AdminListPaymentMethods)
+				paymentSettingsRoute.POST("/methods", controller.AdminCreatePaymentMethod)
+				paymentSettingsRoute.PUT("/methods/:id", controller.AdminUpdatePaymentMethod)
+				paymentSettingsRoute.DELETE("/methods/:id", controller.AdminDeletePaymentMethod)
+				paymentSettingsRoute.POST("/methods/:id/webhook/sync", controller.AdminSyncPaymentWebhook)
+			}
+		}
+
 		optionRoute := apiRouter.Group("/option")
 		optionRoute.Use(middleware.RootAuth())
 		{
