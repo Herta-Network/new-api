@@ -219,6 +219,11 @@ func validateOptionValue(key string, value string) error {
 	if key == "ResendKeyConfigured" {
 		return common.NewMessage("Resend key configuration status is read-only")
 	}
+	// An empty From Address sends from the SMTP account.
+	if key == "SMTPFrom" && value != "" {
+		_, err := common.ParseSMTPSender(value)
+		return err
+	}
 	if key == operation_setting.ToolPriceOptionKey {
 		return operation_setting.ValidateToolPricesJSON(value)
 	}
