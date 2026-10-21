@@ -36,7 +36,7 @@ const (
 	testPlan         = 7
 	testFreePlan     = 8
 	testOddPlan      = 9
-	testEPayKey      = "epay-key"
+	testEPaySecret   = "epay-key"
 	testStripeSecret = "whsec_test"
 )
 
@@ -135,7 +135,7 @@ func setupPayment(t *testing.T) *paymentFixture {
 	for _, method := range []*model.PaymentMethod{
 		{Id: model.BalancePaymentMethodID, Name: "Balance", Platform: model.PaymentPlatformBalance, Enabled: true, Token: "balance-token"},
 		{Id: testEPayMethod, Name: "Alipay", Platform: gateway.PlatformEPay, Enabled: true, Token: "epay-token",
-			Config:  `{"url":"` + epayServer.URL + `","pid":"1001","key":"` + testEPayKey + `","type":""}`,
+			Config:  `{"url":"` + epayServer.URL + `","pid":"1001","key":"` + testEPaySecret + `","type":""}`,
 			FeeMode: model.PaymentFeeRate, FeeRateBp: 300},
 		{Id: testStripeMethod, Name: "Card", Platform: gateway.PlatformStripe, Enabled: true, Token: "stripe-token",
 			Config:  `{"public_key":"pk_test_a","secret_key":"sk_test_a","webhook_endpoint_id":"we_0","webhook_url":"","webhook_secret":"` + testStripeSecret + `"}`,
@@ -148,7 +148,7 @@ func setupPayment(t *testing.T) *paymentFixture {
 		{Id: testFreePlan, Title: "Free", PriceAmount: 0},
 		{Id: testOddPlan, Title: "Odd", PriceAmount: 9.999},
 	} {
-		plan.Currency, plan.DurationUnit, plan.DurationValue, plan.Enabled, plan.TotalAmount = "USD", model.SubscriptionDurationMonth, 1, true, 1000
+		plan.DurationUnit, plan.DurationValue, plan.Enabled, plan.TotalAmount = model.SubscriptionDurationMonth, 1, true, 1000
 		require.NoError(t, model.DB.Create(plan).Error)
 		model.InvalidateSubscriptionPlanCache(plan.Id)
 	}
@@ -235,12 +235,20 @@ func TestQuotePurchase(t *testing.T) {
 		"plan price of three places": subscription(testOddPlan, testStripeMethod),
 		"unknown method":             subscription(testPlan, 404),
 		"unknown purpose":            {Purpose: "gift", PaymentMethodId: testStripeMethod},
+		"above the order ceiling":    topup("100000000.01", testStripeMethod),
 	} {
 		_, err := QuotePurchase(context.Background(), testUser, req)
 		assert.Error(t, err, name)
 	}
+
+	// A top-up that would lift the wallet past common.MaxWalletQuota is
+	// refused before the buyer pays; settlement could not credit it.
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", testUser).Update("quota", common.MaxWalletQuota-100_000).Error)
+	_, err := QuotePurchase(context.Background(), testUser, topup("1", testStripeMethod))
+	assert.ErrorIs(t, err, model.ErrTopUpQuotaLimitExceeded)
+
 	require.NoError(t, model.DB.Model(&model.PaymentMethod{}).Where("id = ?", testStripeMethod).Update("enabled", false).Error)
-	_, err := QuotePurchase(context.Background(), testUser, topup("10", testStripeMethod))
+	_, err = QuotePurchase(context.Background(), testUser, topup("10", testStripeMethod))
 	assert.Error(t, err, "a disabled method takes no order")
 }
 
@@ -295,7 +303,7 @@ func signEPayCallback(params map[string]string) map[string]string {
 	for _, key := range keys {
 		parts = append(parts, key+"="+params[key])
 	}
-	sum := md5.Sum([]byte(strings.Join(parts, "&") + testEPayKey))
+	sum := md5.Sum([]byte(strings.Join(parts, "&") + testEPaySecret))
 	signed := map[string]string{"sign": hex.EncodeToString(sum[:]), "sign_type": "MD5"}
 	for key, value := range params {
 		signed[key] = value

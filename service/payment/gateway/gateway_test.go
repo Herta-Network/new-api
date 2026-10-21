@@ -158,7 +158,7 @@ func TestRegistryDescribesThePlatforms(t *testing.T) {
 		assert.True(t, ok, platform)
 		assert.Equal(t, want, style, platform)
 	}
-	for _, platform := range []string{PlatformBalance, "creem", "EPay", ""} {
+	for _, platform := range []string{PlatformBalance, "paypal", "EPay", ""} {
 		_, ok := registry.CallbackStyle(platform)
 		assert.False(t, ok, platform)
 		_, err := registry.Open(Method{Platform: platform, Config: "{}"})
