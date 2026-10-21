@@ -559,6 +559,16 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'subscription.bind': 'Bound a subscription',
   'subscription.user_quota_reset':
     'Administrator reset the quota of subscription plan {{plan_title}} (ID: {{plan_id}})',
+  // Payments
+  'payment.order_reconcile': 'Reconciled a payment order with its gateway',
+  'payment.order_close': 'Closed a payment order',
+  'payment.order_fulfil': 'Fulfilled a paid payment order',
+  'payment.order_complete': 'Marked payment order {{order_no}} as paid: {{note}}',
+  'payment.unmatched_resolve': 'Resolved unmatched payment {{id}}: {{note}}',
+  'payment.method_create': 'Created payment method {{name}} ({{platform}})',
+  'payment.method_update': 'Updated payment method {{name}} ({{platform}})',
+  'payment.method_delete': 'Deleted a payment method',
+  'payment.webhook_sync': 'Synced the Stripe webhook of a payment method',
   // Logs
   'log.clear': 'Cleared historical logs',
   'log.cleanup_start': 'Log cleanup task started.',

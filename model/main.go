@@ -330,8 +330,15 @@ func migrateDB() error {
 		&AuthzRole{},
 		&UserAccessToken{},
 		&SubscriptionPlan{},
+		&PaymentMethod{},
+		&PaymentOrder{},
+		&PaymentUnmatched{},
+		&PaymentExchangeRate{},
 	)
 	if err != nil {
+		return err
+	}
+	if err := ensureBalancePaymentMethod(DB); err != nil {
 		return err
 	}
 	if err := InitializeUserAuthVersions(); err != nil {
