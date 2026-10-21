@@ -6119,8 +6119,6 @@
     "The authenticator code is incorrect.": "Mã xác thực không chính xác.",
     "The binding will complete automatically after authorization": "Việc liên kết sẽ hoàn tất tự động sau khi ủy quyền",
     "This API is deprecated": "API này đã ngừng sử dụng",
-    "The bound Product powers wallet top-ups: when a user enters any amount, new-api runs the checkout against this single Pancake product and overrides the price per session — no need to pre-create $1 / $5 / $10 SKUs.": "Sản phẩm đã liên kết dùng cho nạp ví: khi người dùng nhập bất kỳ số tiền nào, new-api chạy thanh toán trên một sản phẩm Pancake duy nhất này và ghi đè giá theo từng phiên — không cần tạo trước SKU $1 / $5 / $10.",
-    "The bound Store is the parent container for every Pancake product new-api creates from this admin — both the wallet top-up product and any subscription-plan products. One store is enough; pin a different one only if you genuinely run separate Pancake catalogs.": "Cửa hàng đã liên kết là vùng chứa cha cho mọi sản phẩm Pancake mà new-api tạo từ trang quản trị này — bao gồm sản phẩm nạp ví và mọi sản phẩm gói đăng ký. Một cửa hàng là đủ; chỉ ghim cửa hàng khác nếu bạn thực sự vận hành các catalog Pancake riêng.",
     "The button fills in this website and keeps any existing website addresses. Save changes on the settings page to apply.": "Nút này điền trang hiện tại và giữ các địa chỉ đã có. Lưu thay đổi trên trang cài đặt để áp dụng.",
     "The change succeeded, but the notification email could not be sent.": "Thay đổi đã hoàn tất nhưng không thể gửi email thông báo.",
     "The changelog could not be fetched or parsed. Please try again.": "Không thể tải hoặc phân tích nhật ký thay đổi. Vui lòng thử lại.",
