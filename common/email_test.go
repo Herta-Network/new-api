@@ -11,12 +11,15 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/mail"
 	"net/smtp"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,6 +31,7 @@ type fakeSMTPServer struct {
 	advertiseSTARTTLS bool
 	authMechanisms    []string
 	messages          chan string
+	mailFromCommands  chan string
 	authCommands      chan string
 	startTLSCommands  chan string
 }
@@ -58,6 +62,7 @@ func newFakeSMTPServerWithSTARTTLSAdvertisement(t *testing.T, advertiseSTARTTLS 
 		advertiseSTARTTLS: advertiseSTARTTLS,
 		authMechanisms:    []string{"PLAIN", "LOGIN"},
 		messages:          make(chan string, 1),
+		mailFromCommands:  make(chan string, 1),
 		authCommands:      make(chan string, 1),
 		startTLSCommands:  make(chan string, 1),
 	}
@@ -87,6 +92,7 @@ func newFakeImplicitTLSSMTPServer(t *testing.T) *fakeSMTPServer {
 		advertiseSTARTTLS: false,
 		authMechanisms:    []string{"PLAIN", "LOGIN"},
 		messages:          make(chan string, 1),
+		mailFromCommands:  make(chan string, 1),
 		authCommands:      make(chan string, 1),
 		startTLSCommands:  make(chan string, 1),
 	}
@@ -167,6 +173,10 @@ func (s *fakeSMTPServer) serve() {
 				return
 			}
 		case strings.HasPrefix(upperCommand, "MAIL FROM:"):
+			select {
+			case s.mailFromCommands <- command:
+			default:
+			}
 			if err := writeSMTPLine(rw, "250 2.1.0 Sender OK"); err != nil {
 				return
 			}
@@ -560,4 +570,123 @@ func TestSendEmailExplicitStartTLSRejectsUntrustedCertificateByDefault(t *testin
 	err := SendEmail("Verification", "receiver@example.com", "<p>123456</p>")
 	require.Error(t, err)
 	require.Contains(t, fmt.Sprint(err), "certificate")
+}
+
+func TestSendEmailAcceptsBareOrNamedSMTPSender(t *testing.T) {
+	tests := []struct {
+		name, from, account string
+		mailFrom, header    string
+		displayName         string
+		messageIDDomain     string
+	}{
+		{
+			name:            "bare address shows the system name",
+			from:            "noreply@example.com",
+			mailFrom:        "MAIL FROM:<noreply@example.com>",
+			header:          `"New API" <noreply@example.com>`,
+			displayName:     "New API",
+			messageIDDomain: "example.com",
+		},
+		{
+			name:            "ASCII display name",
+			from:            "Mioriq Mail <noreply@mail.example.com>",
+			mailFrom:        "MAIL FROM:<noreply@mail.example.com>",
+			header:          `"Mioriq Mail" <noreply@mail.example.com>`,
+			displayName:     "Mioriq Mail",
+			messageIDDomain: "mail.example.com",
+		},
+		{
+			name:            "Chinese display name",
+			from:            "通知中心 <noreply@example.com>",
+			mailFrom:        "MAIL FROM:<noreply@example.com>",
+			header:          "=?utf-8?q?=E9=80=9A=E7=9F=A5=E4=B8=AD=E5=BF=83?= <noreply@example.com>",
+			displayName:     "通知中心",
+			messageIDDomain: "example.com",
+		},
+		{
+			name:            "empty setting sends from the SMTP account",
+			account:         "sender@example.org",
+			mailFrom:        "MAIL FROM:<sender@example.org>",
+			header:          `"New API" <sender@example.org>`,
+			displayName:     "New API",
+			messageIDDomain: "example.org",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := newFakeSMTPServerWithSTARTTLSAdvertisement(t, false)
+			defer server.close()
+			withSMTPSettings(t)
+
+			SMTPServer = server.host
+			SMTPPort = server.port
+			SMTPSSLEnabled = false
+			SMTPStartTLSEnabled = false
+			SMTPAccount = test.account
+			SMTPFrom = test.from
+			SMTPToken = ""
+			SystemName = "New API"
+
+			require.NoError(t, SendEmail("Verification", "receiver@example.com", "<p>123456</p>"))
+			assert.Equal(t, test.from, SMTPFrom, "sending must not rewrite the setting")
+
+			select {
+			case command := <-server.mailFromCommands:
+				assert.Equal(t, test.mailFrom, command)
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for SMTP MAIL FROM")
+			}
+			var data string
+			select {
+			case data = <-server.messages:
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for SMTP DATA")
+			}
+			message, err := mail.ReadMessage(strings.NewReader(data))
+			require.NoError(t, err)
+			assert.Equal(t, test.header, message.Header.Get("From"))
+			from, err := message.Header.AddressList("From")
+			require.NoError(t, err)
+			require.Len(t, from, 1)
+			assert.Equal(t, test.displayName, from[0].Name)
+			assert.Regexp(t, `^<\d+\.[0-9A-Za-z]{12}@`+regexp.QuoteMeta(test.messageIDDomain)+`>$`, message.Header.Get("Message-ID"))
+		})
+	}
+}
+
+func TestSendEmailRejectsInvalidSMTPSenderBeforeConnecting(t *testing.T) {
+	tests := map[string]struct{ from, account string }{
+		"name without angle brackets": {from: "New API noreply@example.com"},
+		"two addresses":               {from: "a@example.com, b@example.com"},
+		"line break in the setting":   {from: "noreply@example.com\r\nBcc: other@example.net"},
+		"line break in an encoded name": {
+			from: "=?utf-8?b?RXZpbA0KQmNjOiBvdGhlckBleGFtcGxlLm5ldA==?= <noreply@example.com>",
+		},
+		"empty setting with a non-address account": {account: "no-reply"},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			server := newFakeSMTPServerWithSTARTTLSAdvertisement(t, false)
+			defer server.close()
+			withSMTPSettings(t)
+
+			SMTPServer = server.host
+			SMTPPort = server.port
+			SMTPSSLEnabled = false
+			SMTPStartTLSEnabled = false
+			SMTPAccount = test.account
+			SMTPFrom = test.from
+			SMTPToken = ""
+
+			err := SendEmail("Verification", "receiver@example.com", "<p>123456</p>")
+			var message *Message
+			require.ErrorAs(t, err, &message)
+			assert.Equal(t, "SMTP sender address is not configured or invalid", message.Key)
+			select {
+			case command := <-server.mailFromCommands:
+				t.Fatalf("unexpected SMTP command: %s", command)
+			default:
+			}
+		})
+	}
 }

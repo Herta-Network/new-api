@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import * as z from 'zod'
 
+const EMAIL_ADDRESS = /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/
+
 export const createEmailSchema = (t: (key: string) => string) =>
   z
     .object({
@@ -53,7 +55,7 @@ export const createEmailSchema = (t: (key: string) => string) =>
           })
         }
         const from = values.ResendFrom.trim()
-        if (!/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(from)) {
+        if (!EMAIL_ADDRESS.test(from)) {
           context.addIssue({
             code: 'custom',
             path: ['ResendFrom'],
@@ -83,12 +85,17 @@ export const createEmailSchema = (t: (key: string) => string) =>
           message: t('Port must be a positive integer'),
         })
       }
+      // A bare address or "Name <address>"; the server parses the full value.
       const from = values.SMTPFrom.trim()
-      if (from && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(from)) {
+      const address = from.match(/^[^<>]*<([^<>]+)>$/)?.[1] ?? from
+      const hasLineBreak = /[\r\n]/.test(from) || from.includes('\0')
+      if (from && (hasLineBreak || !EMAIL_ADDRESS.test(address))) {
         context.addIssue({
           code: 'custom',
           path: ['SMTPFrom'],
-          message: t('Enter a valid email or leave blank'),
+          message: t(
+            'Enter an email address or Name <email address>, or leave blank'
+          ),
         })
       }
     })

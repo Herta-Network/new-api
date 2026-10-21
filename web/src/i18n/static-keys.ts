@@ -984,4 +984,6 @@ export const STATIC_I18N_KEYS = [
   'Waiting for payment',
   'This page updates by itself once the payment provider confirms the payment.',
   'This payment method is unavailable',
+  // Email settings messages returned by the server.
+  'SMTP sender address is not configured or invalid',
 ] as const

@@ -230,6 +230,42 @@ func TestResendSettingsChangesKeepActiveDeliveryWorking(t *testing.T) {
 	}
 }
 
+func TestSMTPFromSettingAcceptsBareOrNamedAddress(t *testing.T) {
+	pgtest.Reset(t, model.DB)
+	previousRedis := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = previousRedis })
+
+	tests := []struct {
+		name, value string
+		saved       bool
+	}{
+		{"named address", "通知中心 <noreply@example.com>", true},
+		{"empty uses the SMTP account", "", true},
+		{"name without angle brackets", "New API noreply@example.com", false},
+		{"line break", "noreply@example.com\r\nBcc: other@example.net", false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			configureEmailDelivery(t, map[string]string{"EmailProvider": "smtp", "SMTPFrom": "sender@example.com"})
+			common.SMTPFrom = "sender@example.com"
+			body, err := common.Marshal(OptionUpdateRequest{Key: "SMTPFrom", Value: test.value})
+			require.NoError(t, err)
+			response := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(response)
+			context.Request = httptest.NewRequest(http.MethodPut, "/api/option/", strings.NewReader(string(body)))
+			UpdateOption(context)
+			if test.saved {
+				assert.Contains(t, response.Body.String(), `"success":true`)
+				assert.Equal(t, test.value, common.SMTPFrom)
+				return
+			}
+			assert.Contains(t, response.Body.String(), `"message_key":"SMTP sender address is not configured or invalid"`)
+			assert.Equal(t, "sender@example.com", common.SMTPFrom)
+		})
+	}
+}
+
 func TestEmailKeyStatusIsDerivedAndReadOnly(t *testing.T) {
 	configureEmailDelivery(t, map[string]string{"EmailProvider": "smtp", "ResendKeyConfigured": "true"})
 	response := httptest.NewRecorder()
