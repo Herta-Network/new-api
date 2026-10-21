@@ -422,8 +422,12 @@ func updateChannelMoonshotBalance(channel *model.Channel) (float64, error) {
 	if !response.Status || response.Code != 0 {
 		return 0, fmt.Errorf("failed to update moonshot balance, status: %v, code: %d, scode: %s", response.Status, response.Code, response.Scode)
 	}
+	usdExchangeRate := operation_setting.USDExchangeRate
+	if !(usdExchangeRate > 0) || math.IsInf(usdExchangeRate, 0) {
+		return 0, errors.New("USD exchange rate must be greater than zero")
+	}
 	availableBalanceCny := response.Data.AvailableBalance
-	availableBalanceUsd := decimal.NewFromFloat(availableBalanceCny).Div(decimal.NewFromFloat(operation_setting.Price)).InexactFloat64()
+	availableBalanceUsd := decimal.NewFromFloat(availableBalanceCny).Div(decimal.NewFromFloat(usdExchangeRate)).InexactFloat64()
 	channel.UpdateBalance(availableBalanceUsd)
 	return availableBalanceUsd, nil
 }

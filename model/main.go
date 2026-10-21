@@ -306,7 +306,6 @@ func migrateDB() error {
 		&Ability{},
 		&Log{},
 		&Midjourney{},
-		&TopUp{},
 		&QuotaData{},
 		&Task{},
 		&TaskPlugin{},
@@ -317,7 +316,6 @@ func migrateDB() error {
 		&TwoFA{},
 		&TwoFABackupCode{},
 		&Checkin{},
-		&SubscriptionOrder{},
 		&UserSubscription{},
 		&SubscriptionPreConsumeRecord{},
 		&CustomOAuthProvider{},
@@ -336,6 +334,9 @@ func migrateDB() error {
 		&PaymentExchangeRate{},
 	)
 	if err != nil {
+		return err
+	}
+	if err := dropRetiredPayments(DB); err != nil {
 		return err
 	}
 	if err := ensureBalancePaymentMethod(DB); err != nil {
