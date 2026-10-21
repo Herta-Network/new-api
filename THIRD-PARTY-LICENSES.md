@@ -1,9 +1,9 @@
 # Third-Party Licenses
 
 This file summarizes direct third-party dependencies used by distributed builds of this project.
-It is an engineering compliance artifact and should be kept with Docker images, standalone binaries, frontend bundles, and Electron installers.
+It is an engineering compliance artifact and should be kept with Docker images, standalone binaries, and frontend bundles.
 
-Scope: direct dependencies from `go.mod` (including the in-repo `relaykit` and `tokenkit` modules), `web/package.json`, and `electron/package.json`, plus third-party source copied into this repository (see Vendored Source).
+Scope: direct dependencies from `go.mod` (including the in-repo `relaykit` and `tokenkit` modules) and `web/package.json`, plus third-party source copied into this repository (see Vendored Source).
 Transitive dependencies should be audited before a final external release.
 
 ## Dependency Inventory
@@ -165,9 +165,6 @@ Transitive dependencies should be audited before a final external release.
 | web      | development | npm       | `oxlint`                                                | `1.74.0`                             | MIT                     |
 | web      | development | npm       | `shadcn`                                                | `4.13.1`                             | MIT                     |
 | web      | development | npm       | `vitest`                                                | `4.1.10`                             | MIT                     |
-| electron | development | npm       | `cross-env`                                             | `7.0.3`                              | MIT                     |
-| electron | development | npm       | `electron`                                              | `41.10.6`                            | MIT                     |
-| electron | development | npm       | `electron-builder`                                      | `26.15.3`                            | MIT                     |
 
 ## Vendored Source
 

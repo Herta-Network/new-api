@@ -147,20 +147,17 @@ Ce README décrit le code source actuel. Consultez les notes de la version que v
 
 ## Démarrage rapide
 
-### Essai local avec Docker
+### Essai local avec Docker Compose
 
-Cette commande démarre une instance SQLite accessible uniquement depuis la machine locale :
+New API nécessite PostgreSQL 18 ou une version ultérieure. La [configuration Compose](./docker-compose.yml) du dépôt démarre New API, PostgreSQL 18 et Redis :
 
 ```bash
-mkdir -p data
-docker run --name new-api -d --restart unless-stopped \
-  -p 127.0.0.1:3000:3000 \
-  -e TZ=Asia/Shanghai \
-  -v "$(pwd)/data:/data" \
-  calciumion/new-api:latest
+git clone https://github.com/QuantumNous/new-api.git
+cd new-api
+docker compose up -d
 ```
 
-Ouvrez [http://localhost:3000](http://localhost:3000) et suivez l'assistant pour créer le compte administrateur. Le répertoire `data` conserve la base SQLite lors du remplacement du conteneur.
+Ouvrez [http://localhost:3000](http://localhost:3000) et suivez l'assistant pour créer le compte administrateur. Le volume `pg_data` conserve les données PostgreSQL lors du remplacement des conteneurs. Le fichier Compose utilise des mots de passe d'exemple et publie le port 3000 sur toutes les interfaces ; suivez la section [Déploiement](#deployment) avant de l'exposer.
 
 ### Première requête
 
@@ -191,7 +188,7 @@ curl --fail-with-body http://localhost:3000/v1/responses \
 
 ### Docker Compose
 
-La [configuration Compose](./docker-compose.yml) du dépôt démarre **New API + PostgreSQL + Redis** par défaut. Elle contient aussi des exemples pour MySQL et une base de journaux ClickHouse distincte.
+La [configuration Compose](./docker-compose.yml) du dépôt démarre **New API + PostgreSQL 18 + Redis** par défaut. Elle contient aussi un exemple de base de journaux ClickHouse distincte.
 
 ```bash
 git clone https://github.com/QuantumNous/new-api.git
@@ -205,19 +202,23 @@ docker compose up -d
 docker compose logs -f new-api
 ```
 
+Les fichiers Compose précédents utilisaient `postgres:15` avec les données dans `/var/lib/postgresql/data`, que PostgreSQL 18 ne peut pas ouvrir. Pour mettre à niveau, sauvegardez avec `pg_dump` depuis l'ancienne image, démarrez PostgreSQL 18 sur un volume vide, puis restaurez la sauvegarde.
+
 ### Stockage et configuration
 
 | Composant | Options |
 | --- | --- |
-| Base principale | SQLite, MySQL ≥ 5.7.8 ou PostgreSQL ≥ 9.6 |
-| Base de journaux distincte | Configurée avec `LOG_SQL_DSN` ; prend aussi en charge ClickHouse |
+| Base principale | PostgreSQL 18 ou ultérieur (obligatoire) |
+| Base de journaux distincte | Facultative ; PostgreSQL ou ClickHouse, configurée avec `LOG_SQL_DSN` |
 | Cache | Redis facultatif et cache mémoire ; partagez Redis si les nœuds doivent partager les limites de débit |
 | Plateformes des conteneurs | Linux amd64 / arm64 |
 
+SQLite et MySQL ne sont pas pris en charge, et aucune migration depuis ces bases n'est fournie.
+
 | Variable | Rôle |
 | --- | --- |
-| `SQL_DSN` | Connexion à la base principale ; SQLite si non définie |
-| `LOG_SQL_DSN` | Connexion facultative à une base de journaux distincte |
+| `SQL_DSN` | Connexion obligatoire à la base principale, par exemple `postgresql://user:password@host:5432/new-api` ; le service ne démarre pas sans elle |
+| `LOG_SQL_DSN` | Base de journaux distincte facultative (PostgreSQL ou ClickHouse) ; sans elle, les journaux vont dans la base principale |
 | `REDIS_CONN_STRING` | Chaîne de connexion Redis |
 | `SESSION_SECRET` | Secret d'authentification persistant, identique sur tous les nœuds |
 | `CRYPTO_SECRET` | Vaut `SESSION_SECRET` par défaut ; même valeur effective pour les nœuds partageant Redis |
@@ -245,7 +246,8 @@ cd web
 bun install --frozen-lockfile
 bun run build
 cd ..
-go run .
+# SQL_DSN doit pointer vers une base PostgreSQL 18 ou ultérieure
+SQL_DSN=postgresql://user:password@localhost:5432/new-api go run .
 ```
 
 Dans un second terminal, démarrez le serveur de développement frontend :
@@ -265,9 +267,8 @@ Ouvrez [http://localhost:5173](http://localhost:5173) ; les requêtes API sont r
 | [relaykit/](./relaykit/README.md) | Module Go autonome pour les DTO et conversions de protocoles |
 | [plugins/tasks/](./plugins/tasks/) | Extensions de tâches JavaScript ; contrat et limites de l'hôte dans [Task Plugin API v1](./docs/plugin-api/v1.md) |
 | `web/` | Console web ; voir les [conventions frontend](./web/AGENTS.md) |
-| [electron/](./electron/README.md) | Application de bureau et packaging |
 
-Lisez [AGENTS.md](./AGENTS.md) avant de contribuer. Exécutez les vérifications adaptées : `make test` pour les modules Go ; `bun run typecheck`, `bun run lint`, `bun run test` et `bun run build` dans `web/` pour le frontend. Une modification de RelayKit nécessite aussi `GOWORK=off go build ./...` depuis `relaykit/`.
+Lisez [AGENTS.md](./AGENTS.md) avant de contribuer. Exécutez les vérifications adaptées : `make test` pour les modules Go (les tests de base de données exigent `TEST_POSTGRES_DSN` ; `make test-db` démarre un PostgreSQL 18 local et l'affiche) ; `bun run typecheck`, `bun run lint`, `bun run test` et `bun run build` dans `web/` pour le frontend. Une modification de RelayKit nécessite aussi `GOWORK=off go build ./...` depuis `relaykit/`.
 
 <a id="documentation"></a>
 
