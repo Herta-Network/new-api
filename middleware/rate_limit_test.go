@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -289,4 +290,78 @@ func TestGlobalWebRateLimitCountsFrontendFilesInStaticBucket(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "1", webCount)
 	})
+}
+
+// Buyer payment calls use per-user buckets, so a buyer polling the payment
+// result, or several buyers behind one NAT, leave the IP-keyed critical
+// bucket that guards login untouched. The routes mirror router/api-router.go.
+func TestPaymentRateLimitLeavesLoginBucketAlone(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	redisServer, _ := useRateLimitMiniRedis(t)
+	previousCriticalEnable, previousCriticalNum, previousCriticalDuration := common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration
+	previousPaymentEnable, previousPaymentNum, previousPaymentDuration := common.PaymentRateLimitEnable, common.PaymentRateLimitNum, common.PaymentRateLimitDuration
+	t.Cleanup(func() {
+		common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration = previousCriticalEnable, previousCriticalNum, previousCriticalDuration
+		common.PaymentRateLimitEnable, common.PaymentRateLimitNum, common.PaymentRateLimitDuration = previousPaymentEnable, previousPaymentNum, previousPaymentDuration
+	})
+	common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration = true, 20, 20*60
+	common.PaymentRateLimitEnable, common.PaymentRateLimitNum, common.PaymentRateLimitDuration = true, 60, 10*60
+
+	signedIn := func(c *gin.Context) {
+		userID, _ := strconv.Atoi(c.GetHeader("X-User"))
+		c.Set("id", userID)
+	}
+	ok := func(c *gin.Context) { c.Status(http.StatusNoContent) }
+	router := gin.New()
+	require.NoError(t, router.SetTrustedProxies(nil))
+	router.POST("/api/user/login", CriticalRateLimit(), ok)
+	router.POST("/api/payment/orders", signedIn, UserCriticalRateLimit("payment-order"), ok)
+	router.POST("/api/payment/orders/:no/checkout", signedIn, PaymentRateLimit(), ok)
+	router.POST("/api/payment/orders/:no/sync", signedIn, PaymentRateLimit(), ok)
+	router.POST("/api/payment/orders/:no/close", signedIn, PaymentRateLimit(), ok)
+
+	const clientIP = "192.0.2.80"
+	post := func(path string, userID int) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, path, nil)
+		request.RemoteAddr = clientIP + ":12345"
+		if userID != 0 {
+			request.Header.Set("X-User", strconv.Itoa(userID))
+		}
+		router.ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	// Two buyers on one IP each pay five orders the way the wallet does:
+	// create, the result page's four scheduled syncs plus one by hand,
+	// resume the checkout, and close.
+	for _, userID := range []int{101, 102} {
+		for range 5 {
+			assert.Equal(t, http.StatusNoContent, post("/api/payment/orders", userID).Code)
+			for range 5 {
+				assert.Equal(t, http.StatusNoContent, post("/api/payment/orders/P1/sync", userID).Code)
+			}
+			assert.Equal(t, http.StatusNoContent, post("/api/payment/orders/P1/checkout", userID).Code)
+			assert.Equal(t, http.StatusNoContent, post("/api/payment/orders/P1/close", userID).Code)
+		}
+	}
+	assert.Equal(t, http.StatusNoContent, post("/api/user/login", 0).Code)
+
+	loginCount, err := redisServer.Get(redisIPRateLimitKey("CT", clientIP))
+	require.NoError(t, err)
+	assert.Equal(t, "1", loginCount, "payment calls must not count against the login bucket")
+	paymentCount, err := redisServer.Get(redisUserRateLimitKey("PM", 101))
+	require.NoError(t, err)
+	assert.Equal(t, "35", paymentCount)
+	assert.Equal(t, 10*time.Minute, redisServer.TTL(redisUserRateLimitKey("PM", 101)))
+
+	// Order creation stays bounded per user by the critical allowance.
+	for range 15 {
+		assert.Equal(t, http.StatusNoContent, post("/api/payment/orders", 101).Code)
+	}
+	limited := post("/api/payment/orders", 101)
+	assert.Equal(t, http.StatusTooManyRequests, limited.Code)
+	assert.Equal(t, "1200", limited.Header().Get("Retry-After"))
+	assert.Equal(t, http.StatusNoContent, post("/api/payment/orders", 102).Code)
+	assert.Equal(t, http.StatusNoContent, post("/api/user/login", 0).Code)
 }

@@ -953,6 +953,7 @@ export const STATIC_I18N_KEYS = [
   'Enter a percentage from 0 to 100 with at most two decimal places',
   'Enter an amount with at most two decimal places',
   'The minimum top-up must be a positive amount with at most two decimal places',
+  'The plan price must be an amount with at most two decimal places',
   'Payment Settings',
   'Payment Methods',
   'Gateway URL',

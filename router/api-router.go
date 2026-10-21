@@ -193,10 +193,11 @@ func SetApiRouter(router *gin.Engine) {
 				buyerRoute.POST("/quote", controller.QuotePayment)
 				buyerRoute.GET("/orders", controller.ListUserPaymentOrders)
 				buyerRoute.GET("/orders/:no", controller.GetUserPaymentOrder)
-				buyerRoute.POST("/orders", middleware.CriticalRateLimit(), controller.CreatePaymentOrder)
-				buyerRoute.POST("/orders/:no/checkout", middleware.CriticalRateLimit(), controller.CheckoutPaymentOrder)
-				buyerRoute.POST("/orders/:no/sync", middleware.CriticalRateLimit(), controller.SyncPaymentOrder)
-				buyerRoute.POST("/orders/:no/close", middleware.CriticalRateLimit(), controller.CloseUserPaymentOrder)
+				// Per-user buckets, apart from the IP bucket that guards login.
+				buyerRoute.POST("/orders", middleware.UserCriticalRateLimit("payment-order"), controller.CreatePaymentOrder)
+				buyerRoute.POST("/orders/:no/checkout", middleware.PaymentRateLimit(), controller.CheckoutPaymentOrder)
+				buyerRoute.POST("/orders/:no/sync", middleware.PaymentRateLimit(), controller.SyncPaymentOrder)
+				buyerRoute.POST("/orders/:no/close", middleware.PaymentRateLimit(), controller.CloseUserPaymentOrder)
 			}
 
 			paymentAdminRoute := paymentRoute.Group("/admin")

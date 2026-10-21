@@ -2345,7 +2345,7 @@
       "post": {
         "summary": "创建支付订单",
         "deprecated": false,
-        "description": "🔐 需要登录（User权限）。受严格限流；建单后立即发起支付，返回 type 为 url / stripe / paid",
+        "description": "🔐 需要登录（User权限）。按用户限制建单频率（与关键操作限流同额度：CRITICAL_RATE_LIMIT / CRITICAL_RATE_LIMIT_DURATION）；建单后立即发起支付，返回 type 为 url / stripe / paid",
         "tags": [
           "支付"
         ],
@@ -2431,7 +2431,7 @@
       "post": {
         "summary": "继续支付",
         "deprecated": false,
-        "description": "🔐 需要登录（User权限）。受严格限流；对待支付订单重新发起或复用支付",
+        "description": "🔐 需要登录（User权限）。受按用户的支付限流（checkout、sync、close 共用 PAYMENT_RATE_LIMIT，默认每 10 分钟 60 次）；对待支付订单重新发起或复用支付",
         "tags": [
           "支付"
         ],
@@ -2466,7 +2466,7 @@
       "post": {
         "summary": "同步订单支付状态",
         "deprecated": false,
-        "description": "🔐 需要登录（User权限）。受严格限流；向支付平台查询，已付款则结算",
+        "description": "🔐 需要登录（User权限）。受按用户的支付限流（checkout、sync、close 共用 PAYMENT_RATE_LIMIT，默认每 10 分钟 60 次）；向支付平台查询，已付款则结算",
         "tags": [
           "支付"
         ],
@@ -2501,7 +2501,7 @@
       "post": {
         "summary": "关闭我的订单",
         "deprecated": false,
-        "description": "🔐 需要登录（User权限）。受严格限流；先向支付平台确认未付款",
+        "description": "🔐 需要登录（User权限）。受按用户的支付限流（checkout、sync、close 共用 PAYMENT_RATE_LIMIT，默认每 10 分钟 60 次）；先向支付平台确认未付款",
         "tags": [
           "支付"
         ],
