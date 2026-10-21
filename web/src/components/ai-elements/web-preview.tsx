@@ -212,6 +212,7 @@ export const WebPreviewBody = ({
     <div className='flex-1'>
       <iframe
         className={cn('size-full', className)}
+        // oxlint-disable-next-line react/iframe-missing-sandbox -- previews cross-origin pages, which need scripts and their own origin to run
         sandbox='allow-scripts allow-same-origin allow-forms allow-popups allow-presentation'
         src={(src ?? url) || undefined}
         title={t('Preview')}
@@ -280,6 +281,7 @@ export const WebPreviewConsole = ({
                   log.level === 'warn' && 'text-warning',
                   log.level === 'log' && 'text-foreground'
                 )}
+                // oxlint-disable-next-line react/no-array-index-key -- console output is append-only and entries can share a timestamp and message; position is their identity
                 key={`${log.timestamp.getTime()}-${index}`}
               >
                 <span className='text-muted-foreground'>

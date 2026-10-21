@@ -64,7 +64,11 @@ export function SyncPriceCell(props: {
         {parsed ? (
           <div className='space-y-2'>
             {parsed.tiers.map((tier, index) => (
-              <div key={`${tier.label}-${index}`} className='space-y-1'>
+              <div
+                // oxlint-disable-next-line react/no-array-index-key -- tiers come from an upstream expression, where labels and conditions can repeat; position decides which tier applies
+                key={`${tier.label}-${index}`}
+                className='space-y-1'
+              >
                 {parsed.tiers.length > 1 && (
                   <div className='text-muted-foreground text-xs!'>
                     {tier.condition || tier.label || t('Default')}

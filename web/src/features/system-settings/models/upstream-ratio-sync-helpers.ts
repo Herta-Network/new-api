@@ -20,6 +20,7 @@ import { createContext, useContext } from 'react'
 
 import {
   BILLING_PRICING_VARS,
+  type BillingVar,
   splitBillingExprAndRequestRules,
 } from '@/features/pricing/lib/billing-expr'
 import { tryParseVisualConfig } from '@/features/pricing/lib/tier-expr'
@@ -139,13 +140,14 @@ export function getSyncExpressionPricing(
   const config = tryParseVisualConfig(billingExpr)
   if (!config) return null
   // Do not turn malformed or overflowing upstream numbers into free prices.
-  const body = billingExpr.replace(/"(?:\\.|[^"\\])*"/g, '')
+  const body = billingExpr.replaceAll(/"(?:\\.|[^"\\])*"/g, '')
   for (const match of body.matchAll(/\*\s*([+\-\d.eE]+)/g)) {
     if (!Number.isFinite(Number(match[1])) || Number(match[1]) < 0) return null
   }
   const fields = BILLING_PRICING_VARS.filter(
-    (field) =>
-      field.tierField && new RegExp(`\\b${field.key}\\s*\\*`).test(body)
+    (field): field is BillingVar & { tierField: string } =>
+      Boolean(field.tierField) &&
+      new RegExp(`\\b${field.key}\\s*\\*`).test(body)
   )
   const conditionLabels = {
     p: t('Input tokens'),
@@ -164,7 +166,7 @@ export function getSyncExpressionPricing(
         .join(' ∧ '),
       lines: fields.map((field) => ({
         label: t(field.shortLabel),
-        value: `$${formatPricingNumber(Number(tier[field.tierField!]))}`,
+        value: `$${formatPricingNumber(Number(tier[field.tierField]))}`,
       })),
     })),
   }
