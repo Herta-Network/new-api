@@ -23,7 +23,6 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -31,11 +30,7 @@ import (
 // separate log database, so every case also proves where its log lands.
 func TestFixedPriceBillingAccounting(t *testing.T) {
 	truncate(t)
-	logDB, err := gorm.Open(postgres.New(postgres.Config{DSN: pgtest.NewSchema(t), PreferSimpleProtocol: true}), &gorm.Config{})
-	require.NoError(t, err)
-	logSQL, err := logDB.DB()
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, logSQL.Close()) })
+	logDB := pgtest.NewSchemaDB(t)
 	require.NoError(t, logDB.AutoMigrate(&model.Log{}))
 	oldLogDB := model.LOG_DB
 	model.LOG_DB = logDB
