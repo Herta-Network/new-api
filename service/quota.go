@@ -559,7 +559,7 @@ func quotaNotifyContent(lang string, notifyType string, prompt string, remaining
 	case dto.NotifyTypeGotify:
 		return i18n.Translate(lang, i18n.MsgNotifyQuotaLowGotify, map[string]any{"Prompt": prompt, "Quota": remaining}), []any{prompt, remaining}
 	default:
-		topUpLink := PaymentReturnURL("/wallet")
+		topUpLink := PaymentReturnURL("/user/wallet")
 		return i18n.Translate(lang, i18n.MsgNotifyQuotaLowEmail, map[string]any{"Prompt": prompt, "Quota": remaining, "Link": topUpLink}), []any{prompt, remaining, topUpLink, topUpLink}
 	}
 }
