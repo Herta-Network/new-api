@@ -239,3 +239,31 @@ describe('overview setup guide', () => {
     ).not.toBeInTheDocument()
   })
 })
+
+describe('overview in the user workspace', () => {
+  it('shows an administrator only their own overview without site performance or channel shortcuts', async () => {
+    useAuthStore.getState().auth.setUser({
+      id: 1,
+      username: 'root',
+      role: 100,
+      quota: 1000000,
+      used_quota: 1000,
+      request_count: 1,
+    })
+    const user = userEvent.setup()
+    await renderOverview()
+
+    await user.click(await screen.findByRole('button', { name: 'Setup guide' }))
+    expect(
+      await screen.findByRole('button', { name: /^API Keys/ })
+    ).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: /^Channels/ })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText('Performance health')).not.toBeInTheDocument()
+    expect(api.get).not.toHaveBeenCalledWith(
+      '/api/perf-metrics/summary',
+      expect.anything()
+    )
+  })
+})

@@ -65,7 +65,7 @@ function Fixture() {
     getCoreRowModel: getCoreRowModel(),
   })
   return (
-    <UsageLogsProvider>
+    <UsageLogsProvider scope='self'>
       <CommonLogsFilterBar table={table} />
     </UsageLogsProvider>
   )
@@ -86,7 +86,7 @@ async function renderMobileFilter() {
   const auth = createRoute({ getParentRoute: () => root, id: '_authenticated' })
   const logs = createRoute({
     getParentRoute: () => auth,
-    path: '/usage-logs/$section',
+    path: '/user/usage-logs/$section',
     component: Fixture,
     validateSearch: (search: Record<string, unknown>) => search,
   })
@@ -94,7 +94,7 @@ async function renderMobileFilter() {
     routeTree: root.addChildren([auth.addChildren([logs])]),
     history: createMemoryHistory({
       initialEntries: [
-        '/usage-logs/common?page=3&type=%5B%222%22%5D&group=default',
+        '/user/usage-logs/common?page=3&type=%5B%222%22%5D&group=default',
       ],
     }),
   })

@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 import { useStatus } from '@/hooks/use-status'
 import { parseHeaderNavModulesFromStatus } from '@/lib/nav-modules'
+import { getWorkspaceLanding } from '@/lib/workspace'
 import { useAuthStore } from '@/stores/auth-store'
 
 export type TopNavLink = {
@@ -67,9 +68,12 @@ export function useTopNavLinks(): TopNavLink[] {
     links.push({ title: t('Home'), href: '/' })
   }
 
-  // Console -> /dashboard (new console path)
+  // Console -> the workspace the user lands in after signing in
   if (modules?.console !== false) {
-    links.push({ title: t('Console'), href: '/dashboard' })
+    links.push({
+      title: t('Console'),
+      href: getWorkspaceLanding(auth?.user?.role),
+    })
   }
 
   // Pricing

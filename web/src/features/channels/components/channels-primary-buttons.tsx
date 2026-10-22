@@ -69,7 +69,7 @@ import type { ChannelSortBy } from '../types'
 import { ChannelSortControl } from './channel-priority-controls'
 import { useChannels } from './channels-provider'
 
-const route = getRouteApi('/_authenticated/channels/')
+const route = getRouteApi('/_authenticated/admin/channels/')
 
 export function ChannelsPrimaryButtons() {
   const { t } = useTranslation()

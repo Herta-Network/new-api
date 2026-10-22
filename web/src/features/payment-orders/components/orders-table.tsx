@@ -48,7 +48,7 @@ import type { PaymentOrder } from '../types'
 import { usePaymentOrdersColumns } from './orders-columns'
 import { PaymentNoteDialog } from './payment-note-dialog'
 
-const route = getRouteApi('/_authenticated/payment-orders/$section')
+const route = getRouteApi('/_authenticated/admin/payment-orders/$section')
 
 const paymentOrdersQueryKey = ['payment-orders'] as const
 

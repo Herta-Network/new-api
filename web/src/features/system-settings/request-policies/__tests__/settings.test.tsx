@@ -36,11 +36,11 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
-import { Route as ModelsRoute } from '@/routes/_authenticated/system-settings/models/$section'
-import { Route as OperationsRoute } from '@/routes/_authenticated/system-settings/operations/$section'
-import { Route as PoliciesRoute } from '@/routes/_authenticated/system-settings/request-policies/$section'
-import { Route as PolicyIndexRoute } from '@/routes/_authenticated/system-settings/request-policies/index'
-import { Route as SecurityRoute } from '@/routes/_authenticated/system-settings/security/$section'
+import { Route as ModelsRoute } from '@/routes/_authenticated/admin/system-settings/models/$section'
+import { Route as OperationsRoute } from '@/routes/_authenticated/admin/system-settings/operations/$section'
+import { Route as PoliciesRoute } from '@/routes/_authenticated/admin/system-settings/request-policies/$section'
+import { Route as PolicyIndexRoute } from '@/routes/_authenticated/admin/system-settings/request-policies/index'
+import { Route as SecurityRoute } from '@/routes/_authenticated/admin/system-settings/security/$section'
 
 import { RequestPolicies } from '..'
 import {
@@ -71,7 +71,7 @@ async function renderPolicies(path: string) {
   })
   const policyRoute = createRoute({
     getParentRoute: () => authenticated,
-    path: '/system-settings/request-policies/$section',
+    path: '/admin/system-settings/request-policies/$section',
     beforeLoad: PoliciesRoute.options.beforeLoad as PolicyBeforeLoad,
     component: RequestPolicies,
   })
@@ -79,22 +79,22 @@ async function renderPolicies(path: string) {
     policyRoute,
     createRoute({
       getParentRoute: () => authenticated,
-      path: '/system-settings/request-policies/',
+      path: '/admin/system-settings/request-policies/',
       beforeLoad: PolicyIndexRoute.options.beforeLoad as () => void,
     }),
     createRoute({
       getParentRoute: () => authenticated,
-      path: '/system-settings/models/$section',
+      path: '/admin/system-settings/models/$section',
       beforeLoad: ModelsRoute.options.beforeLoad as PolicyBeforeLoad,
     }),
     createRoute({
       getParentRoute: () => authenticated,
-      path: '/system-settings/security/$section',
+      path: '/admin/system-settings/security/$section',
       beforeLoad: SecurityRoute.options.beforeLoad as PolicyBeforeLoad,
     }),
     createRoute({
       getParentRoute: () => authenticated,
-      path: '/system-settings/operations/$section',
+      path: '/admin/system-settings/operations/$section',
       beforeLoad: OperationsRoute.options.beforeLoad as PolicyBeforeLoad,
     }),
   ]
@@ -195,7 +195,7 @@ describe('request policy settings', () => {
   ])(
     'opening %s and saving unchanged values does not write options',
     async (section, saveLabel) => {
-      await renderPolicies(`/system-settings/request-policies/${section}`)
+      await renderPolicies(`/admin/system-settings/request-policies/${section}`)
       const save = await screen.findByRole('button', { name: saveLabel })
       expect(api.put).not.toHaveBeenCalled()
       await userEvent.click(save)
@@ -215,7 +215,7 @@ describe('request policy settings', () => {
   ])(
     'saving a changed %s field writes only that original option key',
     async (section, label, input, key, value) => {
-      await renderPolicies(`/system-settings/request-policies/${section}`)
+      await renderPolicies(`/admin/system-settings/request-policies/${section}`)
       fireEvent.change(await screen.findByRole('spinbutton', { name: label }), {
         target: { value: input },
       })
@@ -232,7 +232,7 @@ describe('request policy settings', () => {
   )
 
   it('turning filtering off preserves the prompt switch and keyword list', async () => {
-    await renderPolicies('/system-settings/request-policies/filtering')
+    await renderPolicies('/admin/system-settings/request-policies/filtering')
     await userEvent.click(
       await screen.findByRole('switch', { name: 'Enable filtering' })
     )
@@ -254,7 +254,7 @@ describe('request policy settings', () => {
   })
 
   it('refreshing another policy keeps unsaved filter text', async () => {
-    await renderPolicies('/system-settings/request-policies/filtering')
+    await renderPolicies('/admin/system-settings/request-policies/filtering')
     const keywords = await screen.findByRole('textbox', {
       name: 'Blocked keywords',
     })
@@ -267,7 +267,7 @@ describe('request policy settings', () => {
   })
 
   it('invalid retry status ranges show validation and do not write options', async () => {
-    await renderPolicies('/system-settings/request-policies/retry')
+    await renderPolicies('/admin/system-settings/request-policies/retry')
     const codes = await screen.findByRole('textbox', {
       name: 'Auto-retry status codes',
     })
@@ -285,7 +285,7 @@ describe('request policy settings', () => {
     vi.mocked(api.patch).mockResolvedValue({
       data: { success: false, message: 'Save rejected' },
     })
-    await renderPolicies('/system-settings/request-policies/retry')
+    await renderPolicies('/admin/system-settings/request-policies/retry')
     const retries = await screen.findByRole('spinbutton', {
       name: 'Maximum retries',
     })
@@ -301,7 +301,7 @@ describe('request policy settings', () => {
 
   it('failed initial loading shows a retry action instead of editable fallback values', async () => {
     vi.mocked(api.get).mockRejectedValueOnce(new Error('Unavailable'))
-    await renderPolicies('/system-settings/request-policies/retry')
+    await renderPolicies('/admin/system-settings/request-policies/retry')
     expect(await screen.findByText('Failed to load settings')).toBeVisible()
     expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
@@ -314,7 +314,7 @@ describe('request policy settings', () => {
   })
 
   it('turning scheduled checks off explains recovery without changing the recovery setting', async () => {
-    await renderPolicies('/system-settings/request-policies/health')
+    await renderPolicies('/admin/system-settings/request-policies/health')
     await userEvent.click(
       await screen.findByRole('switch', { name: 'Scheduled channel tests' })
     )
@@ -330,7 +330,7 @@ describe('request policy settings', () => {
   })
 
   it('the affinity cache section opens with the keyboard and keeps the existing values', async () => {
-    await renderPolicies('/system-settings/request-policies/affinity')
+    await renderPolicies('/admin/system-settings/request-policies/affinity')
     const toggle = await screen.findByRole('button', {
       name: 'Affinity cache settings',
     })
@@ -350,17 +350,17 @@ describe('request policy settings', () => {
   })
 
   it.each([
-    ['/system-settings/models/channel-affinity', 'routing'],
-    ['/system-settings/models/routing-reliability', 'routing'],
-    ['/system-settings/security/sensitive-words', 'filtering'],
-    ['/system-settings/operations/monitoring', 'health'],
-    ['/system-settings/request-policies/', 'routing'],
-    ['/system-settings/request-policies/unknown', 'routing'],
+    ['/admin/system-settings/models/channel-affinity', 'routing'],
+    ['/admin/system-settings/models/routing-reliability', 'routing'],
+    ['/admin/system-settings/security/sensitive-words', 'filtering'],
+    ['/admin/system-settings/operations/monitoring', 'health'],
+    ['/admin/system-settings/request-policies/', 'routing'],
+    ['/admin/system-settings/request-policies/unknown', 'routing'],
   ])('%s opens the corresponding policy page', async (path, section) => {
     const router = await renderPolicies(path)
     await waitFor(() =>
       expect(router.state.location.pathname).toBe(
-        `/system-settings/request-policies/${section}`
+        `/admin/system-settings/request-policies/${section}`
       )
     )
     expect(api.put).not.toHaveBeenCalled()

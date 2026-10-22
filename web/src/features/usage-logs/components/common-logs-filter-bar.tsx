@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient, useIsFetching, useQuery } from '@tanstack/react-query'
-import { useNavigate, getRouteApi } from '@tanstack/react-router'
 import type { Table } from '@tanstack/react-table'
 import { Eye, EyeOff } from 'lucide-react'
 import { useState, useCallback, useMemo } from 'react'
@@ -56,9 +55,11 @@ import {
   LogsFilterInput,
   LogsFilterToolbar,
 } from './logs-filter-toolbar'
-import { useLogsViewScope, useUsageLogsContext } from './usage-logs-provider'
-
-const route = getRouteApi('/_authenticated/usage-logs/$section')
+import {
+  useLogsViewScope,
+  useUsageLogsContext,
+  useUsageLogsRoute,
+} from './usage-logs-provider'
 
 type LogTypeValue = (typeof LOG_TYPE_FILTERS)[number]['value']
 const logTypeValueSet = new Set<string>(
@@ -121,7 +122,8 @@ export function CommonLogsFilterBar<TData>(
 ) {
   const { t } = useTranslation()
   const isMobile = useMediaQuery('(max-width: 640px)')
-  const navigate = useNavigate()
+  const route = useUsageLogsRoute()
+  const navigate = route.useNavigate()
   const queryClient = useQueryClient()
   const searchParams = route.useSearch()
   const { isAdminView: isAdmin } = useLogsViewScope()
@@ -215,8 +217,6 @@ export function CommonLogsFilterBar<TData>(
     (nextFilters: CommonLogFilters = filters) => {
       const filterParams = buildSearchParams(nextFilters, 'common')
       navigate({
-        to: '/usage-logs/$section',
-        params: { section: 'common' },
         search: {
           ...filterParams,
           type: [logType],
@@ -244,8 +244,6 @@ export function CommonLogsFilterBar<TData>(
     })
 
     navigate({
-      to: '/usage-logs/$section',
-      params: { section: 'common' },
       search: {
         page: 1,
         ...resetSearch,

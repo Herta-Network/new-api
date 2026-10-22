@@ -78,7 +78,7 @@ function ChatMenuItem({
           isActive={active}
           render={
             <Link
-              to='/chat/$chatId'
+              to='/user/chat/$chatId'
               params={{ chatId: preset.id }}
               preload={preload}
               onClick={onNavigate}
@@ -131,7 +131,7 @@ function DropdownPresetItem({
   if (preset.type === 'web') {
     return (
       <DropdownMenuItem
-        render={<Link to='/chat/$chatId' params={{ chatId: preset.id }} />}
+        render={<Link to='/user/chat/$chatId' params={{ chatId: preset.id }} />}
       >
         {preset.name}
       </DropdownMenuItem>
@@ -259,7 +259,7 @@ export function ChatPresetsItem({ item }: { item: NavChatPresets }) {
   // Expanded state - render collapsible menu
   return (
     <Collapsible
-      defaultOpen={normalizedHref.startsWith('/chat')}
+      defaultOpen={normalizedHref.startsWith('/user/chat')}
       className='group/collapsible'
       render={<SidebarMenuItem />}
     >
@@ -277,7 +277,7 @@ export function ChatPresetsItem({ item }: { item: NavChatPresets }) {
             <ChatMenuItem
               key={preset.id}
               preset={preset}
-              active={normalizedHref === `/chat/${preset.id}`}
+              active={normalizedHref === `/user/chat/${preset.id}`}
               loading={loadingPresetId === preset.id}
               onOpen={handleOpenExternal}
               onNavigate={() => setOpenMobile(false)}

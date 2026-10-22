@@ -48,9 +48,11 @@ import type {
 } from '@/features/dashboard/types'
 import { getRollingDateRange, type TimeGranularity } from '@/lib/time'
 import { cn } from '@/lib/utils'
-import { useAuthStore } from '@/stores/auth-store'
+import type { DataScope } from '@/lib/workspace'
 
 interface ModelsFilterProps {
+  /** The username filter only applies to the site-wide dashboard. */
+  scope: DataScope
   preferences: DashboardChartPreferences
   // The filters currently applied to the dashboard. The dialog edits a copy of
   // these so reopening it never discards a manually picked range.
@@ -98,9 +100,6 @@ const SectionDivider = ({ label }: { label: string }) => (
 
 export function ModelsFilter(props: ModelsFilterProps) {
   const { t } = useTranslation()
-  // 使用已缓存的用户数据，避免重复调用 API
-  const user = useAuthStore((state) => state.auth.user)
-  const isAdmin = user?.role && user.role >= 10
 
   const [open, setOpen] = useState(false)
   const [filters, setFilters] = useState<DashboardFilters>(
@@ -283,7 +282,7 @@ export function ModelsFilter(props: ModelsFilterProps) {
           </div>
 
           {/* Admin-only fields */}
-          {isAdmin && (
+          {props.scope === 'site' && (
             <>
               <SectionDivider label={t('Admin Only')} />
 

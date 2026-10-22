@@ -416,6 +416,7 @@ var reservedRouteNamespaces = []string{
 	"/pricing",
 	"/rankings",
 	"/user",
+	"/admin",
 	"/401",
 	"/403",
 	"/404",

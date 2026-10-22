@@ -87,7 +87,7 @@ const securityRegistry = createSectionRegistry<
 >({
   sections: SECURITY_SECTIONS,
   defaultSection: 'rate-limit',
-  basePath: '/system-settings/security',
+  basePath: '/admin/system-settings/security',
   urlStyle: 'path',
 })
 

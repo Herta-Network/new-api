@@ -90,7 +90,7 @@ function renderLogs(props: Parameters<typeof Fixture>[0] = {}) {
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
-      <UsageLogsProvider>
+      <UsageLogsProvider scope='self'>
         <Fixture {...props} />
       </UsageLogsProvider>
     </QueryClientProvider>

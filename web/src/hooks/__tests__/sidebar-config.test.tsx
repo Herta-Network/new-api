@@ -26,6 +26,7 @@ import {
   parseSidebarModulesAdmin,
   serializeSidebarModulesAdmin,
 } from '@/features/system-settings/maintenance/config'
+import type { Workspace } from '@/lib/workspace'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { useSidebarConfig } from '../use-sidebar-config'
@@ -45,7 +46,12 @@ afterEach(() => {
   useAuthStore.getState().auth.reset()
 })
 
-function sidebarFor(admin?: object, user?: object, canConfigure = true) {
+function sidebarFor(
+  admin?: object,
+  user?: object,
+  canConfigure = true,
+  workspace: Workspace = 'user'
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -55,7 +61,7 @@ function sidebarFor(admin?: object, user?: object, canConfigure = true) {
   useAuthStore.getState().auth.setUser({
     id: 1,
     username: 'alice',
-    role: 1,
+    role: workspace === 'admin' ? 100 : 1,
     permissions: { sidebar_settings: canConfigure },
     sidebar_modules: user ? JSON.stringify(user) : '',
   })
@@ -67,7 +73,7 @@ function sidebarFor(admin?: object, user?: object, canConfigure = true) {
     )
   }
   const result = renderHook(
-    () => useSidebarConfig(useSidebarData().navGroups),
+    () => useSidebarConfig(useSidebarData(workspace).navGroups),
     { wrapper: Wrapper }
   )
   return result
@@ -146,10 +152,10 @@ describe('audit log sidebar entry', () => {
     const usageIndex = items.findIndex((item) => item.title === 'Usage Logs')
     expect(items[usageIndex + 1]).toMatchObject({
       title: 'Audit Logs',
-      url: '/usage-logs/audit',
+      url: '/user/usage-logs/audit',
     })
     const selected = items.filter((item) =>
-      checkIsActive('/usage-logs/audit', item)
+      checkIsActive('/user/usage-logs/audit', item)
     )
     expect(selected.map((item) => item.title)).toEqual(['Audit Logs'])
   })
@@ -178,5 +184,47 @@ describe('audit log sidebar entry', () => {
       .map((item) => item.title)
     expect(titles).not.toContain('Usage Logs')
     expect(titles).toContain('Audit Logs')
+  })
+})
+
+describe('workspace sidebars', () => {
+  it('the user workspace lists no administration entries', () => {
+    const { result } = sidebarFor()
+    const urls = result.current
+      .flatMap((group) => group.items)
+      .map((item) => item.url)
+      .filter(Boolean)
+    expect(urls.length).toBeGreaterThan(0)
+    expect(urls.every((url) => String(url).startsWith('/user/'))).toBe(true)
+  })
+
+  it('admin module toggles still hide their moved admin workspace entries', () => {
+    const { result } = sidebarFor(
+      { admin: { enabled: true, channel: false, user: true } },
+      undefined,
+      true,
+      'admin'
+    )
+    const titles = result.current
+      .flatMap((group) => group.items)
+      .map((item) => item.title)
+    expect(titles).not.toContain('Channels')
+    expect(titles).toContain('Users')
+  })
+
+  it('user console toggles leave the site-wide logs of the admin workspace visible', () => {
+    const { result } = sidebarFor(
+      { console: { enabled: false } },
+      undefined,
+      true,
+      'admin'
+    )
+    const site = result.current.find((group) => group.id === 'site')
+    expect(site?.items.map((item) => item.url)).toEqual([
+      '/admin/dashboard/models',
+      '/admin/usage-logs/common',
+      '/admin/usage-logs/audit',
+      '/admin/usage-logs/task',
+    ])
   })
 })

@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { getRouteApi } from '@tanstack/react-router'
 import { Loader2 } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -27,6 +26,8 @@ import { Button } from '@/components/ui/button'
 import { useStatus } from '@/hooks/use-status'
 import dayjs from '@/lib/dayjs'
 import { handleServerError } from '@/lib/handle-server-error'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { exportLogs } from '../../api'
 import {
@@ -37,28 +38,31 @@ import {
 } from '../../lib/export'
 import { buildApiParams, getDefaultTimeRange } from '../../lib/utils'
 import { CompactDateTimeRangePicker } from '../compact-date-time-range-picker'
-import { useLogsViewScope } from '../usage-logs-provider'
+import { useLogsViewScope, useUsageLogsRoute } from '../usage-logs-provider'
 
-const route = getRouteApi('/_authenticated/usage-logs/$section')
 const DAY_MS = 24 * 60 * 60 * 1000
 const DEFAULT_MAX_RANGE_DAYS = 365
 
 /**
  * Export button for the common logs page. It asks for the time range, then
  * downloads the logs of the current view with the page's other filters as a
- * CSV file. Administrators in the all-users view export every user's logs.
+ * CSV file. In the admin workspace this exports every user's logs.
  */
 export function ExportLogsDialog() {
   const { t } = useTranslation()
-  const searchParams = route.useSearch()
-  const { canManageScope, isAdminView } = useLogsViewScope()
+  const searchParams = useUsageLogsRoute().useSearch()
+  const { isAdminView } = useLogsViewScope()
+  const isAdmin = useAuthStore(
+    (state) => (state.auth.user?.role ?? ROLE.GUEST) >= ROLE.ADMIN
+  )
   const { status } = useStatus()
   const [open, setOpen] = useState(false)
   const [range, setRange] = useState<{ start?: Date; end?: Date }>({})
   const [exportedCount, setExportedCount] = useState<number | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
-  if (!canManageScope && status?.log_export_enabled === false) return null
+  // Administrators may export their own logs even when user export is off.
+  if (!isAdmin && status?.log_export_enabled === false) return null
 
   const maxDays = status?.log_max_range_days || DEFAULT_MAX_RANGE_DAYS
   const startMs = range.start?.getTime()

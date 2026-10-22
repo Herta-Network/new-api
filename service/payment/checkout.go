@@ -146,7 +146,7 @@ func StartCheckout(ctx context.Context, order *model.PaymentOrder, method *model
 	checkout := gateway.Checkout{
 		Order:     view,
 		Charge:    gateway.Charge{Amount: order.PaymentAmount, Currency: order.PaymentCurrency},
-		ReturnURL: siteAddress() + "/wallet?payment_order=" + url.QueryEscape(order.OrderNo),
+		ReturnURL: siteAddress() + "/user/wallet?payment_order=" + url.QueryEscape(order.OrderNo),
 		Subject:   order.Subject,
 		Claim: func(_ context.Context, tradeNo string) (string, error) {
 			return model.ClaimPaymentTrade(order.Id, tradeNo)

@@ -1256,7 +1256,10 @@ function FailureResultContent({
             size='sm'
             className='h-7 w-fit px-2 text-xs'
             onClick={() =>
-              window.open('/system-settings/billing/model-pricing', '_blank')
+              window.open(
+                '/admin/system-settings/billing/model-pricing',
+                '_blank'
+              )
             }
           >
             <Settings className='mr-1 h-3 w-3 shrink-0' />

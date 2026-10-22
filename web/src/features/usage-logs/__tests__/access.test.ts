@@ -25,14 +25,14 @@ import { ROLE } from '@/lib/roles'
 import { resolveLogsViewAccess } from '../components/usage-logs-provider'
 
 describe('usage log access tier', () => {
-  test('keeps users and elevated self views on the self tier', () => {
-    assert.equal(resolveLogsViewAccess(ROLE.USER, 'all'), 'self')
+  test('keeps users and the user workspace on the self tier', () => {
+    assert.equal(resolveLogsViewAccess(ROLE.USER, 'site'), 'self')
     assert.equal(resolveLogsViewAccess(ROLE.ADMIN, 'self'), 'self')
     assert.equal(resolveLogsViewAccess(ROLE.SUPER_ADMIN, 'self'), 'self')
   })
 
-  test('distinguishes admin and root while viewing all logs', () => {
-    assert.equal(resolveLogsViewAccess(ROLE.ADMIN, 'all'), 'admin')
-    assert.equal(resolveLogsViewAccess(ROLE.SUPER_ADMIN, 'all'), 'root')
+  test('distinguishes admin and root in the admin workspace', () => {
+    assert.equal(resolveLogsViewAccess(ROLE.ADMIN, 'site'), 'admin')
+    assert.equal(resolveLogsViewAccess(ROLE.SUPER_ADMIN, 'site'), 'root')
   })
 })

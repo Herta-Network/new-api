@@ -47,8 +47,8 @@ export function ProfileDropdown() {
   const user = useAuthStore((state) => state.auth.user)
   const { displayName, roleLabel } = useUserDisplay(user)
   const isSuperAdmin = user?.role === ROLE.SUPER_ADMIN
-  const isWalletVisible = useIsSidebarModuleVisible('/wallet')
-  const isSecurityVisible = useIsSidebarModuleVisible('/security')
+  const isWalletVisible = useIsSidebarModuleVisible('/user/wallet')
+  const isSecurityVisible = useIsSidebarModuleVisible('/user/security')
   const avatarName = user?.username || displayName
   const avatarFallback = getUserAvatarFallback(avatarName)
   const avatarFallbackStyle = useMemo(
@@ -103,20 +103,22 @@ export function ProfileDropdown() {
 
           <DropdownMenuSeparator />
 
-          <DropdownMenuItem onClick={() => navigate({ to: '/profile' })}>
+          <DropdownMenuItem onClick={() => navigate({ to: '/user/profile' })}>
             <User className='size-4' />
             {t('Profile')}
           </DropdownMenuItem>
 
           {isSecurityVisible && (
-            <DropdownMenuItem onClick={() => navigate({ to: '/security' })}>
+            <DropdownMenuItem
+              onClick={() => navigate({ to: '/user/security' })}
+            >
               <ShieldCheck className='size-4' />
               {t('Security & Access')}
             </DropdownMenuItem>
           )}
 
           {isWalletVisible && (
-            <DropdownMenuItem onClick={() => navigate({ to: '/wallet' })}>
+            <DropdownMenuItem onClick={() => navigate({ to: '/user/wallet' })}>
               <Wallet className='size-4' />
               {t('Wallet')}
             </DropdownMenuItem>
@@ -126,7 +128,7 @@ export function ProfileDropdown() {
             <DropdownMenuItem
               onClick={() =>
                 navigate({
-                  to: '/system-settings/site/$section',
+                  to: '/admin/system-settings/site/$section',
                   params: { section: 'system-info' },
                 })
               }

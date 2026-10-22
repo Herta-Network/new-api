@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { getRouteApi, useNavigate } from '@tanstack/react-router'
+import { useNavigate } from '@tanstack/react-router'
 import { Eye, EyeOff } from 'lucide-react'
 import { useState, useCallback, useMemo, lazy, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -31,13 +31,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
-import { useAuthStore } from '@/stores/auth-store'
+import type { DataScope } from '@/lib/workspace'
 
 import { ModelsChartPreferences } from './components/models/models-chart-preferences'
 import { ModelsFilter } from './components/models/models-filter-dialog'
 import { OverviewDashboard } from './components/overview/overview-dashboard'
+import { PerformanceHealthPanel } from './components/overview/performance-health-panel'
 import { DEFAULT_TIME_GRANULARITY } from './constants'
 import {
   buildDefaultDashboardFilters,
@@ -48,8 +48,8 @@ import {
 } from './lib'
 import {
   type DashboardSectionId,
-  DASHBOARD_DEFAULT_SECTION,
-  DASHBOARD_SECTION_IDS,
+  DASHBOARD_SECTION_TITLE_KEYS,
+  DASHBOARD_SECTIONS,
 } from './section-registry'
 import type {
   DashboardChartPreferences,
@@ -57,8 +57,6 @@ import type {
   QuotaDataItem,
   UserChartsFilters,
 } from './types'
-
-const route = getRouteApi('/_authenticated/dashboard/$section')
 
 const LOG_STAT_CARD_FALLBACK_KEYS = [
   'count',
@@ -181,28 +179,21 @@ function PerformanceOverviewFallback() {
   )
 }
 
-const SECTION_META: Record<DashboardSectionId, { titleKey: string }> = {
-  overview: {
-    titleKey: 'Overview',
-  },
-  models: {
-    titleKey: 'Model Call Analytics',
-  },
-  flow: {
-    titleKey: 'Flow',
-  },
-  users: {
-    titleKey: 'User Analytics',
-  },
+const DASHBOARD_ROUTES = {
+  self: '/user/dashboard/$section',
+  site: '/admin/dashboard/$section',
+} as const satisfies Record<DataScope, string>
+
+type DashboardProps = {
+  /** `self` for the user workspace, `site` for the admin workspace. */
+  scope: DataScope
+  section: DashboardSectionId
 }
 
-export function Dashboard() {
+export function Dashboard(props: DashboardProps) {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const params = route.useParams()
-  const userRole = useAuthStore((state) => state.auth.user?.role)
-  const activeSection = (params.section ??
-    DASHBOARD_DEFAULT_SECTION) as DashboardSectionId
+  const activeSection = props.section
 
   const [modelData, setModelData] = useState<QuotaDataItem[]>([])
   const [dataLoading, setDataLoading] = useState(false)
@@ -248,23 +239,22 @@ export function Dashboard() {
     []
   )
 
-  const meta = SECTION_META[activeSection] ?? SECTION_META.overview
-  const isAdmin = Boolean(userRole && userRole >= ROLE.ADMIN)
+  const isSiteScope = props.scope === 'site'
   const visibleSections = useMemo(
     () =>
-      DASHBOARD_SECTION_IDS.filter(
-        (section) => section !== 'overview' && (section !== 'users' || isAdmin)
+      DASHBOARD_SECTIONS[props.scope].filter(
+        (section) => section !== 'overview'
       ),
-    [isAdmin]
+    [props.scope]
   )
   const handleSectionChange = useCallback(
     (section: string) => {
       void navigate({
-        to: '/dashboard/$section',
+        to: DASHBOARD_ROUTES[props.scope],
         params: { section: section as DashboardSectionId },
       })
     },
-    [navigate]
+    [navigate, props.scope]
   )
   const showSectionTabs =
     activeSection !== 'overview' && visibleSections.length > 1
@@ -276,6 +266,7 @@ export function Dashboard() {
           onPreferencesChange={handleChartPreferencesChange}
         />
         <ModelsFilter
+          scope={props.scope}
           preferences={chartPreferences}
           currentFilters={modelFilters}
           onFilterChange={handleFilterChange}
@@ -311,6 +302,7 @@ export function Dashboard() {
           </TooltipContent>
         </Tooltip>
         <ModelsFilter
+          scope={props.scope}
           preferences={chartPreferences}
           currentFilters={modelFilters}
           onFilterChange={handleFilterChange}
@@ -328,7 +320,9 @@ export function Dashboard() {
 
   return (
     <SectionPageLayout>
-      <SectionPageLayout.Title>{t(meta.titleKey)}</SectionPageLayout.Title>
+      <SectionPageLayout.Title>
+        {t(DASHBOARD_SECTION_TITLE_KEYS[activeSection])}
+      </SectionPageLayout.Title>
       <SectionPageLayout.Content>
         <div className='space-y-3 sm:space-y-4'>
           <div className='flex flex-wrap items-center justify-between gap-1.5 sm:gap-2'>
@@ -337,7 +331,7 @@ export function Dashboard() {
                 <TabsList className='max-w-full flex-wrap justify-start group-data-horizontal/tabs:h-auto'>
                   {visibleSections.map((section) => (
                     <TabsTrigger key={section} value={section}>
-                      {t(SECTION_META[section].titleKey)}
+                      {t(DASHBOARD_SECTION_TITLE_KEYS[section])}
                     </TabsTrigger>
                   ))}
                 </TabsList>
@@ -356,12 +350,13 @@ export function Dashboard() {
               <FadeIn>
                 <Suspense fallback={<LogStatCardsFallback />}>
                   <LazyLogStatCards
+                    scope={props.scope}
                     filters={modelFilters}
                     onDataUpdate={handleDataUpdate}
                   />
                 </Suspense>
               </FadeIn>
-              {isAdmin && (
+              {isSiteScope && (
                 <FadeIn delay={0.05}>
                   <Suspense fallback={<PerformanceOverviewFallback />}>
                     <LazyPerformanceOverview />
@@ -406,10 +401,16 @@ export function Dashboard() {
               </Suspense>
             </FadeIn>
           )}
+          {activeSection === 'performance' && (
+            <FadeIn>
+              <PerformanceHealthPanel />
+            </FadeIn>
+          )}
           {activeSection === 'flow' && (
             <FadeIn>
               <Suspense fallback={<ModelChartsFallback />}>
                 <LazyFlowCharts
+                  scope={props.scope}
                   filters={modelFilters}
                   sensitiveVisible={flowSensitiveVisible}
                 />

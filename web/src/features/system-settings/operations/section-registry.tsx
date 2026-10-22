@@ -163,7 +163,7 @@ const operationsRegistry = createSectionRegistry<
 >({
   sections: OPERATIONS_SECTIONS,
   defaultSection: 'behavior',
-  basePath: '/system-settings/operations',
+  basePath: '/admin/system-settings/operations',
   urlStyle: 'path',
 })
 

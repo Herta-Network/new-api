@@ -584,7 +584,7 @@ it('changing rows per page resets pagination and sends the selected page size', 
 })
 
 it.each([10, 100])(
-  'role %i defaults to all audit records and can switch both ways',
+  'role %i sees all audit records in the admin workspace',
   async (role) => {
     useAuthStore.getState().auth.setUser({
       id: 1,
@@ -600,38 +600,45 @@ it.each([10, 100])(
     })
     render(
       <QueryClientProvider client={client}>
-        <AuditLogs />
+        <AuditLogs scope='site' />
       </QueryClientProvider>
-    )
-    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute(
-      'aria-selected',
-      'true'
     )
     await waitFor(() =>
       expect(get).toHaveBeenCalledWith('/api/audit', expect.anything())
     )
     expect(get).not.toHaveBeenCalledWith('/api/audit/self', expect.anything())
-    await userEvent.click(screen.getByRole('tab', { name: 'Only Mine' }))
+  }
+)
+
+it.each([10, 100])(
+  'role %i sees only its own audit records in the user workspace',
+  async (role) => {
+    useAuthStore.getState().auth.setUser({
+      id: 1,
+      username: 'admin',
+      role,
+      permissions: { admin_permissions: { audit: { read: true } } },
+    })
+    const get = vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: { items: [], total: 0 } },
+    })
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <AuditLogs scope='self' />
+      </QueryClientProvider>
+    )
     await waitFor(() =>
-      expect(get).toHaveBeenLastCalledWith('/api/audit/self', expect.anything())
+      expect(get).toHaveBeenCalledWith('/api/audit/self', expect.anything())
     )
-    expect(screen.getByRole('tab', { name: 'Only Mine' })).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
-    await userEvent.click(screen.getByRole('tab', { name: 'All' }))
-    await waitFor(() =>
-      expect(get).toHaveBeenLastCalledWith('/api/audit', expect.anything())
-    )
-    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
+    expect(get).not.toHaveBeenCalledWith('/api/audit', expect.anything())
   }
 )
 
 it.each([1, 10])(
-  'role %i without an audit grant queries only its own records without scope tabs',
+  'role %i without an audit grant queries only its own records in the admin workspace',
   async (role) => {
     useAuthStore.getState().auth.setUser({ id: 2, username: 'alice', role })
     const get = vi.spyOn(api, 'get').mockResolvedValue({
@@ -642,17 +649,13 @@ it.each([1, 10])(
     })
     render(
       <QueryClientProvider client={client}>
-        <AuditLogs />
+        <AuditLogs scope='site' />
       </QueryClientProvider>
     )
     await waitFor(() =>
       expect(get).toHaveBeenCalledWith('/api/audit/self', expect.anything())
     )
     expect(get).not.toHaveBeenCalledWith('/api/audit', expect.anything())
-    expect(
-      screen.queryByRole('tablist', { name: 'View scope' })
-    ).not.toBeInTheDocument()
-    expect(screen.queryByRole('tab', { name: 'All' })).not.toBeInTheDocument()
   }
 )
 
@@ -724,7 +727,7 @@ it('clears global records and open details on revocation, falls back to self, an
   client.setQueryData(['audit', 99, 'all'], { items: ['separate-session'] })
   render(
     <QueryClientProvider client={client}>
-      <AuditLogs />
+      <AuditLogs scope='site' />
     </QueryClientProvider>
   )
   await screen.findByText('other-account')
@@ -742,7 +745,9 @@ it('clears global records and open details on revocation, falls back to self, an
   )
   await waitFor(() => expect(get).toHaveBeenCalledWith('/api/user/self'))
   expect(screen.queryByText('other-account')).not.toBeInTheDocument()
-  expect(screen.queryByRole('tab', { name: 'All' })).not.toBeInTheDocument()
+  expect(
+    screen.getByText('Audit access changed. Showing only your records.')
+  ).toBeVisible()
   expect(client.getQueriesData({ queryKey: ['audit', 1, 'all'] })).toHaveLength(
     0
   )

@@ -157,13 +157,13 @@ describe('Passkey website guidance', () => {
       })
       const route = createRoute({
         getParentRoute: () => authenticated,
-        path: 'system-settings/auth/$section',
+        path: 'admin/system-settings/auth/$section',
         component: AuthSettings,
       })
       const router = createRouter({
         routeTree: root.addChildren([authenticated.addChildren([route])]),
         history: createMemoryHistory({
-          initialEntries: ['/system-settings/auth/passkey'],
+          initialEntries: ['/admin/system-settings/auth/passkey'],
         }),
       })
       render(

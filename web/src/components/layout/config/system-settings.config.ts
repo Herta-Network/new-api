@@ -98,7 +98,7 @@ function getSystemSettingsNavGroups(t: TFunction): NavGroup[] {
 }
 
 /**
- * Nested sidebar view for `/system-settings/*`.
+ * Nested sidebar view for `/admin/system-settings/*`.
  *
  * Activates the Vercel / Cloudflare-style drill-in sidebar:
  * the root navigation is replaced by the system administration
@@ -106,9 +106,9 @@ function getSystemSettingsNavGroups(t: TFunction): NavGroup[] {
  */
 export const SYSTEM_SETTINGS_VIEW: SidebarView = {
   id: 'system-settings',
-  pathPattern: /^\/system-settings(\/|$)/,
+  pathPattern: /^\/admin\/system-settings(\/|$)/,
   parent: {
-    to: '/dashboard/overview',
+    to: '/admin',
     label: 'Back to Dashboard',
   },
   getNavGroups: getSystemSettingsNavGroups,

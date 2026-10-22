@@ -85,7 +85,7 @@ function resolveContentSettings(
 export function ContentSettings() {
   return (
     <SettingsPage
-      routePath='/_authenticated/system-settings/content/$section'
+      routePath='/_authenticated/admin/system-settings/content/$section'
       defaultSettings={defaultContentSettings}
       defaultSection={CONTENT_DEFAULT_SECTION}
       getSectionContent={getContentSectionContent}

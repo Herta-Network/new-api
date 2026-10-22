@@ -323,7 +323,7 @@ func TestEPayCheckoutAndCallbackChain(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "537.06", payURL.Query().Get("money"), "the converted expectation is what EPay is asked for")
 	assert.Equal(t, "https://www.example.test/api/payment/notify/epay/epay-token", payURL.Query().Get("notify_url"))
-	assert.Equal(t, "https://www.example.test/wallet?payment_order="+order.OrderNo, payURL.Query().Get("return_url"))
+	assert.Equal(t, "https://www.example.test/user/wallet?payment_order="+order.OrderNo, payURL.Query().Get("return_url"))
 	stored, err := model.GetPaymentOrderByNo(order.OrderNo)
 	require.NoError(t, err)
 	assert.Equal(t, int64(53706), stored.PaymentAmount)

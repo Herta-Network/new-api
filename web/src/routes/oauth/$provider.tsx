@@ -191,7 +191,7 @@ function OAuthCallback() {
       }
     }
 
-    const safeNavigate = (target: unknown, fallback = '/dashboard') => {
+    const safeNavigate = (target: unknown, fallback = '/user/dashboard') => {
       const href =
         sanitizeAuthRedirect(target, window.location.origin) ?? fallback
       void navigate({ href, replace: true })
