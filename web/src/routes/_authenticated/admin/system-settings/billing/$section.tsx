@@ -28,6 +28,14 @@ export const Route = createFileRoute(
   '/_authenticated/admin/system-settings/billing/$section'
 )({
   beforeLoad: ({ params }) => {
+    // Model prices moved into the model workspace.
+    if (params.section === 'model-pricing') {
+      throw redirect({
+        to: '/admin/models/$section',
+        params: { section: 'metadata' },
+        replace: true,
+      })
+    }
     const validSections = BILLING_SECTION_IDS as unknown as string[]
     if (!validSections.includes(params.section)) {
       throw redirect({

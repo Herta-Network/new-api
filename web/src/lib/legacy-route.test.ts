@@ -62,7 +62,7 @@ describe('legacy frontend route migration', () => {
       chats: '/admin/system-settings/content/chat',
       drawing: '/admin/system-settings/content/drawing',
       payment: '/admin/system-settings/billing/payment',
-      ratio: '/admin/system-settings/billing/model-pricing',
+      ratio: '/admin/models/metadata',
       ratelimit: '/admin/system-settings/security/rate-limit',
       models: '/admin/system-settings/models/global',
       'model-deployment': '/admin/system-settings/models/model-deployment',

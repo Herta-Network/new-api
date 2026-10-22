@@ -25,6 +25,63 @@ type ModelPricingConversion struct {
 	UnsupportedReason string `json:"unsupported_reason,omitempty"`
 }
 
+// LegacyModelPricingConversion previews one model of the batch conversion.
+// Saving its expression sends Version as the expected version.
+type LegacyModelPricingConversion struct {
+	ModelPricingConversion
+	ModelName  string        `json:"model_name"`
+	Version    string        `json:"version"`
+	Configured PricingValues `json:"configured"`
+}
+
+// PreviewLegacyModelPricingConversions converts every model a channel serves
+// or exact metadata describes whose configured pricing is still a legacy ratio
+// or per-request price. Each model goes through the single-model conversion
+// with its saved configuration as the draft; nothing is written.
+func PreviewLegacyModelPricingConversions() ([]LegacyModelPricingConversion, error) {
+	channels, err := GetConfiguredModelChannels()
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	if err := DB.Model(&Model{}).Where("name_rule = ?", NameRuleExact).Pluck("model_name", &names).Error; err != nil {
+		return nil, err
+	}
+	names = append(names, slices.Collect(maps.Keys(channels))...)
+	slices.Sort(names)
+	names = slices.Compact(names)
+	values, _, _, err := readModelPricingMaps(DB)
+	if err != nil {
+		return nil, err
+	}
+	generation := jsplugin.DefaultRegistry.Generation()
+	result := make([]LegacyModelPricingConversion, 0)
+	for _, name := range names {
+		effective := effectiveModelPricing(values, name)
+		if modelPricingMode(values, generation, name, effective) != ModelPricingModeLegacy {
+			continue
+		}
+		configured := modelPricingValues(values, name)
+		entry := LegacyModelPricingConversion{ModelName: name, Version: ModelPricingVersion(configured), Configured: configured}
+		if _, saved := configured["billing_setting.billing_expr"]; saved {
+			// Switching back to legacy pricing keeps the expression. Replacing
+			// it would discard an administrator's draft without asking.
+			entry.UnsupportedReason = "This model has an inactive saved expression. Open its pricing to choose which price to keep."
+		} else if conversion, err := PreviewModelPricingConversion(name, configured); err != nil {
+			entry.UnsupportedReason = err.Error()
+		} else {
+			entry.ModelPricingConversion = *conversion
+		}
+		if entry.Effective == nil {
+			entry.Effective = effective
+			entry.CacheWriteMode = ResolveCacheWriteMode(name, configured)
+			entry.BillingDetails = ResolveLegacyBillingDetails(name, effective, configured)
+		}
+		result = append(result, entry)
+	}
+	return result, nil
+}
+
 // ModelPricingDescription is shared by previews, conversions and snapshot
 // entries. It describes effective prices without adding persisted settings.
 type ModelPricingDescription struct {

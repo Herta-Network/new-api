@@ -38,6 +38,8 @@ type DialogType =
   | 'create-vendor'
   | 'vendors'
   | 'price-sync'
+  | 'legacy-conversion'
+  | 'pricing-settings'
   | 'update-vendor'
   | 'missing-models'
   | 'sync-wizard'

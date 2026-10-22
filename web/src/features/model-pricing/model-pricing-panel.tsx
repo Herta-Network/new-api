@@ -50,7 +50,9 @@ import {
   isValidPricingCurrency,
   USD_PRICING_CURRENCY,
 } from './currency'
+import { ModelPricingModeBadge } from './model-pricing-summary'
 import { modelPricingDisplay, pricingFromDraft, pricingRow } from './pricing'
+import { getModelPricingMode } from './pricing-mode'
 
 export function ModelPricingPanel(props: {
   modelName: string
@@ -165,6 +167,7 @@ export function ModelPricingPanel(props: {
         editData={editData}
         usageSchema={entry.usage_schema}
         pluginVariants={entry.plugin_variants}
+        cacheWriteMode={entry.cache_write_mode}
         onDirtyChange={props.onDirtyChange}
         onSave={() => persist()}
         isSaving={save.isPending}
@@ -172,7 +175,8 @@ export function ModelPricingPanel(props: {
         scrollHeader={
           <>
             <div className='flex flex-wrap items-center justify-between gap-2'>
-              <div className='min-w-0 flex-1 break-words'>
+              <div className='flex min-w-0 flex-1 flex-wrap items-center gap-2 break-words'>
+                <ModelPricingModeBadge mode={getModelPricingMode(entry)} />
                 <p className='text-muted-foreground text-xs'>
                   {Object.keys(entry.configured).length
                     ? t('Stored configuration with effective defaults')

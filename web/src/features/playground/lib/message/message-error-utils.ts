@@ -20,8 +20,9 @@ import { MESSAGE_STATUS } from '../../constants'
 import type { Message } from '../../types'
 import { getMessageContent } from './message-utils'
 
+// The model workspace filtered to models without a price.
 export const MODEL_PRICING_SETTINGS_PATH =
-  '/admin/system-settings/billing/model-pricing'
+  '/admin/models/metadata?pricing=%5B%22unpriced%22%5D'
 
 const MODEL_PRICE_ERROR_CODE = 'model_price_error'
 export const FALLBACK_ERROR_CONTENT = 'An unknown error occurred'

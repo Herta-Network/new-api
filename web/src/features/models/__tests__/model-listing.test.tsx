@@ -25,11 +25,6 @@ import {
   RouterProvider,
 } from '@tanstack/react-router'
 import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-} from '@tanstack/react-table'
-import {
   render,
   screen,
   within,
@@ -46,8 +41,6 @@ import type {
   ModelPricingEntry,
 } from '@/features/model-pricing/api'
 import { pricingOptions } from '@/features/model-pricing/pricing'
-import { usePricingColumns } from '@/features/pricing/components/pricing-columns'
-import type { PricingModel } from '@/features/pricing/types'
 import fr from '@/i18n/locales/fr.json'
 import zhCN from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
@@ -91,24 +84,6 @@ function Page() {
       <ModelsTable />
       <ModelsDialogs />
     </ModelsProvider>
-  )
-}
-
-function CatalogPrice(props: { model: PricingModel }) {
-  const columns = usePricingColumns({ tokenUnit: 'M' })
-  const table = useReactTable({
-    data: [props.model],
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  })
-  const cell = table
-    .getRowModel()
-    .rows[0].getAllCells()
-    .find((item) => item.column.id === 'price')
-  return (
-    <div role='group' aria-label='Catalog price'>
-      {cell && flexRender(cell.column.columnDef.cell, cell.getContext())}
-    </div>
   )
 }
 
@@ -360,16 +335,19 @@ it('keeps prices and channel explanations readable in the mobile card and detail
         version: 'v1',
         configured: {},
         effective: { ModelRatio: 0.625, CompletionRatio: 8 },
+        pricing_mode: 'legacy',
       },
     ],
   })
   const price = screen.getByRole('button', {
     name: 'View pricing for catalog-only',
   })
-  expect(within(price).getByText('1.25')).toHaveClass('whitespace-normal')
-  expect(within(price).getByText('USD / 1M tokens')).toHaveClass(
+  expect(within(price).getByText('$1.25 / $10').parentElement).toHaveClass(
     'whitespace-normal'
   )
+  expect(
+    within(price).getByText('Input / output, USD per 1M tokens')
+  ).toHaveClass('break-words')
   expect(screen.getByText('Channels 0 · Groups 0')).toHaveClass(
     'whitespace-normal'
   )
@@ -544,129 +522,158 @@ it('opens a long translated reason by touch in the mobile card without requiring
 it.each([
   {
     name: 'legacy',
+    pricing_mode: 'legacy' as const,
     effective: { ModelRatio: 1.5, CompletionRatio: 5, CacheRatio: 0.1 },
-    catalog: { model_ratio: 1.5, completion_ratio: 5 },
-    text: 'Input3Output15',
+    badge: 'Legacy pricing',
+    price: '$3 / $15',
+    caption: 'Input / output, USD per 1M tokens',
   },
   {
-    name: 'single-expression',
+    name: 'legacy-request',
+    pricing_mode: 'legacy' as const,
+    effective: { ModelPrice: 0 },
+    badge: 'Legacy pricing',
+    price: '$0',
+    caption: 'USD per request',
+  },
+  {
+    name: 'simple',
+    pricing_mode: 'expression' as const,
     effective: {
       'billing_setting.billing_mode': 'tiered_expr',
       'billing_setting.billing_expr': 'tier("base", p * 3 + c * 15 + cr * 0.3)',
     },
-    catalog: {
-      billing_mode: 'tiered_expr',
-      billing_expr: 'tier("base", p * 3 + c * 15 + cr * 0.3)',
-    },
-    text: 'Input3Output15',
+    badge: 'Simple pricing',
+    price: '$3 / $15',
+    caption: 'Input / output, USD per 1M tokens',
   },
   {
-    name: 'tier-expression',
+    name: 'simple-request',
+    pricing_mode: 'expression' as const,
+    effective: {
+      'billing_setting.billing_mode': 'tiered_expr',
+      'billing_setting.billing_expr': 'tier("request", fixed(0.01))',
+    },
+    badge: 'Simple pricing',
+    price: '$0.01',
+    caption: 'USD per request',
+  },
+  {
+    name: 'advanced',
+    pricing_mode: 'expression' as const,
     effective: {
       'billing_setting.billing_mode': 'tiered_expr',
       'billing_setting.billing_expr':
         'len <= 200000 ? tier("standard", p * 3 + c * 15) : tier("long", p * 6 + c * 22.5)',
     },
-    catalog: {
-      billing_mode: 'tiered_expr',
-      billing_expr:
-        'len <= 200000 ? tier("standard", p * 3 + c * 15) : tier("long", p * 6 + c * 22.5)',
-    },
-    text: 'Input3Output15',
+    badge: 'Advanced pricing',
+    price: '$3 / $15',
+    caption: 'Input / output, USD per 1M tokens · 2 tiers',
   },
   {
-    name: 'free-request',
-    effective: { ModelPrice: 0 },
-    catalog: { quota_type: 1, model_price: 0 },
-    text: 'Per-request0USD/request',
-  },
-  {
-    name: 'free-tokens',
-    effective: { ModelRatio: 0, CompletionRatio: 2 },
-    catalog: { model_ratio: 0, completion_ratio: 2 },
-    text: 'Input0Output0',
-  },
-  {
-    name: 'free-expression',
+    name: 'advanced-image',
+    pricing_mode: 'expression' as const,
     effective: {
       'billing_setting.billing_mode': 'tiered_expr',
-      'billing_setting.billing_expr': 'tier("free", p * 0 + c * 0)',
+      'billing_setting.billing_expr':
+        'tier("image", fixed(0.04)) * image_count',
     },
-    catalog: {
-      billing_mode: 'tiered_expr',
-      billing_expr: 'tier("free", p * 0 + c * 0)',
-    },
-    text: 'Input0Output0',
+    badge: 'Advanced pricing',
+    price: '$0.04',
+    caption: 'USD per image',
   },
 ])(
-  'shows $name effective pricing like the catalog without requiring a listed model',
-  async ({ name, effective, catalog, text }) => {
+  'shows the $name billing mode and its first-tier price in USD',
+  async ({ name, pricing_mode, effective, badge, price, caption }) => {
+    // Model prices stay in the engine's unit whatever the display currency.
+    useSystemConfigStore.getState().setConfig({
+      currency: {
+        ...DEFAULT_CURRENCY_CONFIG,
+        siteCurrency: 'CNY',
+        siteCurrencySymbol: '¥',
+        usdRate: 7,
+      },
+    })
     const model = { ...channel, model_name: name }
     await renderList([model], {
-      pricing: [{ model_name: name, version: 'v1', configured: {}, effective }],
+      pricing: [
+        {
+          model_name: name,
+          version: 'v1',
+          configured: {},
+          effective,
+          pricing_mode,
+        },
+      ],
     })
-    const button = screen.getByRole('button', {
+    const row = screen.getByRole('row', { name: new RegExp(name) })
+    expect(within(row).getByText(badge)).toBeVisible()
+    const button = within(row).getByRole('button', {
       name: `View pricing for ${name}`,
     })
-    expect(button.textContent?.replaceAll(/\s/g, '')).toContain(text)
-    expect(button).not.toHaveTextContent('Unset price')
-    expect(button).not.toHaveTextContent('Cache')
-    render(
-      <CatalogPrice
-        model={{
-          id: 1,
-          model_name: name,
-          quota_type: 0,
-          model_ratio: 0,
-          completion_ratio: 0,
-          enable_groups: [],
-          ...catalog,
-        }}
-      />
-    )
-    expect(button.textContent).toBe(
-      screen.getByRole('group', { name: 'Catalog price' }).textContent
-    )
+    expect(within(button).getByText(price)).toBeVisible()
+    expect(within(button).getByText(caption)).toBeVisible()
+    expect(button).not.toHaveTextContent('¥')
   }
 )
 
-it('shows task tier ranges in the schema unit and converts site currency only once', async () => {
-  useSystemConfigStore.getState().setConfig({
-    currency: {
-      ...DEFAULT_CURRENCY_CONFIG,
-      siteCurrency: 'CNY',
-      siteCurrencySymbol: '¥',
-      usdRate: 7,
+it.each([
+  {
+    pricing_mode: 'unpriced' as const,
+    effective: {},
+    badge: 'Unpriced',
+    text: 'No price set',
+  },
+  {
+    pricing_mode: 'task' as const,
+    effective: {
+      'billing_setting.billing_mode': 'tiered_expr',
+      'billing_setting.billing_expr': 'tier("base", u("seconds") * 0.4)',
     },
-  })
-  const expression =
-    'u("mode") == "pro" ? tier("pro", u("seconds") * 0.8) : tier("std", u("seconds") * 0.4)'
-  const schema = {
-    seconds: { type: 'number' as const, unit: 'second' as const },
-    mode: { enum: ['std', 'pro'] },
-  }
-  await renderList([channel], {
-    pricing: [
-      {
-        model_name: channel.model_name,
-        version: 'v1',
-        configured: {},
-        effective: {
-          'billing_setting.billing_mode': 'tiered_expr',
-          'billing_setting.billing_expr': expression,
+    badge: 'Task pricing',
+    text: 'Usage-based pricing',
+  },
+])(
+  'marks $pricing_mode models without inventing token prices',
+  async ({ pricing_mode, effective, badge, text }) => {
+    await renderList([channel], {
+      pricing: [
+        {
+          model_name: channel.model_name,
+          version: 'v1',
+          configured: {},
+          effective,
+          pricing_mode,
+          usage_schema:
+            pricing_mode === 'task'
+              ? { seconds: { type: 'number', unit: 'second' } }
+              : undefined,
         },
-        usage_schema: schema,
-      },
-    ],
+      ],
+    })
+    const row = screen.getByRole('row', { name: /channel-only/ })
+    expect(within(row).getByText(badge)).toBeVisible()
+    const button = within(row).getByRole('button', {
+      name: 'View pricing for channel-only',
+    })
+    expect(button).toHaveTextContent(text)
+    expect(button).not.toHaveTextContent('$')
+  }
+)
+
+it('filters by billing mode on the server and keeps the filter in the URL', async () => {
+  const { get, router } = await renderList([channel])
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Billing mode' }))
+  await user.click(screen.getByRole('option', { name: 'Unpriced' }))
+  await waitFor(() =>
+    expect(get).toHaveBeenCalledWith('/api/models/search', {
+      params: expect.objectContaining({ pricing_mode: 'unpriced', p: 1 }),
+    })
+  )
+  expect(router.state.location.search).toMatchObject({
+    pricing: ['unpriced'],
   })
-  const button = screen.getByRole('button', {
-    name: 'View pricing for channel-only',
-  })
-  expect(button).toHaveTextContent(/2.8.*5.6/)
-  expect(button).toHaveTextContent('/s')
-  expect(button).toHaveTextContent('CNY')
-  expect(button).not.toHaveTextContent('¥')
-  expect(button).not.toHaveTextContent('1M tokens')
 })
 
 it('opens the effective expression breakdown from the price without creating metadata', async () => {
@@ -710,6 +717,7 @@ it('shows an unrecognized expression as special and retains its full source in p
           'billing_setting.billing_mode': 'tiered_expr',
           'billing_setting.billing_expr': expression,
         },
+        pricing_mode: 'expression',
       },
     ],
   })
@@ -819,36 +827,3 @@ it('keeps an active visibility filter when its server result is empty', async ()
     params: expect.objectContaining({ square_state: 'unavailable', p: 1 }),
   })
 })
-
-it.each(['currency', 'tokens'] as const)(
-  'uses one site currency caption in the %s display mode without replacing prices with quota counts',
-  async (mode) => {
-    useSystemConfigStore.getState().setConfig({
-      currency: {
-        ...DEFAULT_CURRENCY_CONFIG,
-        quotaDisplayMode: mode,
-        siteCurrency: 'EUR',
-        siteCurrencySymbol: '€',
-        usdRate: 1,
-      },
-    })
-    await renderList([channel], {
-      pricing: [
-        {
-          model_name: channel.model_name,
-          version: 'v1',
-          configured: {},
-          effective: { ModelRatio: 0.25, CompletionRatio: 2 },
-        },
-      ],
-    })
-    const button = screen.getByRole('button', {
-      name: 'View pricing for channel-only',
-    })
-    expect(button.textContent?.replaceAll(/\s/g, '')).toContain(
-      'Input0.5Output1'
-    )
-    expect(within(button).getByText('EUR / 1M tokens')).toBeVisible()
-    expect(button).not.toHaveTextContent('€')
-  }
-)

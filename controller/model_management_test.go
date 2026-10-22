@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1019,6 +1021,183 @@ export function parseTaskResult() { return {}; }
 		failVendors.Store(true)
 		modelManagementRequest(t, SyncUpstreamPreview, "GET", "/api/models/sync_upstream/preview?locale=zh", nil, &preview)
 		assert.False(t, preview.Success)
+	})
+	t.Run("pricing_modes_filter_and_legacy_batch_conversion", func(t *testing.T) {
+		previousQuota := common.QuotaPerUnit
+		common.QuotaPerUnit = 500000
+		t.Cleanup(func() { common.QuotaPerUnit = previousQuota })
+		metadata := []model.Model{
+			{ModelName: "batch-meta", Status: 1},
+			{ModelName: "batch-rule-", NameRule: model.NameRulePrefix, Status: 1},
+		}
+		for i := range metadata {
+			require.NoError(t, metadata[i].Insert())
+		}
+		channel := model.Channel{Name: "Batch", Type: 1, Key: "fixture", Group: "default", Status: common.ChannelStatusEnabled,
+			Models: "batch-ratio,batch-fixed,batch-expr,batch-unpriced,batch-realtime,batch-inactive-expr,batch-rule-child,matrix-task"}
+		require.NoError(t, channel.Insert())
+		names := []string{"batch-meta", "batch-ratio", "batch-fixed", "batch-expr", "batch-realtime", "batch-inactive-expr", "matrix-task"}
+		t.Cleanup(func() {
+			snapshot, err := model.GetModelPricingSnapshot(names)
+			require.NoError(t, err)
+			resets := make([]model.ModelPricingChange, 0, len(names))
+			for _, entry := range snapshot.Entries {
+				resets = append(resets, model.ModelPricingChange{ModelName: entry.ModelName, ExpectedVersion: entry.Version, Reset: true})
+			}
+			require.NoError(t, model.UpdateModelPricing(resets))
+			require.NoError(t, db.Where("channel_id = ?", channel.Id).Delete(&model.Ability{}).Error)
+			require.NoError(t, db.Delete(&model.Channel{}, channel.Id).Error)
+			require.NoError(t, db.Unscoped().Where("model_name LIKE ?", "batch-%").Delete(&model.Model{}).Error)
+		})
+		current, err := model.GetModelPricingSnapshot(names)
+		require.NoError(t, err)
+		versions := make(map[string]string)
+		for _, entry := range current.Entries {
+			versions[entry.ModelName] = entry.Version
+		}
+		configured := map[string]model.PricingValues{
+			"batch-meta":          {"ModelRatio": 2.0},
+			"batch-ratio":         {"ModelRatio": 1.5, "CompletionRatio": 4.0, "CacheRatio": 0.1},
+			"batch-fixed":         {"ModelPrice": 0.02},
+			"batch-expr":          {"billing_setting.billing_mode": "tiered_expr", "billing_setting.billing_expr": `tier("base", p * 1 + c * 2)`},
+			"batch-realtime":      {"ModelRatio": 1.0},
+			"batch-inactive-expr": {"ModelRatio": 1.0, "billing_setting.billing_mode": "ratio", "billing_setting.billing_expr": `tier("base", p * 9 + c * 9)`},
+			"matrix-task":         {"ModelPrice": 0.1},
+		}
+		changes := make([]model.ModelPricingChange, 0, len(configured))
+		for name, pricing := range configured {
+			changes = append(changes, model.ModelPricingChange{ModelName: name, ExpectedVersion: versions[name], Pricing: pricing})
+		}
+		require.NoError(t, model.UpdateModelPricing(changes))
+
+		modes := func() map[string]string {
+			snapshot, err := model.GetModelPricingSnapshot(append(names, "batch-unpriced"))
+			require.NoError(t, err)
+			result := make(map[string]string)
+			for _, entry := range snapshot.Entries {
+				result[entry.ModelName] = entry.PricingMode
+			}
+			return result
+		}
+		assert.Equal(t, map[string]string{
+			"batch-meta": "legacy", "batch-ratio": "legacy", "batch-fixed": "legacy", "batch-expr": "expression",
+			"batch-realtime": "legacy", "batch-inactive-expr": "legacy", "matrix-task": "legacy", "batch-unpriced": "unpriced",
+		}, modes())
+
+		type listing struct {
+			Success bool
+			Data    struct {
+				Items []model.Model
+				Total int
+			}
+		}
+		listNames := func(mode string) []string {
+			var page listing
+			recorder := modelManagementRequest(t, SearchModelsMeta, "GET", "/api/models/search?include_channel_models=true&keyword=batch-&page_size=3&pricing_mode="+mode, nil, &page)
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			require.True(t, page.Success)
+			result := make([]string, 0, page.Data.Total)
+			for p := 1; len(result) < page.Data.Total; p++ {
+				var next listing
+				modelManagementRequest(t, SearchModelsMeta, "GET", fmt.Sprintf("/api/models/search?include_channel_models=true&keyword=batch-&page_size=3&p=%d&pricing_mode=%s", p, mode), nil, &next)
+				require.NotEmpty(t, next.Data.Items)
+				for _, item := range next.Data.Items {
+					result = append(result, item.ModelName)
+				}
+			}
+			return result
+		}
+		// Name-rule metadata has no price of its own and never matches.
+		assert.Equal(t, []string{"batch-meta", "batch-fixed", "batch-inactive-expr", "batch-ratio", "batch-realtime"}, listNames("legacy"))
+		assert.Equal(t, []string{"batch-rule-child", "batch-unpriced"}, listNames("unpriced"))
+		assert.Equal(t, []string{"batch-expr"}, listNames("expression"))
+		recorder := modelManagementRequest(t, SearchModelsMeta, "GET", "/api/models/search?pricing_mode=cheap", nil, nil)
+		assert.Equal(t, http.StatusBadRequest, recorder.Code)
+
+		type conversions struct {
+			Success bool
+			Data    struct {
+				Entries []model.LegacyModelPricingConversion
+			}
+		}
+		preview := func() map[string]model.LegacyModelPricingConversion {
+			var response conversions
+			modelManagementRequest(t, PreviewLegacyModelPricingConversions, http.MethodPost, "/api/option/model_pricing/convert_legacy", nil, &response)
+			require.True(t, response.Success)
+			result := make(map[string]model.LegacyModelPricingConversion)
+			for _, entry := range response.Data.Entries {
+				result[entry.ModelName] = entry
+			}
+			return result
+		}
+		before, err := model.GetModelPricingSnapshot(names)
+		require.NoError(t, err)
+		entries := preview()
+		for name, tc := range map[string]struct{ expression, reason string }{
+			"batch-meta":          {`tier("base", p * 4 + c * 4)`, ""},
+			"batch-ratio":         {`tier("base", p * 3 + c * 12 + cr * 0.3)`, ""},
+			"batch-fixed":         {`tier("request", fixed(0.02))`, ""},
+			"batch-realtime":      {"", "Realtime pricing must be converted manually."},
+			"batch-inactive-expr": {"", "This model has an inactive saved expression. Open its pricing to choose which price to keep."},
+			"matrix-task":         {"", "Task pricing must be converted manually using the task usage schema."},
+		} {
+			entry, exists := entries[name]
+			require.True(t, exists, name)
+			assert.Equal(t, tc.expression, entry.Expression, name)
+			assert.Equal(t, tc.reason, entry.UnsupportedReason, name)
+			assert.Equal(t, configured[name], entry.Configured, name)
+			assert.NotEmpty(t, entry.Effective, "unconvertible models still show their current prices: %s", name)
+		}
+		for _, name := range []string{"batch-expr", "batch-unpriced", "batch-rule-child"} {
+			assert.NotContains(t, entries, name)
+		}
+		after, err := model.GetModelPricingSnapshot(names)
+		require.NoError(t, err)
+		assert.Equal(t, before.Entries, after.Entries, "the preview must not write pricing")
+
+		convert := func(entries map[string]model.LegacyModelPricingConversion) []model.ModelPricingChange {
+			changes := make([]model.ModelPricingChange, 0)
+			for _, entry := range entries {
+				if entry.Expression == "" {
+					continue
+				}
+				pricing := maps.Clone(entry.Configured)
+				pricing["billing_setting.billing_mode"] = "tiered_expr"
+				pricing["billing_setting.billing_expr"] = entry.Expression
+				changes = append(changes, model.ModelPricingChange{ModelName: entry.ModelName, ExpectedVersion: entry.Version, Pricing: pricing})
+			}
+			return changes
+		}
+		// A price edited after the preview rejects the whole batch.
+		edited := model.ModelPricingChange{ModelName: "batch-fixed", ExpectedVersion: entries["batch-fixed"].Version, Pricing: model.PricingValues{"ModelPrice": 0.03}}
+		require.NoError(t, model.UpdateModelPricing([]model.ModelPricingChange{edited}))
+		recorder = modelManagementRequest(t, UpdateModelPricingConfig, http.MethodPatch, "/api/option/model_pricing", map[string]any{"changes": convert(entries)}, nil)
+		assert.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
+		assert.Equal(t, "legacy", modes()["batch-ratio"], "a rejected batch writes nothing")
+
+		entries = preview()
+		assert.Equal(t, `tier("request", fixed(0.03))`, entries["batch-fixed"].Expression)
+		recorder = modelManagementRequest(t, UpdateModelPricingConfig, http.MethodPatch, "/api/option/model_pricing", map[string]any{"changes": convert(entries)}, nil)
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		assert.Equal(t, map[string]string{
+			"batch-meta": "expression", "batch-ratio": "expression", "batch-fixed": "expression", "batch-expr": "expression",
+			"batch-realtime": "legacy", "batch-inactive-expr": "legacy", "matrix-task": "legacy", "batch-unpriced": "unpriced",
+		}, modes())
+		converted, err := model.GetModelPricingSnapshot([]string{"batch-ratio"})
+		require.NoError(t, err)
+		assert.Equal(t, 1.5, converted.Entries[0].Configured["ModelRatio"], "legacy fields stay saved for switching back")
+		assert.Equal(t, []string{"batch-inactive-expr", "batch-realtime"}, listNames("legacy"))
+		remaining := preview()
+		for _, name := range names {
+			_, listed := remaining[name]
+			assert.Equal(t, slices.Contains([]string{"batch-inactive-expr", "batch-realtime", "matrix-task"}, name), listed, name)
+		}
+
+		task, err := model.GetModelPricingSnapshot([]string{"matrix-task"})
+		require.NoError(t, err)
+		require.NoError(t, model.UpdateModelPricing([]model.ModelPricingChange{{ModelName: "matrix-task", ExpectedVersion: task.Entries[0].Version,
+			Pricing: model.PricingValues{"billing_setting.billing_mode": "tiered_expr", "billing_setting.billing_expr": `tier("base", u("seconds") * 0.1)`}}}))
+		assert.Equal(t, "task", modes()["matrix-task"])
 	})
 }
 

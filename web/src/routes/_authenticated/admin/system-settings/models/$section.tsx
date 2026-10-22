@@ -42,6 +42,14 @@ export const Route = createFileRoute(
         replace: true,
       })
     }
+    // The former "Pricing Ratios" section; prices now live with the models.
+    if (params.section === 'ratio') {
+      throw redirect({
+        to: '/admin/models/$section',
+        params: { section: 'metadata' },
+        replace: true,
+      })
+    }
     const validSections = MODELS_SECTION_IDS as unknown as string[]
     if (!validSections.includes(params.section)) {
       throw redirect({
