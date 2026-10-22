@@ -42,6 +42,10 @@ import { useTranslation } from 'react-i18next'
 
 import type { NavItem, SidebarData } from '@/components/layout/types'
 import {
+  DASHBOARD_SECTION_TITLE_KEYS,
+  DASHBOARD_SECTIONS,
+} from '@/features/dashboard/section-registry'
+import {
   ADMIN_PERMISSION_ACTIONS,
   ADMIN_PERMISSION_RESOURCES,
   hasPermission,
@@ -147,14 +151,17 @@ export function useSidebarData(workspace: Workspace): SidebarData {
 
   const siteItems: NavItem[] = [
     {
-      title: t('Dashboard'),
-      url: '/admin/dashboard/models',
-      activeUrls: [
-        '/admin/dashboard/flow',
-        '/admin/dashboard/users',
-        '/admin/dashboard/performance',
-      ],
+      title: t('Overview'),
+      url: '/admin',
+      icon: Activity,
+    },
+    {
+      title: t('Analytics'),
       icon: LayoutDashboard,
+      items: DASHBOARD_SECTIONS.site.map((section) => ({
+        title: t(DASHBOARD_SECTION_TITLE_KEYS[section]),
+        url: `/admin/dashboard/${section}`,
+      })),
     },
     {
       title: t('Usage Logs'),

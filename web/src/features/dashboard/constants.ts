@@ -16,7 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { DashboardChartPreferences, DashboardFilters } from './types'
+import type {
+  ConsoleRankingPeriod,
+  ConsoleSummaryPeriod,
+  DashboardChartPreferences,
+  DashboardFilters,
+} from './types'
 
 export const TIME_GRANULARITY_STORAGE_KEY = 'data_export_default_time'
 export const DASHBOARD_CHART_PREFERENCES_STORAGE_KEY =
@@ -67,3 +72,21 @@ export const EMPTY_DASHBOARD_FILTERS: DashboardFilters = {
   time_granularity: 'hour',
   username: '',
 }
+
+// Period switches of the admin operations overview.
+export const CONSOLE_SUMMARY_PERIODS = [
+  { value: 'today', labelKey: 'Today' },
+  { value: 'monthly', labelKey: 'Current month' },
+  { value: 'all', labelKey: 'All time' },
+] as const satisfies readonly {
+  value: ConsoleSummaryPeriod
+  labelKey: string
+}[]
+
+export const CONSOLE_RANKING_PERIODS = [
+  { value: 'today', labelKey: 'Today' },
+  { value: 'yesterday', labelKey: 'Yesterday' },
+] as const satisfies readonly {
+  value: ConsoleRankingPeriod
+  labelKey: string
+}[]

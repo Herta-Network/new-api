@@ -274,3 +274,129 @@ export interface FAQItem {
   question: string
   answer: string
 }
+
+// ============================================================================
+// Admin Operations Overview Types (/api/admin/console/*)
+// ============================================================================
+
+/** Every console figure is bucketed in this server time zone. */
+interface ConsoleZone {
+  time_zone: string
+  /** Seconds east of UTC. */
+  utc_offset: number
+}
+
+/** An amount in hundredths of `currency`. */
+export interface ConsoleAmount {
+  currency: string
+  amount: number
+}
+
+export interface ConsoleOverview extends ConsoleZone {
+  usage_data_enabled: boolean
+  requests: number
+  quota: number
+  tokens: number
+  active_users: number
+  registrations: number
+  /** The site currency of `revenue`. */
+  currency: string
+  revenue: number
+  revenue_orders: number
+  channels: {
+    total: number
+    enabled: number
+    manually_disabled: number
+    auto_disabled: number
+  }
+  attention: {
+    count: number
+    unfulfilled_orders: number
+    unmatched_payments: number
+    amounts: ConsoleAmount[]
+  }
+}
+
+export type ConsoleSummaryPeriod = 'today' | 'monthly' | 'all'
+export type ConsoleRankingPeriod = 'today' | 'yesterday'
+
+export interface ConsoleRevenueBucket {
+  /** Server-zone label: "2006-01-02 15:04", "2006-01-02" or "2006-01". */
+  date: string
+  start: number
+  total: number
+  topup: number
+  subscription: number
+}
+
+export interface ConsoleCurrencyRevenue {
+  currency: string
+  revenue: number
+  orders: number
+  balance_spending: number
+  balance_orders: number
+}
+
+export interface ConsoleRevenuePeriod {
+  total: number
+  topup: number
+  subscription: number
+  orders: number
+  manual: number
+  manual_orders: number
+  balance_spending: number
+  balance_orders: number
+  other_currencies: ConsoleCurrencyRevenue[]
+  list: ConsoleRevenueBucket[]
+}
+
+export interface ConsoleRevenue extends ConsoleZone {
+  currency: string
+  today: ConsoleRevenuePeriod
+  monthly: ConsoleRevenuePeriod
+  all: ConsoleRevenuePeriod
+}
+
+export interface ConsoleUserBucket {
+  date: string
+  start: number
+  registrations: number
+  first_time_payers: number
+  returning_payers: number
+}
+
+export interface ConsoleUserPeriod {
+  registrations: number
+  first_time_payers: number
+  returning_payers: number
+  list: ConsoleUserBucket[]
+}
+
+export interface ConsoleUsers extends ConsoleZone {
+  today: ConsoleUserPeriod
+  monthly: ConsoleUserPeriod
+  all: ConsoleUserPeriod
+}
+
+export interface ConsoleModelRank {
+  model_name: string
+  quota: number
+  requests: number
+  tokens: number
+}
+
+export interface ConsoleUserRank {
+  user_id: number
+  username: string
+  quota: number
+  requests: number
+  tokens: number
+}
+
+export interface ConsoleRankings extends ConsoleZone {
+  period: ConsoleRankingPeriod
+  start: number
+  end: number
+  models: ConsoleModelRank[]
+  users: ConsoleUserRank[]
+}

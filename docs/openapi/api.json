@@ -5217,6 +5217,196 @@
         ]
       }
     },
+    "/api/admin/console/overview": {
+      "get": {
+        "summary": "运营概览",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）\n\n今日请求数、消耗额度、token 数、活跃用户、注册数、收入、渠道数量，以及待处理的付款（已支付未履约订单与未解决的未匹配付款）。日、月、小时按服务器本地时区划分（生产环境 TZ=Asia/Shanghai），响应返回所用时区。\n\n访问令牌需要 billing:read。",
+        "tags": [
+          "数据统计"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {},
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ConsoleOverview"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/admin/console/revenue": {
+      "get": {
+        "summary": "收入统计",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）\n\n今日（按小时）、本月（按日）、全部（按月）的总收入、充值与订阅收入。收入只统计经支付网关付款、状态为已支付或已完成的订单，按 paid_at（缺失时用 finished_at）归入时段；管理员手动完成的订单计入收入并单独列出；钱包余额支付（platform=balance）不是收入，单列为余额消费；只汇总站点币种的订单，其他币种单独列出，不同币种从不相加。日、月、小时按服务器本地时区划分（生产环境 TZ=Asia/Shanghai），响应返回所用时区。\n\n访问令牌需要 billing:read。",
+        "tags": [
+          "数据统计"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {},
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ConsoleRevenue"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/admin/console/users": {
+      "get": {
+        "summary": "用户统计",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）\n\n今日、本月、全部的注册数、首次付费用户数与复购用户数。日、月、小时按服务器本地时区划分（生产环境 TZ=Asia/Shanghai），响应返回所用时区。\n\n访问令牌需要 billing:read。",
+        "tags": [
+          "数据统计"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {},
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ConsoleUsers"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/admin/console/rankings": {
+      "get": {
+        "summary": "用量排行",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）\n\n今日或昨日消耗额度最多的前 10 个模型与前 10 个用户。日、月、小时按服务器本地时区划分（生产环境 TZ=Asia/Shanghai），响应返回所用时区。\n\n访问令牌需要 log:read。",
+        "tags": [
+          "数据统计"
+        ],
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "description": "today（默认）或 yesterday",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "today",
+                "yesterday"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {},
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ConsoleRankings"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
     "/api/group/": {
       "get": {
         "summary": "获取所有分组",
@@ -6204,6 +6394,351 @@
           },
           "redeemed_time": {
             "type": "integer"
+          }
+        }
+      },
+      "ConsoleAmount": {
+        "type": "object",
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "integer",
+            "description": "金额以币种的百分之一为单位（int64）"
+          }
+        }
+      },
+      "ConsoleOverview": {
+        "type": "object",
+        "properties": {
+          "time_zone": {
+            "type": "string",
+            "description": "统计所用的服务器时区，例如 Asia/Shanghai；未设置 TZ 时为 Local"
+          },
+          "utc_offset": {
+            "type": "integer",
+            "description": "该时区当前相对 UTC 的偏移秒数"
+          },
+          "usage_data_enabled": {
+            "type": "boolean",
+            "description": "是否记录小时用量数据（DATA_EXPORT_ENABLED）；关闭时用量指标为 0"
+          },
+          "requests": {
+            "type": "integer",
+            "description": "今日请求数"
+          },
+          "quota": {
+            "type": "integer",
+            "description": "今日消耗额度"
+          },
+          "tokens": {
+            "type": "integer",
+            "description": "今日 token 数"
+          },
+          "active_users": {
+            "type": "integer",
+            "description": "今日有调用的用户数"
+          },
+          "registrations": {
+            "type": "integer",
+            "description": "今日注册数（含已删除账户）"
+          },
+          "currency": {
+            "type": "string",
+            "description": "站点币种"
+          },
+          "revenue": {
+            "type": "integer",
+            "description": "今日收入，站点币种，金额以币种的百分之一为单位（int64）"
+          },
+          "revenue_orders": {
+            "type": "integer",
+            "description": "今日计入收入的订单数"
+          },
+          "channels": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer"
+              },
+              "enabled": {
+                "type": "integer"
+              },
+              "manually_disabled": {
+                "type": "integer"
+              },
+              "auto_disabled": {
+                "type": "integer"
+              }
+            }
+          },
+          "attention": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "description": "待处理总数"
+              },
+              "unfulfilled_orders": {
+                "type": "integer",
+                "description": "已支付未履约订单数"
+              },
+              "unmatched_payments": {
+                "type": "integer",
+                "description": "未解决的未匹配付款数（不含已作为未履约订单计入的记录）"
+              },
+              "amounts": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ConsoleAmount"
+                },
+                "description": "按币种分列的金额，站点币种在前"
+              }
+            }
+          }
+        }
+      },
+      "ConsoleRevenueBucket": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "description": "服务器时区的时段标签：小时 2006-01-02 15:04、日 2006-01-02、月 2006-01"
+          },
+          "start": {
+            "type": "integer",
+            "description": "时段开始的 Unix 秒"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "topup": {
+            "type": "integer"
+          },
+          "subscription": {
+            "type": "integer"
+          }
+        }
+      },
+      "ConsoleCurrencyRevenue": {
+        "type": "object",
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "revenue": {
+            "type": "integer"
+          },
+          "orders": {
+            "type": "integer"
+          },
+          "balance_spending": {
+            "type": "integer"
+          },
+          "balance_orders": {
+            "type": "integer"
+          }
+        }
+      },
+      "ConsoleRevenuePeriod": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "description": "站点币种收入 = topup + subscription，金额以币种的百分之一为单位（int64）"
+          },
+          "topup": {
+            "type": "integer"
+          },
+          "subscription": {
+            "type": "integer"
+          },
+          "orders": {
+            "type": "integer"
+          },
+          "manual": {
+            "type": "integer",
+            "description": "其中管理员手动完成的金额"
+          },
+          "manual_orders": {
+            "type": "integer"
+          },
+          "balance_spending": {
+            "type": "integer",
+            "description": "钱包余额支付的金额，不计入收入"
+          },
+          "balance_orders": {
+            "type": "integer"
+          },
+          "other_currencies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsoleCurrencyRevenue"
+            },
+            "description": "其他币种的订单，各币种单独统计，不与站点币种相加"
+          },
+          "list": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsoleRevenueBucket"
+            }
+          }
+        }
+      },
+      "ConsoleRevenue": {
+        "type": "object",
+        "properties": {
+          "time_zone": {
+            "type": "string",
+            "description": "统计所用的服务器时区，例如 Asia/Shanghai；未设置 TZ 时为 Local"
+          },
+          "utc_offset": {
+            "type": "integer",
+            "description": "该时区当前相对 UTC 的偏移秒数"
+          },
+          "currency": {
+            "type": "string",
+            "description": "站点币种"
+          },
+          "today": {
+            "$ref": "#/components/schemas/ConsoleRevenuePeriod"
+          },
+          "monthly": {
+            "$ref": "#/components/schemas/ConsoleRevenuePeriod"
+          },
+          "all": {
+            "$ref": "#/components/schemas/ConsoleRevenuePeriod"
+          }
+        }
+      },
+      "ConsoleUserBucket": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "start": {
+            "type": "integer"
+          },
+          "registrations": {
+            "type": "integer"
+          },
+          "first_time_payers": {
+            "type": "integer"
+          },
+          "returning_payers": {
+            "type": "integer"
+          }
+        }
+      },
+      "ConsoleUserPeriod": {
+        "type": "object",
+        "properties": {
+          "registrations": {
+            "type": "integer"
+          },
+          "first_time_payers": {
+            "type": "integer",
+            "description": "首次在该时段完成网关付款的用户数"
+          },
+          "returning_payers": {
+            "type": "integer",
+            "description": "该时段付款且此前已付款过的用户数"
+          },
+          "list": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsoleUserBucket"
+            }
+          }
+        }
+      },
+      "ConsoleUsers": {
+        "type": "object",
+        "properties": {
+          "time_zone": {
+            "type": "string",
+            "description": "统计所用的服务器时区，例如 Asia/Shanghai；未设置 TZ 时为 Local"
+          },
+          "utc_offset": {
+            "type": "integer",
+            "description": "该时区当前相对 UTC 的偏移秒数"
+          },
+          "today": {
+            "$ref": "#/components/schemas/ConsoleUserPeriod"
+          },
+          "monthly": {
+            "$ref": "#/components/schemas/ConsoleUserPeriod"
+          },
+          "all": {
+            "$ref": "#/components/schemas/ConsoleUserPeriod"
+          }
+        }
+      },
+      "ConsoleRankings": {
+        "type": "object",
+        "properties": {
+          "time_zone": {
+            "type": "string",
+            "description": "统计所用的服务器时区，例如 Asia/Shanghai；未设置 TZ 时为 Local"
+          },
+          "utc_offset": {
+            "type": "integer",
+            "description": "该时区当前相对 UTC 的偏移秒数"
+          },
+          "period": {
+            "type": "string",
+            "description": "today 或 yesterday"
+          },
+          "start": {
+            "type": "integer"
+          },
+          "end": {
+            "type": "integer"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "model_name": {
+                  "type": "string"
+                },
+                "quota": {
+                  "type": "integer"
+                },
+                "requests": {
+                  "type": "integer"
+                },
+                "tokens": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "user_id": {
+                  "type": "integer"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "quota": {
+                  "type": "integer"
+                },
+                "requests": {
+                  "type": "integer"
+                },
+                "tokens": {
+                  "type": "integer"
+                }
+              }
+            }
           }
         }
       }
