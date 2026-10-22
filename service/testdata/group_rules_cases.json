@@ -1,0 +1,35 @@
+{
+  "settings": {
+    "GroupRatio": { "default": 1, "vip": 0.8, "premium": 0.5, "partner": 2 },
+    "UserUsableGroups": {
+      "default": "Standard",
+      "premium": "Premium",
+      "auto": "Auto routing",
+      "retired": "Retired"
+    },
+    "GroupGroupRatio": { "vip": { "premium": 0.3, "default": 0.9 } },
+    "GroupSpecialUsableGroup": {
+      "vip": { "+:partner": "Partner pool", "-:default": "remove" },
+      "partner": { "vip": "VIP pool" }
+    },
+    "AutoGroups": ["premium", "partner", "retired", "default", "premium"]
+  },
+  "usable_groups": {
+    "": ["auto", "default", "premium", "retired"],
+    "default": ["auto", "default", "premium", "retired"],
+    "vip": ["auto", "partner", "premium", "retired", "vip"],
+    "partner": ["auto", "default", "partner", "premium", "retired", "vip"]
+  },
+  "auto_groups": {
+    "default": ["premium", "default"],
+    "vip": ["premium", "partner"],
+    "partner": ["premium", "partner", "default"]
+  },
+  "group_ratios": [
+    { "user_group": "default", "using_group": "premium", "ratio": 0.5 },
+    { "user_group": "vip", "using_group": "premium", "ratio": 0.3 },
+    { "user_group": "vip", "using_group": "vip", "ratio": 0.8 },
+    { "user_group": "vip", "using_group": "default", "ratio": 0.9 },
+    { "user_group": "default", "using_group": "retired", "ratio": 1 }
+  ]
+}

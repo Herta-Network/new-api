@@ -21,11 +21,11 @@ import { QuotaSettingsSection } from '../general/quota-settings-section'
 import { CurrencySettingsSection } from '../integrations/currency-settings-section'
 import { PaymentMethodsSection } from '../integrations/payment-methods-section'
 import { PaymentSettingsSection } from '../integrations/payment-settings-section'
-import { RatioSettingsCard } from '../models/ratio-settings-card'
 import type { BillingSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { GroupPricingSection, type GroupPricingValues } from './group-pricing'
 
-const getGroupDefaults = (settings: BillingSettings) => ({
+const getGroupDefaults = (settings: BillingSettings): GroupPricingValues => ({
   TopupGroupRatio: settings.TopupGroupRatio,
   GroupRatio: settings.GroupRatio,
   UserUsableGroups: settings.UserUsableGroups,
@@ -67,9 +67,9 @@ const BILLING_SECTIONS = [
     id: 'group-pricing',
     titleKey: 'Group Pricing',
     build: (settings: BillingSettings) => (
-      <RatioSettingsCard
-        titleKey='Group Pricing'
-        groupDefaults={getGroupDefaults(settings)}
+      <GroupPricingSection
+        defaultValues={getGroupDefaults(settings)}
+        paymentCurrency={settings['payment_setting.currency']}
       />
     ),
   },
