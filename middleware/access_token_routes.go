@@ -251,6 +251,13 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/data/flow":                        accessTokenScopeRule("log:read"),
 	"GET /api/data/flow/self":                   accessTokenScopeRule("usage:read"),
 
+	// router/api-router.go: /api/admin/console (revenue and payers are
+	// billing data; the rankings are usage, like /api/data)
+	"GET /api/admin/console/overview": accessTokenScopeRule("billing:read"),
+	"GET /api/admin/console/revenue":  accessTokenScopeRule("billing:read"),
+	"GET /api/admin/console/users":    accessTokenScopeRule("billing:read"),
+	"GET /api/admin/console/rankings": accessTokenScopeRule("log:read"),
+
 	// router/api-router.go: /api/group, /api/prefill_group
 	"GET /api/group/":               accessTokenScopeRule("group:read"),
 	"GET /api/prefill_group/":       accessTokenScopeRule("group:read"),

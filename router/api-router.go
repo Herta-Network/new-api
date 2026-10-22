@@ -357,6 +357,16 @@ func SetApiRouter(router *gin.Engine) {
 			systemInfoRoute.DELETE("/instances/:node_name", controller.DeleteStaleSystemInstance)
 		}
 
+		// Operations overview of the admin console.
+		consoleRoute := apiRouter.Group("/admin/console")
+		consoleRoute.Use(middleware.AdminAuth())
+		{
+			consoleRoute.GET("/overview", controller.GetConsoleOverview)
+			consoleRoute.GET("/revenue", controller.GetConsoleRevenue)
+			consoleRoute.GET("/users", controller.GetConsoleUsers)
+			consoleRoute.GET("/rankings", controller.GetConsoleRankings)
+		}
+
 		dataRoute := apiRouter.Group("/data")
 		dataRoute.GET("/", middleware.AdminAuth(), controller.GetAllQuotaDates)
 		dataRoute.GET("/users", middleware.AdminAuth(), controller.GetQuotaDatesByUser)
