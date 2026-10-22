@@ -1003,4 +1003,9 @@ export const STATIC_I18N_KEYS = [
   'This payment method is unavailable',
   // Email settings messages returned by the server.
   'SMTP sender address is not configured or invalid',
+  // Admin operations overview period switches (labelKey constants).
+  'Today',
+  'Current month',
+  'All time',
+  'Yesterday',
 ] as const

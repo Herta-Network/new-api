@@ -135,6 +135,24 @@ func TestAccessTokenRouteRulesCoverEveryDashboardRoute(t *testing.T) {
 	}
 }
 
+// The console statistics expose revenue and paying users, so a token needs
+// the billing scope for them; the usage rankings need the log scope, like
+// /api/data.
+func TestAccessTokenConsoleRoutesRequireTheirDataScope(t *testing.T) {
+	newAccessTokenScopeTestEngine(t)
+	for key, scope := range map[string]string{
+		"GET /api/admin/console/overview": "billing:read",
+		"GET /api/admin/console/revenue":  "billing:read",
+		"GET /api/admin/console/users":    "billing:read",
+		"GET /api/admin/console/rankings": "log:read",
+	} {
+		rule, ok := middleware.AccessTokenRouteRule(key)
+		require.True(t, ok, key)
+		assert.Equal(t, "scope", rule.Kind(), key)
+		assert.Equal(t, scope, rule.Scope(), key)
+	}
+}
+
 func TestAccessTokenCatalogCoversEveryPermission(t *testing.T) {
 	catalog := service.AccessTokenCatalog(1, common.RoleRootUser)
 	scopes := map[string]bool{}

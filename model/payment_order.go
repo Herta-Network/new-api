@@ -84,7 +84,7 @@ type PaymentOrder struct {
 	// settles at most one order of its platform.
 	TradeNo string `json:"trade_no" gorm:"type:varchar(255);not null;default:'';uniqueIndex:idx_payment_orders_platform_trade,priority:2"`
 
-	Status             int    `json:"status" gorm:"not null;index:idx_payment_orders_status_check,priority:1;index:idx_payment_orders_method_status,priority:2"`
+	Status             int    `json:"status" gorm:"not null;index:idx_payment_orders_status_check,priority:1;index:idx_payment_orders_method_status,priority:2;index:idx_payment_orders_status_paid,priority:1"`
 	FulfilError        string `json:"fulfil_error" gorm:"type:text;not null;default:''"`
 	UserSubscriptionId int    `json:"user_subscription_id" gorm:"not null;default:0"`
 	ClientIp           string `json:"-" gorm:"type:varchar(64);not null;default:''"`
@@ -92,7 +92,7 @@ type PaymentOrder struct {
 
 	CreatedAt     int64 `json:"created_at" gorm:"bigint"`
 	ExpiresAt     int64 `json:"expires_at" gorm:"bigint;not null;default:0"`
-	PaidAt        int64 `json:"paid_at" gorm:"bigint;not null;default:0"`
+	PaidAt        int64 `json:"paid_at" gorm:"bigint;not null;default:0;index:idx_payment_orders_status_paid,priority:2"`
 	FinishedAt    int64 `json:"finished_at" gorm:"bigint;not null;default:0"`
 	ClosedAt      int64 `json:"closed_at" gorm:"bigint;not null;default:0"`
 	NextCheckAt   int64 `json:"-" gorm:"bigint;not null;default:0;index:idx_payment_orders_status_check,priority:2"`

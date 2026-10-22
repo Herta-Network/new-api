@@ -24,7 +24,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
 type StatCardTone = 'accent-1' | 'accent-2' | 'accent-3'
-type StatCardSparklineVariant = 'bars' | 'line'
+/** `none` leaves out the visualization row, for a card that only has a figure. */
+type StatCardSparklineVariant = 'bars' | 'line' | 'none'
 type StatCardDetailTone =
   | 'default'
   | 'muted'
@@ -291,6 +292,8 @@ export function StatCard(props: StatCardProps) {
   let visualization: ReactNode
   if (props.details?.length) {
     visualization = <StatCardDetails details={props.details} />
+  } else if (sparklineVariant === 'none') {
+    visualization = null
   } else if (sparklineVariant === 'line') {
     visualization = <LineSparkline values={props.sparkline} tone={tone} />
   } else {
@@ -325,7 +328,9 @@ export function StatCard(props: StatCardProps) {
 
       {valueContent}
 
-      <div className='hidden sm:block'>{visualization}</div>
+      {visualization != null && (
+        <div className='hidden sm:block'>{visualization}</div>
+      )}
     </div>
   )
 }
