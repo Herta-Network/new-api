@@ -198,48 +198,73 @@ it.each([
   }
 )
 
-it('requires a 1-hour price next to a Claude 5-minute cache write price', async () => {
-  const { saved } = renderPanel({
-    model_name: 'claude-custom',
-    version: 'empty',
-    configured: {},
-    effective: {},
-    pricing_mode: 'unpriced',
-    cache_write_mode: 'claude_ttl',
-  })
-  const user = userEvent.setup()
-  const save = await screen.findByRole('button', { name: 'Save model prices' })
-  // An unpriced model starts empty and cannot be saved as free.
-  expect(screen.getByRole('textbox', { name: 'Input price' })).toHaveValue('')
-  await user.click(save)
-  expect(screen.getByRole('textbox', { name: 'Input price' })).toBeInvalid()
-  await user.type(screen.getByRole('textbox', { name: 'Input price' }), '3')
-  await user.type(screen.getByRole('textbox', { name: 'Output price' }), '15')
-  await user.type(
-    screen.getByRole('textbox', { name: 'Cache write price (5 min)' }),
-    '3.75'
-  )
-  const hour = screen.getByRole('textbox', {
-    name: 'Cache write price (1 hour)',
-  })
-  expect(hour).toBeRequired()
-  expect(
-    screen.getByText('Enter the 1-hour cache write price as well.')
-  ).toBeVisible()
-  await user.click(save)
-  expect(saved).toHaveLength(0)
-  await user.type(hour, '6')
-  await user.click(save)
-  await waitFor(() => expect(saved).toHaveLength(1))
-  expect(saved[0][0]).toMatchObject({
-    expected_version: 'empty',
-    pricing: {
-      'billing_setting.billing_mode': 'tiered_expr',
-      'billing_setting.billing_expr':
-        'tier("base", p * 3 + c * 15 + cc * 3.75 + cc1h * 6)',
-    },
-  })
-})
+it.each([
+  {
+    mode: 'claude_ttl' as const,
+    model: 'claude-custom',
+    shortLabel: 'Cache write price (5 min)',
+    longLabel: 'Cache write price (1 hour)',
+    hint: 'Without a 1-hour price, 1-hour writes are billed at 1.6 times the 5-minute price.',
+    longPrice: '',
+    expression: 'tier("base", p * 3 + c * 15 + cc * 3.75)',
+  },
+  {
+    mode: 'openai_ttl' as const,
+    model: 'gpt-custom',
+    shortLabel: 'Cache write price (30 min)',
+    longLabel: 'Cache write price (12 hours)',
+    hint: 'Without a 12-hour price, 12-hour writes are billed at twice the 30-minute price.',
+    longPrice: '7.5',
+    expression: 'tier("base", p * 3 + c * 15 + cc * 3.75 + cc12h * 7.5)',
+  },
+])(
+  'keeps the $mode long-lived cache write price optional and explains its default',
+  async ({
+    mode,
+    model,
+    shortLabel,
+    longLabel,
+    hint,
+    longPrice,
+    expression,
+  }) => {
+    const { saved } = renderPanel({
+      model_name: model,
+      version: 'empty',
+      configured: {},
+      effective: {},
+      pricing_mode: 'unpriced',
+      cache_write_mode: mode,
+    })
+    const user = userEvent.setup()
+    const save = await screen.findByRole('button', {
+      name: 'Save model prices',
+    })
+    // An unpriced model starts empty and cannot be saved as free.
+    expect(screen.getByRole('textbox', { name: 'Input price' })).toHaveValue('')
+    await user.click(save)
+    expect(screen.getByRole('textbox', { name: 'Input price' })).toBeInvalid()
+    await user.type(screen.getByRole('textbox', { name: 'Input price' }), '3')
+    await user.type(screen.getByRole('textbox', { name: 'Output price' }), '15')
+    await user.type(screen.getByRole('textbox', { name: shortLabel }), '3.75')
+    const long = screen.getByRole('textbox', { name: longLabel })
+    expect(long).not.toBeRequired()
+    expect(screen.getByText(hint)).toBeVisible()
+    if (longPrice) {
+      await user.type(long, longPrice)
+      expect(screen.queryByText(hint)).not.toBeInTheDocument()
+    }
+    await user.click(save)
+    await waitFor(() => expect(saved).toHaveLength(1))
+    expect(saved[0][0]).toMatchObject({
+      expected_version: 'empty',
+      pricing: {
+        'billing_setting.billing_mode': 'tiered_expr',
+        'billing_setting.billing_expr': expression,
+      },
+    })
+  }
+)
 
 it('writes a fixed per-request price', async () => {
   const { saved } = renderPanel({

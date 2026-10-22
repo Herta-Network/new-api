@@ -20,8 +20,6 @@ import { flattenBinary } from '@/features/pricing/lib/billing-expression/display
 import { compileBillingExpression } from '@/features/pricing/lib/billing-expression/parser'
 import type { TokenVariable } from '@/features/pricing/lib/billing-expression/types'
 
-import type { CacheWriteMode } from './pricing'
-
 // The simple form edits exactly one flat tier in real USD: per 1M tokens of
 // each category, or per request. Anything else stays in the advanced editor.
 export const SIMPLE_PRICE_FIELDS = [
@@ -30,6 +28,7 @@ export const SIMPLE_PRICE_FIELDS = [
   { key: 'cacheRead', variable: 'cr' },
   { key: 'cacheWrite', variable: 'cc' },
   { key: 'cacheWrite1h', variable: 'cc1h' },
+  { key: 'cacheWrite12h', variable: 'cc12h' },
   { key: 'imageInput', variable: 'img' },
   { key: 'audioInput', variable: 'ai' },
   { key: 'audioOutput', variable: 'ao' },
@@ -67,6 +66,7 @@ export function emptySimplePricing(): SimplePricing {
       cacheRead: '',
       cacheWrite: '',
       cacheWrite1h: '',
+      cacheWrite12h: '',
       imageInput: '',
       audioInput: '',
       audioOutput: '',
@@ -119,6 +119,7 @@ function simpleTerms(
   const separateInput = [
     'cacheWrite',
     'cacheWrite1h',
+    'cacheWrite12h',
     'imageInput',
     'audioInput',
   ].some((field) => values.has(field as SimplePriceField))
@@ -132,8 +133,7 @@ function simpleTerms(
 }
 
 export function buildSimplePricingExpr(
-  pricing: SimplePricing,
-  cacheWriteMode?: CacheWriteMode
+  pricing: SimplePricing
 ): SimplePricingResult {
   const issues: SimplePricingIssue[] = []
   if (pricing.unit === 'request') {
@@ -152,19 +152,9 @@ export function buildSimplePricingExpr(
       expression: `tier(${JSON.stringify(pricing.requestLabel || 'request')}, fixed(${String(price)}))`,
     }
   }
+  // A long-lived write without its own price (cc1h, cc12h) is billed at a
+  // fixed multiple of cc, so neither needs a price of its own.
   const terms = simpleTerms(pricing, issues)
-  if (
-    cacheWriteMode === 'claude_ttl' &&
-    pricing.prices.cacheWrite.trim() !== '' &&
-    pricing.prices.cacheWrite1h.trim() === ''
-  ) {
-    // Anthropic usage reports 1h writes apart from p; without cc1h they
-    // would be free.
-    issues.push({
-      field: 'cacheWrite1h',
-      message: 'Enter the 1-hour cache write price as well.',
-    })
-  }
   if (issues.length > 0) return { ok: false, issues }
   const body = terms
     .map(([variable, value]) => `${variable} * ${String(value)}`)

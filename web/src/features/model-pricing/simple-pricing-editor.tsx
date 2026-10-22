@@ -51,26 +51,31 @@ type FieldConfig = {
   placeholder: string
 }
 
+const CACHE_WRITE_1H_FIELD: FieldConfig = {
+  key: 'cacheWrite1h',
+  label: 'Cache write price (1 hour)',
+  placeholder: '6',
+}
+
+const CACHE_WRITE_12H_FIELD: FieldConfig = {
+  key: 'cacheWrite12h',
+  label: 'Cache write price (12 hours)',
+  placeholder: '25',
+}
+
 function tokenFields(cacheWriteMode?: CacheWriteMode): FieldConfig[] {
   const claude = cacheWriteMode === 'claude_ttl'
+  const openai = cacheWriteMode === 'openai_ttl'
+  let cacheWriteLabel = 'Cache write price'
+  if (claude) cacheWriteLabel = 'Cache write price (5 min)'
+  if (openai) cacheWriteLabel = 'Cache write price (30 min)'
   return [
     { key: 'input', label: 'Input price', placeholder: '3' },
     { key: 'output', label: 'Output price', placeholder: '15' },
     { key: 'cacheRead', label: 'Cache read price', placeholder: '0.3' },
-    {
-      key: 'cacheWrite',
-      label: claude ? 'Cache write price (5 min)' : 'Cache write price',
-      placeholder: '3.75',
-    },
-    ...(claude
-      ? [
-          {
-            key: 'cacheWrite1h' as const,
-            label: 'Cache write price (1 hour)',
-            placeholder: '6',
-          },
-        ]
-      : []),
+    { key: 'cacheWrite', label: cacheWriteLabel, placeholder: '3.75' },
+    ...(claude ? [CACHE_WRITE_1H_FIELD] : []),
+    ...(openai ? [CACHE_WRITE_12H_FIELD] : []),
     { key: 'imageInput', label: 'Image input price', placeholder: '2.5' },
     { key: 'audioInput', label: 'Audio input price', placeholder: '3.8' },
     { key: 'audioOutput', label: 'Audio output price', placeholder: '15' },
@@ -109,20 +114,23 @@ export function SimplePricingEditor(props: {
   )
   const [advancedKey, setAdvancedKey] = useState(0)
   const [blocked, setBlocked] = useState('')
-  const result = buildSimplePricingExpr(draft, props.cacheWriteMode)
+  const result = buildSimplePricingExpr(draft)
   const issues = result.ok ? [] : result.issues
   const fields = tokenFields(props.cacheWriteMode)
+  // A saved long-lived price stays visible even if the model's cache mode
+  // no longer offers it, so it can be read and cleared.
+  const afterCacheWrite =
+    fields.findIndex((field) => field.key === 'cacheWrite') + 1
+  if (draft.prices.cacheWrite12h && props.cacheWriteMode !== 'openai_ttl') {
+    fields.splice(afterCacheWrite, 0, CACHE_WRITE_12H_FIELD)
+  }
   if (draft.prices.cacheWrite1h && props.cacheWriteMode !== 'claude_ttl') {
-    fields.splice(4, 0, {
-      key: 'cacheWrite1h',
-      label: 'Cache write price (1 hour)',
-      placeholder: '6',
-    })
+    fields.splice(afterCacheWrite, 0, CACHE_WRITE_1H_FIELD)
   }
 
   const update = (next: SimplePricing) => {
     setDraft(next)
-    const built = buildSimplePricingExpr(next, props.cacheWriteMode)
+    const built = buildSimplePricingExpr(next)
     if (built.ok) props.onBillingExprChange(built.expression)
   }
 
@@ -261,11 +269,7 @@ export function SimplePricingEditor(props: {
                 {fields.map((field) => {
                   const issue = issueFor(field.key)
                   const required =
-                    field.key === 'input' ||
-                    field.key === 'output' ||
-                    (field.key === 'cacheWrite1h' &&
-                      props.cacheWriteMode === 'claude_ttl' &&
-                      draft.prices.cacheWrite.trim() !== '')
+                    field.key === 'input' || field.key === 'output'
                   return (
                     <Field
                       key={field.key}
@@ -295,11 +299,20 @@ export function SimplePricingEditor(props: {
                 })}
               </div>
               {props.cacheWriteMode === 'claude_ttl' &&
-                !draft.prices.cacheWrite.trim() &&
+                draft.prices.cacheWrite.trim() !== '' &&
                 !draft.prices.cacheWrite1h.trim() && (
                   <p className='text-muted-foreground text-xs'>
                     {t(
-                      'Without cache write prices, Claude cache writes that the upstream reports apart from input are free.'
+                      'Without a 1-hour price, 1-hour writes are billed at 1.6 times the 5-minute price.'
+                    )}
+                  </p>
+                )}
+              {props.cacheWriteMode === 'openai_ttl' &&
+                draft.prices.cacheWrite.trim() !== '' &&
+                !draft.prices.cacheWrite12h.trim() && (
+                  <p className='text-muted-foreground text-xs'>
+                    {t(
+                      'Without a 12-hour price, 12-hour writes are billed at twice the 30-minute price.'
                     )}
                   </p>
                 )}

@@ -1032,7 +1032,8 @@ export const STATIC_I18N_KEYS = [
   // Simple pricing form field labels and messages.
   'Cache write price (5 min)',
   'Cache write price (1 hour)',
-  'Enter the 1-hour cache write price as well.',
+  'Cache write price (30 min)',
+  'Cache write price (12 hours)',
   'Request rules need the advanced editor. Remove them to use simple prices.',
   'Simple prices cannot show this expression without changing what it bills. Keep editing it in the advanced editor.',
   // Model pricing messages returned by the server.

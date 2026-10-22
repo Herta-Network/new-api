@@ -34,11 +34,8 @@ function tokenPricing(
   return pricing
 }
 
-function expressionOf(
-  pricing: SimplePricing,
-  mode?: Parameters<typeof buildSimplePricingExpr>[1]
-) {
-  const result = buildSimplePricingExpr(pricing, mode)
+function expressionOf(pricing: SimplePricing) {
+  const result = buildSimplePricingExpr(pricing)
   if (!result.ok) throw new Error(JSON.stringify(result.issues))
   return result.expression
 }
@@ -98,33 +95,34 @@ describe('simple pricing form to expression', () => {
       cacheWrite: '3.75',
       cacheWrite1h: '6',
     })
-    const expression = expressionOf(pricing, 'claude_ttl')
+    const expression = expressionOf(pricing)
     expect(expression).toBe(
       'tier("base", p * 3 + c * 15 + cr * 0.3 + cc * 3.75 + cc1h * 6)'
     )
     expect(parseSimplePricingExpr(expression)).toEqual(pricing)
   })
 
-  it('rejects a Claude 5-minute cache write price without the 1-hour price', () => {
-    const result = buildSimplePricingExpr(
-      tokenPricing({ input: '3', output: '15', cacheWrite: '3.75' }),
-      'claude_ttl'
-    )
-    expect(result).toEqual({
-      ok: false,
-      issues: [
-        {
-          field: 'cacheWrite1h',
-          message: 'Enter the 1-hour cache write price as well.',
-        },
-      ],
-    })
+  it('leaves a long-lived cache write price optional', () => {
+    // The backend bills an unpriced 1h write at 1.6x cc and a 12h write at 2x.
     expect(
       expressionOf(
-        tokenPricing({ input: '3', output: '15', cacheWrite: '3.75' }),
-        'standard'
+        tokenPricing({ input: '3', output: '15', cacheWrite: '3.75' })
       )
     ).toBe('tier("base", p * 3 + c * 15 + cc * 3.75)')
+  })
+
+  it('round-trips an OpenAI 12-hour cache write price', () => {
+    const expression =
+      'tier("base", p * 10 + c * 50 + cr * 1 + cc * 12.5 + cc12h * 25)'
+    const pricing = parseSimplePricingExpr(expression)
+    expect(pricing?.prices).toMatchObject({
+      input: '10',
+      output: '50',
+      cacheRead: '1',
+      cacheWrite: '12.5',
+      cacheWrite12h: '25',
+    })
+    expect(pricing && expressionOf(pricing)).toBe(expression)
   })
 
   it('keeps audio prices as their own terms', () => {
