@@ -150,11 +150,11 @@ func quoteTopup(ctx context.Context, userId int, req PurchaseRequest, quote *Quo
 	if due.GreaterThan(decimal.NewFromInt(maxOrderAmount)) {
 		return errAmountOutOfRange
 	}
-	quotaRate, err := Rate(ctx, quote.Currency, "USD")
+	quotaRate, err := ResolveRate(ctx, quote.Currency, "USD")
 	if err != nil {
 		return err
 	}
-	quota, err := quotaFor(topup, quotaRate, false)
+	quota, err := quotaFor(topup, quotaRate.Rate, false)
 	if err != nil || quota <= 0 {
 		return model.ErrInvalidTopUpQuota
 	}
@@ -172,7 +172,7 @@ func quoteTopup(ctx context.Context, userId int, req PurchaseRequest, quote *Quo
 	quote.Adjustment = due.IntPart() - topup
 	quote.FeeAmount = fee
 	quote.Amount = due.IntPart() + fee
-	quote.QuotaAmount, quote.QuotaRate = quota, quotaRate
+	quote.QuotaAmount, quote.QuotaRate = quota, quotaRate.Rate
 	return nil
 }
 
@@ -220,15 +220,15 @@ func quoteSubscription(ctx context.Context, req PurchaseRequest, quote *Quote) e
 	if plan.AllowBalancePay != nil && !*plan.AllowBalancePay {
 		return errBalanceNotAllowed
 	}
-	quotaRate, err := Rate(ctx, quote.Currency, "USD")
+	quotaRate, err := ResolveRate(ctx, quote.Currency, "USD")
 	if err != nil {
 		return err
 	}
-	quota, err := quotaFor(price, quotaRate, true)
+	quota, err := quotaFor(price, quotaRate.Rate, true)
 	if err != nil {
 		return errAmountOutOfRange
 	}
-	quote.QuotaAmount, quote.QuotaRate = quota, quotaRate
+	quote.QuotaAmount, quote.QuotaRate = quota, quotaRate.Rate
 	return nil
 }
 
@@ -296,5 +296,6 @@ func chargeRate(ctx context.Context, gw gateway.Gateway, site string) (string, e
 	if target == "" || target == site {
 		return "", nil
 	}
-	return Rate(ctx, site, target)
+	rate, err := ResolveRate(ctx, site, target)
+	return rate.Rate, err
 }

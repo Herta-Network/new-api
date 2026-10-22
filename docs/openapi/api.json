@@ -2905,6 +2905,65 @@
         ]
       }
     },
+    "/api/payment/settings/rates": {
+      "get": {
+        "summary": "获取汇率概览",
+        "deprecated": false,
+        "description": "👑 需要超级管理员权限（Root）。列出站点货币用到的货币对（额度与金额展示、EPay 收款、Moonshot/DeepSeek 渠道余额）、已存的实时汇率与手动汇率；currency 参数可预览尚未保存的站点货币",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [
+          {
+            "name": "currency",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/payment/settings/rates/refresh": {
+      "post": {
+        "summary": "刷新实时汇率",
+        "deprecated": false,
+        "description": "👑 需要超级管理员权限（Root）。立即从 apilayer 拉取站点需要且未设手动汇率的货币对，成功后返回汇率概览",
+        "tags": [
+          "支付"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
     "/api/payment/settings/methods": {
       "get": {
         "summary": "获取支付方式",

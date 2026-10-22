@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,7 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/service/payment"
 
 	"github.com/shopspring/decimal"
 
@@ -276,7 +277,9 @@ func updateChannelSiliconFlowBalance(channel *model.Channel) (float64, error) {
 	return balance, nil
 }
 
-func getDeepSeekBalanceUSD(response DeepSeekUsageResponse, usdExchangeRate float64) (float64, error) {
+// getDeepSeekBalanceUSD reads the USD balance of a DeepSeek account; a
+// CNY-only balance is converted at the CNY to USD rate.
+func getDeepSeekBalanceUSD(ctx context.Context, response DeepSeekUsageResponse) (float64, error) {
 	var usdBalance *string
 	var cnyBalance *string
 
@@ -317,29 +320,29 @@ func getDeepSeekBalanceUSD(response DeepSeekUsageResponse, usdExchangeRate float
 		}
 		return 0, errors.New("currency USD or CNY not found")
 	}
-	if math.IsNaN(usdExchangeRate) || math.IsInf(usdExchangeRate, 0) {
-		return 0, errors.New("USD exchange rate must be finite")
-	}
-	if usdExchangeRate <= 0 {
-		return 0, errors.New("USD exchange rate must be greater than zero")
-	}
-
 	balanceCNY, err := strconv.ParseFloat(*cnyBalance, 64)
 	if err != nil {
 		return 0, err
 	}
-	if math.IsNaN(balanceCNY) || math.IsInf(balanceCNY, 0) {
-		return 0, errors.New("CNY balance must be finite")
-	}
 	if balanceCNY < 0 {
 		return 0, errors.New("CNY balance must be non-negative")
 	}
-	balanceUSD := decimal.NewFromFloat(balanceCNY).Div(decimal.NewFromFloat(usdExchangeRate)).InexactFloat64()
+	return cnyBalanceToUSD(ctx, balanceCNY)
+}
+
+// cnyBalanceToUSD converts an upstream balance in CNY into USD at the rate
+// payments resolve for the pair.
+func cnyBalanceToUSD(ctx context.Context, balanceCNY float64) (float64, error) {
+	if math.IsNaN(balanceCNY) || math.IsInf(balanceCNY, 0) {
+		return 0, errors.New("CNY balance must be finite")
+	}
+	rate, err := payment.ResolveRate(ctx, "CNY", "USD")
+	if err != nil {
+		return 0, err
+	}
+	balanceUSD := rate.Convert(decimal.NewFromFloat(balanceCNY)).InexactFloat64()
 	if math.IsNaN(balanceUSD) || math.IsInf(balanceUSD, 0) {
 		return 0, errors.New("converted USD balance must be finite")
-	}
-	if balanceUSD < 0 {
-		return 0, errors.New("converted USD balance must be non-negative")
 	}
 	return balanceUSD, nil
 }
@@ -355,7 +358,7 @@ func updateChannelDeepSeekBalance(channel *model.Channel) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	balance, err := getDeepSeekBalanceUSD(response, operation_setting.USDExchangeRate)
+	balance, err := getDeepSeekBalanceUSD(context.Background(), response)
 	if err != nil {
 		return 0, err
 	}
@@ -422,12 +425,10 @@ func updateChannelMoonshotBalance(channel *model.Channel) (float64, error) {
 	if !response.Status || response.Code != 0 {
 		return 0, fmt.Errorf("failed to update moonshot balance, status: %v, code: %d, scode: %s", response.Status, response.Code, response.Scode)
 	}
-	usdExchangeRate := operation_setting.USDExchangeRate
-	if !(usdExchangeRate > 0) || math.IsInf(usdExchangeRate, 0) {
-		return 0, errors.New("USD exchange rate must be greater than zero")
+	availableBalanceUsd, err := cnyBalanceToUSD(context.Background(), response.Data.AvailableBalance)
+	if err != nil {
+		return 0, err
 	}
-	availableBalanceCny := response.Data.AvailableBalance
-	availableBalanceUsd := decimal.NewFromFloat(availableBalanceCny).Div(decimal.NewFromFloat(usdExchangeRate)).InexactFloat64()
 	channel.UpdateBalance(availableBalanceUsd)
 	return availableBalanceUsd, nil
 }

@@ -144,6 +144,8 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/payment/admin/unmatched":                    accessTokenScopeRule("billing:read"),
 	"POST /api/payment/admin/unmatched/:id/resolve":       accessTokenScopeRule("billing:write"),
 	"GET /api/payment/settings/platforms":                 accessTokenScopeRule("option:read"),
+	"GET /api/payment/settings/rates":                     accessTokenScopeRule("option:read"),
+	"POST /api/payment/settings/rates/refresh":            accessTokenScopeRule("option:write"),
 	"GET /api/payment/settings/methods":                   accessTokenScopeRule("option:read"),
 	"POST /api/payment/settings/methods":                  accessTokenScopeRule("option:write"),
 	"PUT /api/payment/settings/methods/:id":               accessTokenScopeRule("option:write"),

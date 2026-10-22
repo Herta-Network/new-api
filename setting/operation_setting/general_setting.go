@@ -1,39 +1,39 @@
 package operation_setting
 
-import "github.com/QuantumNous/new-api/setting/config"
+import (
+	"sync/atomic"
 
-// 额度展示类型
-const (
-	QuotaDisplayTypeUSD    = "USD"
-	QuotaDisplayTypeCNY    = "CNY"
-	QuotaDisplayTypeTokens = "TOKENS"
-	QuotaDisplayTypeCustom = "CUSTOM"
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/config"
+
+	"github.com/shopspring/decimal"
 )
 
-// USDExchangeRate is 1 USD in CNY (the USDExchangeRate option): it displays
-// quota in CNY and converts upstream CNY balances to USD.
-var USDExchangeRate = 7.3
+// Quota display modes: amounts in the site currency, or raw quota.
+const (
+	QuotaDisplayModeCurrency = "currency"
+	QuotaDisplayModeTokens   = "tokens"
+)
 
 type GeneralSetting struct {
 	DocsLink            string `json:"docs_link"`
 	PingIntervalEnabled bool   `json:"ping_interval_enabled"`
 	PingIntervalSeconds int    `json:"ping_interval_seconds"`
-	// 当前站点额度展示类型：USD / CNY / TOKENS
-	QuotaDisplayType string `json:"quota_display_type"`
-	// 自定义货币符号，用于 CUSTOM 展示类型
-	CustomCurrencySymbol string `json:"custom_currency_symbol"`
-	// 自定义货币与美元汇率（1 USD = X Custom）
-	CustomCurrencyExchangeRate float64 `json:"custom_currency_exchange_rate"`
+	// QuotaDisplayMode shows quota as an amount in the site currency or as
+	// raw quota (QuotaDisplayModeTokens).
+	QuotaDisplayMode string `json:"quota_display_mode"`
+	// BillingAPIUsesTokenQuota makes the OpenAI-compatible billing endpoints
+	// report the calling API key's quota instead of the user's wallet.
+	BillingAPIUsesTokenQuota bool `json:"billing_api_uses_token_quota"`
 }
 
 // 默认配置
 var generalSetting = GeneralSetting{
-	DocsLink:                   "https://docs.newapi.pro",
-	PingIntervalEnabled:        false,
-	PingIntervalSeconds:        60,
-	QuotaDisplayType:           QuotaDisplayTypeUSD,
-	CustomCurrencySymbol:       "¤",
-	CustomCurrencyExchangeRate: 1.0,
+	DocsLink:                 "https://docs.newapi.pro",
+	PingIntervalEnabled:      false,
+	PingIntervalSeconds:      60,
+	QuotaDisplayMode:         QuotaDisplayModeCurrency,
+	BillingAPIUsesTokenQuota: true,
 }
 
 func init() {
@@ -45,51 +45,59 @@ func GetGeneralSetting() *GeneralSetting {
 	return &generalSetting
 }
 
-// IsCurrencyDisplay 是否以货币形式展示（美元或人民币）
-func IsCurrencyDisplay() bool {
-	return generalSetting.QuotaDisplayType != QuotaDisplayTypeTokens
+// IsTokensDisplay reports whether quota is shown as raw quota instead of an
+// amount of money.
+func IsTokensDisplay() bool {
+	return generalSetting.QuotaDisplayMode == QuotaDisplayModeTokens
 }
 
-// IsCNYDisplay 是否以人民币展示
-func IsCNYDisplay() bool {
-	return generalSetting.QuotaDisplayType == QuotaDisplayTypeCNY
+// SiteCurrencyRate is the rate amounts are shown at: one USD in the site
+// currency. The payment rate resolver publishes it on every node, so the
+// logger and the status API show quota at the rate payments convert with.
+type SiteCurrencyRate struct {
+	Currency string
+	// USDRate is one USD in Currency as a decimal string; empty when the
+	// site currency has no usable rate.
+	USDRate string
+	// Source is "manual" or "apilayer"; empty for USD itself or without a
+	// rate.
+	Source    string
+	FetchedAt int64
 }
 
-// GetQuotaDisplayType 返回额度展示类型
-func GetQuotaDisplayType() string {
-	return generalSetting.QuotaDisplayType
+var siteCurrencyRate atomic.Pointer[SiteCurrencyRate]
+
+// PublishSiteCurrencyRate replaces the rate amounts are shown at.
+func PublishSiteCurrencyRate(rate SiteCurrencyRate) {
+	siteCurrencyRate.Store(&rate)
 }
 
-// GetCurrencySymbol 返回当前展示类型对应符号
-func GetCurrencySymbol() string {
-	switch generalSetting.QuotaDisplayType {
-	case QuotaDisplayTypeUSD:
-		return "$"
-	case QuotaDisplayTypeCNY:
-		return "¥"
-	case QuotaDisplayTypeCustom:
-		if generalSetting.CustomCurrencySymbol != "" {
-			return generalSetting.CustomCurrencySymbol
-		}
-		return "¤"
-	default:
-		return ""
+// GetSiteCurrencyRate returns the published rate of the current site
+// currency. A rate published for another currency, before the site currency
+// changed, is not used.
+func GetSiteCurrencyRate() SiteCurrencyRate {
+	site := PaymentCurrency()
+	if published := siteCurrencyRate.Load(); published != nil && published.Currency == site {
+		return *published
 	}
+	if site == "USD" {
+		return SiteCurrencyRate{Currency: site, USDRate: "1"}
+	}
+	return SiteCurrencyRate{Currency: site}
 }
 
-// GetUsdToCurrencyRate 返回 1 USD = X <currency> 的 X（TOKENS 不适用）
-func GetUsdToCurrencyRate(usdToCny float64) float64 {
-	switch generalSetting.QuotaDisplayType {
-	case QuotaDisplayTypeUSD:
-		return 1
-	case QuotaDisplayTypeCNY:
-		return usdToCny
-	case QuotaDisplayTypeCustom:
-		if generalSetting.CustomCurrencyExchangeRate > 0 {
-			return generalSetting.CustomCurrencyExchangeRate
-		}
-		return 1
-	default:
-		return 1
+// QuotaDisplayAmount converts quota into the amount it is shown as: in the
+// site currency at its published rate, or in USD while the site currency
+// has no usable rate. It returns the amount and its currency.
+func QuotaDisplayAmount(quota int64) (decimal.Decimal, string) {
+	usd := decimal.NewFromInt(quota)
+	if common.QuotaPerUnit > 0 {
+		usd = usd.Div(decimal.NewFromFloat(common.QuotaPerUnit))
 	}
+	published := GetSiteCurrencyRate()
+	rate, err := decimal.NewFromString(published.USDRate)
+	if err != nil || !rate.IsPositive() {
+		return usd, "USD"
+	}
+	return usd.Mul(rate), published.Currency
 }
