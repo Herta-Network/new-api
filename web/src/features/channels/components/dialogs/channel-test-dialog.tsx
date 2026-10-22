@@ -1257,7 +1257,7 @@ function FailureResultContent({
             className='h-7 w-fit px-2 text-xs'
             onClick={() =>
               window.open(
-                '/admin/system-settings/billing/model-pricing',
+                `/admin/models/metadata?filter=${encodeURIComponent(model)}`,
                 '_blank'
               )
             }

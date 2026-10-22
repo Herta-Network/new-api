@@ -40,6 +40,7 @@ export function PriceInput(props: {
   value: string
   placeholder?: string
   disabled?: boolean
+  required?: boolean
   onChange: (value: string) => void
 }) {
   return (
@@ -57,6 +58,7 @@ export function PriceInput(props: {
         value={props.value}
         placeholder={props.placeholder}
         disabled={props.disabled}
+        required={props.required}
         onChange={props.onChange}
       />
       <InputGroupAddon align='inline-end'>

@@ -34,8 +34,11 @@ import {
   useCanEditModelPricing,
   type ModelPricingConfig,
 } from '@/features/model-pricing/api'
-import { modelPricingDisplay } from '@/features/model-pricing/pricing'
-import { ModelPriceCell } from '@/features/pricing/components/model-price-cell'
+import {
+  ModelPriceSummary,
+  ModelPricingModeBadge,
+} from '@/features/model-pricing/model-pricing-summary'
+import { getModelPricingMode } from '@/features/model-pricing/pricing-mode'
 import { formatTimestampToDate } from '@/lib/format'
 import { getLobeIcon } from '@/lib/lobe-icon'
 
@@ -145,11 +148,30 @@ export function useModelsColumns(
           )
         },
       },
+      // Only super administrators can read model prices.
+      ...(canPrice
+        ? [
+            {
+              id: 'billing_mode',
+              header: t('Billing mode'),
+              meta: { label: t('Billing mode'), mobileBadge: true },
+              size: 120,
+              enableSorting: false,
+              cell: ({ row }) => {
+                const entry = priceMap.get(row.original.model_name)
+                if (row.original.name_rule !== 0 || !entry) return null
+                return (
+                  <ModelPricingModeBadge mode={getModelPricingMode(entry)} />
+                )
+              },
+            } satisfies ColumnDef<Model>,
+          ]
+        : []),
       {
-        id: 'pricing',
-        header: t('Pricing'),
-        meta: { label: t('Pricing') },
-        size: 225,
+        id: 'price',
+        header: t('Price'),
+        meta: { label: t('Price') },
+        size: 190,
         enableSorting: false,
         cell: ({ row }) => {
           if (!canPrice) {
@@ -175,7 +197,10 @@ export function useModelsColumns(
               </span>
             )
           }
-          const entry = priceMap.get(row.original.model_name)
+          const entry = priceMap.get(row.original.model_name) ?? {
+            model_name: row.original.model_name,
+            effective: {},
+          }
           return (
             <Button
               variant='ghost'
@@ -188,15 +213,9 @@ export function useModelsColumns(
                 setOpen('price-model')
               }}
             >
-              <ModelPriceCell
-                model={modelPricingDisplay(
-                  entry ?? {
-                    model_name: row.original.model_name,
-                    effective: {},
-                  }
-                )}
-                options={{ tokenUnit: 'M' }}
-                showExpression={false}
+              <ModelPriceSummary
+                entry={entry}
+                mode={getModelPricingMode(entry)}
               />
             </Button>
           )

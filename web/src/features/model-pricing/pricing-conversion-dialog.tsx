@@ -27,19 +27,15 @@ import {
 } from '@/features/pricing/lib/billing-expr'
 import { compileBillingExpression } from '@/features/pricing/lib/billing-expression/parser'
 import { getDynamicPriceEntries } from '@/features/pricing/lib/dynamic-price'
-import {
-  buildPreviewRows,
-  createInitialLaneState,
-  pricingAdjustmentRows,
-} from '@/features/system-settings/models/model-pricing-core'
+import { pricingAdjustmentRows } from '@/features/system-settings/models/model-pricing-core'
 
 import { formatPricingAmount, type PricingCurrency } from './currency'
-import {
-  pricingRow,
-  type CacheWriteMode,
-  type PricingValues,
-  type LegacyBillingDetails,
+import type {
+  CacheWriteMode,
+  PricingValues,
+  LegacyBillingDetails,
 } from './pricing'
+import { legacyPriceRows } from './pricing-mode'
 
 export type PricingConversionPreview = {
   modelName: string
@@ -57,21 +53,8 @@ export function PricingConversionDialog(props: {
   onConfirm: () => void
 }) {
   const { t } = useTranslation()
-  const before = pricingRow(props.preview.modelName, props.preview.effective)
-  const lanes = createInitialLaneState(before)
-  const beforeRows = buildPreviewRows(
-    before,
-    before.billingMode ?? 'per-token',
-    '',
-    '',
-    lanes.promptPrice,
-    lanes.prices,
-    lanes.enabled,
-    t,
-    props.currency,
-    props.preview.cacheWriteMode,
-    props.preview.billingDetails
-  ).filter((row) => row.value !== t('Empty'))
+  const before = legacyPriceRows(props.preview, t, props.currency)
+  const beforeRows = before.rows
   const tiers = parseTiersFromExpr(
     splitBillingExprAndRequestRules(props.preview.expression).billingExpr
   )
@@ -123,10 +106,7 @@ export function PricingConversionDialog(props: {
           <h3 className='font-semibold'>{t('Before conversion')}</h3>
           <dl className='space-y-3'>
             {beforeRows.map((row) => {
-              let unitLabel =
-                before.billingMode === 'per-request'
-                  ? t('request')
-                  : t('1M token')
+              let unitLabel = before.perRequest ? t('request') : t('1M token')
               if (row.unit === 'image') unitLabel = t('image')
               return (
                 <div

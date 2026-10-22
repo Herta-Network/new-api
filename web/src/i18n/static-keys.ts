@@ -1008,4 +1008,20 @@ export const STATIC_I18N_KEYS = [
   'Current month',
   'All time',
   'Yesterday',
+  // Model workspace billing modes (labelKey constants).
+  'Simple pricing',
+  'Advanced pricing',
+  'Task pricing',
+  'Legacy pricing',
+  'Expression pricing',
+  'Unpriced',
+  // Simple pricing form field labels and messages.
+  'Cache write price (5 min)',
+  'Cache write price (1 hour)',
+  'Enter the 1-hour cache write price as well.',
+  'Request rules need the advanced editor. Remove them to use simple prices.',
+  'Simple prices cannot show this expression without changing what it bills. Keep editing it in the advanced editor.',
+  // Model pricing messages returned by the server.
+  'This model has an inactive saved expression. Open its pricing to choose which price to keep.',
+  'Invalid pricing mode',
 ] as const

@@ -260,7 +260,7 @@ export function ModelMutateDrawer(props: {
             </SheetTitle>
             <SheetDescription>
               {t(
-                'Manage metadata, pricing, and channel connections. Each section saves separately.'
+                'Manage basic info, pricing, and channel connections. Each section saves separately.'
               )}
             </SheetDescription>
           </SheetHeader>
@@ -277,7 +277,7 @@ export function ModelMutateDrawer(props: {
                 value='metadata'
                 className='h-auto min-w-0 whitespace-normal'
               >
-                {t('Model metadata')}
+                {t('Basic info')}
               </TabsTrigger>
               <TabsTrigger
                 value='pricing'
