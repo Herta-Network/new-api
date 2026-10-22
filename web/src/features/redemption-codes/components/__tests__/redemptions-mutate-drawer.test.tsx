@@ -25,13 +25,16 @@ import {
 } from '@testing-library/react'
 import { afterEach, describe, expect, test } from 'vitest'
 
+import type { CurrencyConfig } from '@/stores/system-config-store'
+
 import type { Redemption } from '../../types'
 
 const i18n = (await import('i18next')).default
 const { I18nextProvider, initReactI18next } = await import('react-i18next')
 const { Toaster, toast } = await import('sonner')
 const { api } = await import('@/lib/api')
-const { useSystemConfigStore } = await import('@/stores/system-config-store')
+const { DEFAULT_CURRENCY_CONFIG, useSystemConfigStore } =
+  await import('@/stores/system-config-store')
 const { RedemptionsProvider } = await import('../redemptions-provider')
 const { RedemptionsMutateDrawer } = await import('../redemptions-mutate-drawer')
 
@@ -57,10 +60,10 @@ type MockableApi = {
 type RenderedDrawer = {
   result: RenderResult
 }
-type CurrencyFixture = {
-  quotaDisplayType: 'USD' | 'CNY'
-  usdExchangeRate: number
-}
+type CurrencyFixture = Pick<
+  CurrencyConfig,
+  'siteCurrency' | 'siteCurrencySymbol' | 'usdRate'
+>
 
 const apiClient = api as unknown as MockableApi
 const originalGet = apiClient.get
@@ -111,19 +114,13 @@ function drawerTree(currentRow: Redemption) {
 async function renderDrawer(
   currentRow: Redemption,
   currency: CurrencyFixture = {
-    quotaDisplayType: 'USD',
-    usdExchangeRate: 1,
+    siteCurrency: 'USD',
+    siteCurrencySymbol: '$',
+    usdRate: 1,
   }
 ): Promise<void> {
   useSystemConfigStore.getState().setConfig({
-    currency: {
-      displayInCurrency: true,
-      quotaDisplayType: currency.quotaDisplayType,
-      quotaPerUnit: 500000,
-      usdExchangeRate: currency.usdExchangeRate,
-      customCurrencySymbol: '¤',
-      customCurrencyExchangeRate: 1,
-    },
+    currency: { ...DEFAULT_CURRENCY_CONFIG, ...currency },
   })
 
   renderedDrawer = { result: render(drawerTree(currentRow)) }
@@ -192,8 +189,9 @@ describe('redemption drawer', () => {
     apiClient.get = async () => ({ data: { success: true, data: original } })
 
     await renderDrawer(original, {
-      quotaDisplayType: 'CNY',
-      usdExchangeRate: 7.2,
+      siteCurrency: 'CNY',
+      siteCurrencySymbol: '¥',
+      usdRate: 7.2,
     })
     await waitForLoadedForm()
 

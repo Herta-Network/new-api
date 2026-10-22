@@ -216,13 +216,13 @@ it('preserves negative balances in details opened with the keyboard', async () =
   expect(within(detail).getByText('2')).toBeInTheDocument()
 })
 
-it('shows the custom symbol only in the column header', () => {
+it('shows the site currency symbol only in the column header', () => {
   useSystemConfigStore.getState().setConfig({
     currency: {
       ...DEFAULT_CURRENCY_CONFIG,
-      quotaDisplayType: 'CUSTOM',
-      customCurrencySymbol: '🐱',
-      customCurrencyExchangeRate: 1,
+      siteCurrency: 'EUR',
+      siteCurrencySymbol: '€',
+      usdRate: 1,
     },
   })
   render(
@@ -231,10 +231,10 @@ it('shows the custom symbol only in the column header', () => {
     </I18nextProvider>
   )
   expect(
-    screen.getByRole('columnheader', { name: 'Available Balance (🐱)' })
+    screen.getByRole('columnheader', { name: 'Available Balance (€)' })
   ).toBeInTheDocument()
   for (const cell of screen.getAllByRole('cell')) {
-    expect(cell).not.toHaveTextContent('🐱')
+    expect(cell).not.toHaveTextContent('€')
   }
   expect(
     within(screen.getAllByRole('cell')[0]).getByText('0.0038')
@@ -404,8 +404,9 @@ it('updates the header unit and converted amounts together when currency setting
     useSystemConfigStore.getState().setConfig({
       currency: {
         ...DEFAULT_CURRENCY_CONFIG,
-        quotaDisplayType: 'CNY',
-        usdExchangeRate: 7,
+        siteCurrency: 'CNY',
+        siteCurrencySymbol: '¥',
+        usdRate: 7,
       },
     })
   )
@@ -425,7 +426,7 @@ it('updates the header unit and converted amounts together when currency setting
 
 it('labels raw quota mode as tokens without introducing a currency symbol', () => {
   useSystemConfigStore.getState().setConfig({
-    currency: { ...DEFAULT_CURRENCY_CONFIG, quotaDisplayType: 'TOKENS' },
+    currency: { ...DEFAULT_CURRENCY_CONFIG, quotaDisplayMode: 'tokens' },
   })
   render(
     <I18nextProvider i18n={i18n}>

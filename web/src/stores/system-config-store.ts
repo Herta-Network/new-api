@@ -21,21 +21,26 @@ import { persist } from 'zustand/middleware'
 
 import { DEFAULT_SYSTEM_NAME, DEFAULT_LOGO } from '@/lib/constants'
 
-export type CurrencyDisplayType = 'USD' | 'CNY' | 'TOKENS' | 'CUSTOM'
+/** Quota shows as an amount in the site currency, or as raw quota. */
+export type QuotaDisplayMode = 'currency' | 'tokens'
 
 export interface CurrencyConfig {
-  /** Whether to render quota values as currency instead of raw units */
-  displayInCurrency: boolean
-  /** Currency presentation strategy configured by the admin */
-  quotaDisplayType: CurrencyDisplayType
+  quotaDisplayMode: QuotaDisplayMode
   /** Number of quota units that equal one USD */
   quotaPerUnit: number
-  /** Exchange rate from USD to the configured local currency */
-  usdExchangeRate: number
-  /** Custom currency symbol configured by the admin (used when type === CUSTOM) */
-  customCurrencySymbol: string
-  /** Exchange rate from USD to the custom currency (used when type === CUSTOM) */
-  customCurrencyExchangeRate: number
+  /** ISO 4217 code of the site currency, which payments are priced in */
+  siteCurrency: string
+  /** Symbol of the site currency */
+  siteCurrencySymbol: string
+  /**
+   * One USD in the site currency: the rate payments convert with. Null while
+   * the site currency has no usable rate; amounts then show in USD.
+   */
+  usdRate: number | null
+  /** 'manual' (an administrator's override), 'apilayer' (live) or '' */
+  rateSource: string
+  /** When a live usdRate was fetched, in Unix seconds; 0 otherwise */
+  rateFetchedAt: number
 }
 
 export interface SystemConfig {
@@ -43,17 +48,17 @@ export interface SystemConfig {
   logo: string
   footerHtml?: string
   demoSiteEnabled?: boolean
-  displayTokenStatEnabled?: boolean
   currency: CurrencyConfig
 }
 
 export const DEFAULT_CURRENCY_CONFIG: CurrencyConfig = {
-  displayInCurrency: true,
-  quotaDisplayType: 'USD',
+  quotaDisplayMode: 'currency',
   quotaPerUnit: 500000,
-  usdExchangeRate: 1,
-  customCurrencySymbol: '¤',
-  customCurrencyExchangeRate: 1,
+  siteCurrency: 'USD',
+  siteCurrencySymbol: '$',
+  usdRate: 1,
+  rateSource: '',
+  rateFetchedAt: 0,
 }
 
 interface SystemConfigState {

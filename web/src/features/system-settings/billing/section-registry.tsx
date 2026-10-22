@@ -16,11 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { parseCurrencyDisplayType } from '@/lib/currency'
-
 import { CheckinSettingsSection } from '../general/checkin-settings-section'
-import { PricingSection } from '../general/pricing-section'
 import { QuotaSettingsSection } from '../general/quota-settings-section'
+import { CurrencySettingsSection } from '../integrations/currency-settings-section'
 import { PaymentMethodsSection } from '../integrations/payment-methods-section'
 import { PaymentSettingsSection } from '../integrations/payment-settings-section'
 import { RatioSettingsCard } from '../models/ratio-settings-card'
@@ -81,29 +79,6 @@ const BILLING_SECTIONS = [
     ),
   },
   {
-    id: 'currency',
-    titleKey: 'Currency & Display',
-    build: (settings: BillingSettings) => (
-      <PricingSection
-        defaultValues={{
-          QuotaPerUnit: settings.QuotaPerUnit,
-          USDExchangeRate: settings.USDExchangeRate,
-          DisplayInCurrencyEnabled: settings.DisplayInCurrencyEnabled,
-          DisplayTokenStatEnabled: settings.DisplayTokenStatEnabled,
-          general_setting: {
-            quota_display_type: parseCurrencyDisplayType(
-              settings['general_setting.quota_display_type']
-            ),
-            custom_currency_symbol:
-              settings['general_setting.custom_currency_symbol'] ?? '¤',
-            custom_currency_exchange_rate:
-              settings['general_setting.custom_currency_exchange_rate'] ?? 1,
-          },
-        }}
-      />
-    ),
-  },
-  {
     id: 'model-pricing',
     titleKey: 'Model Pricing',
     build: (settings: BillingSettings) => (
@@ -130,6 +105,23 @@ const BILLING_SECTIONS = [
     ),
   },
   {
+    id: 'currency',
+    titleKey: 'Currency & Exchange Rates',
+    build: (settings: BillingSettings) => (
+      <CurrencySettingsSection
+        defaultValues={{
+          currency: settings['payment_setting.currency'],
+          quotaDisplayMode: settings['general_setting.quota_display_mode'],
+          overrides: settings['payment_setting.exchange_rate_overrides'],
+          billingApiUsesTokenQuota:
+            settings['general_setting.billing_api_uses_token_quota'],
+          exchangeRateKeyConfigured: settings.PaymentExchangeRateKeyConfigured,
+          quotaPerUnit: settings.QuotaPerUnit,
+        }}
+      />
+    ),
+  },
+  {
     id: 'payment',
     titleKey: 'Payment Settings',
     build: (settings: BillingSettings) => (
@@ -139,7 +131,6 @@ const BILLING_SECTIONS = [
           minTopup: settings['payment_setting.min_topup'],
           amountOptions: settings['payment_setting.amount_options'],
           amountDiscount: settings['payment_setting.amount_discount'],
-          exchangeRateKeyConfigured: settings.PaymentExchangeRateKeyConfigured,
         }}
         complianceDefaults={{
           confirmed: settings['payment_setting.compliance_confirmed'] ?? false,

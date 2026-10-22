@@ -38,13 +38,7 @@ export function CachedPriceCell(props: {
   options: ModelPriceCellOptions
 }) {
   const { t } = useTranslation()
-  const {
-    tokenUnit = DEFAULT_TOKEN_UNIT,
-    priceRate = 1,
-    usdExchangeRate = 1,
-    showRechargePrice = false,
-    selectedGroup,
-  } = props.options
+  const { tokenUnit = DEFAULT_TOKEN_UNIT, selectedGroup } = props.options
 
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
 
@@ -56,23 +50,11 @@ export function CachedPriceCell(props: {
       getDynamicPricingSummary(model, {
         now: billingTime === undefined ? undefined : new Date(billingTime),
         tokenUnit,
-        showRechargePrice,
-        priceRate,
-        usdExchangeRate,
         groupRatioMultiplier: getDynamicDisplayGroupRatio(model, selectedGroup),
       }),
     // Currency is read indirectly by the price formatter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      model,
-      tokenUnit,
-      showRechargePrice,
-      priceRate,
-      usdExchangeRate,
-      selectedGroup,
-      billingTime,
-      currency,
-    ]
+    [model, tokenUnit, selectedGroup, billingTime, currency]
   )
 
   if (dynamicSummary) {
@@ -129,15 +111,7 @@ export function CachedPriceCell(props: {
   }
 
   const cachedPrice = stripTrailingZeros(
-    formatPrice(
-      model,
-      'cache',
-      tokenUnit,
-      showRechargePrice,
-      priceRate,
-      usdExchangeRate,
-      selectedGroup
-    )
+    formatPrice(model, 'cache', tokenUnit, selectedGroup)
   )
 
   return (

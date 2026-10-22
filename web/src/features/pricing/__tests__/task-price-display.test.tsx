@@ -125,8 +125,6 @@ it('shows nested task conditions and prices in detail and group tables without a
         usableGroup={{ default: { desc: '', ratio: 2 } }}
         endpointMap={{}}
         autoGroups={[]}
-        priceRate={1}
-        usdExchangeRate={1}
         tokenUnit='M'
       />
       <DynamicPricingBreakdown
@@ -207,8 +205,6 @@ it.each([false, true])(
           usableGroup={{ default: { desc: '', ratio: 2 } }}
           endpointMap={{}}
           autoGroups={[]}
-          priceRate={1}
-          usdExchangeRate={1}
           tokenUnit='M'
         />
       </QueryClientProvider>
@@ -295,8 +291,9 @@ it('refreshes memoized provider prices when the group or display currency change
       useSystemConfigStore.getState().setConfig({
         currency: {
           ...DEFAULT_CURRENCY_CONFIG,
-          quotaDisplayType: 'CNY',
-          usdExchangeRate: 2,
+          siteCurrency: 'CNY',
+          siteCurrencySymbol: '¥',
+          usdRate: 2,
         },
       })
     )
@@ -320,8 +317,6 @@ it('shows one standard task price and a localized group price without duplicate 
         usableGroup={{ default: { desc: '', ratio: 2 } }}
         endpointMap={{}}
         autoGroups={[]}
-        priceRate={1}
-        usdExchangeRate={7}
         tokenUnit='M'
       />
     </QueryClientProvider>
@@ -491,20 +486,15 @@ it('preserves all conditions and leaves multiple possible fallback combinations 
   expect(tiers[1].conditions).toEqual([])
 })
 
-it('uses the same recharge conversion and token unit in task condition prices', () => {
+it('uses the token unit in task condition prices', () => {
   render(
     <DynamicPricingBreakdown
       billingExpr={videoExpression}
       usageSchema={videoSchema}
-      taskPriceOptions={{
-        showRechargePrice: true,
-        priceRate: 1,
-        usdExchangeRate: 2,
-      }}
     />
   )
-  expect(screen.getAllByText('$5/1M token')).toHaveLength(2)
-  expect(screen.getAllByText('$3/1M token')).toHaveLength(2)
+  expect(screen.getAllByText('$10/1M token')).toHaveLength(2)
+  expect(screen.getAllByText('$6/1M token')).toHaveLength(2)
 })
 
 it('switches provider group prices, localized conditions and examples, and shows unconfigured providers', async () => {
@@ -579,8 +569,6 @@ it('switches provider group prices, localized conditions and examples, and shows
         usableGroup={{ default: { desc: '', ratio: 2 } }}
         endpointMap={{}}
         autoGroups={[]}
-        priceRate={1}
-        usdExchangeRate={1}
         tokenUnit='M'
       />
     </QueryClientProvider>

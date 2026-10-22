@@ -20,15 +20,13 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Code2, Eye, ShieldAlert } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { useForm, useWatch } from 'react-hook-form'
+import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import * as z from 'zod'
 
 import { JsonCodeEditor } from '@/components/json-code-editor'
-import { PasswordInput } from '@/components/password-input'
 import { RiskAcknowledgementDialog } from '@/components/risk-acknowledgement-dialog'
-import { StatusBadge } from '@/components/status-badge'
 import {
   Alert,
   AlertAction,
@@ -46,14 +44,6 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { formatTimestampToDate } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
@@ -66,7 +56,6 @@ import { useResetForm } from '../hooks/use-reset-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { AmountDiscountVisualEditor } from './amount-discount-visual-editor'
 import { AmountOptionsVisualEditor } from './amount-options-visual-editor'
-import { usePaymentPlatforms } from './payment-methods-api'
 import {
   formatJsonForEditor,
   getJsonError,
@@ -76,7 +65,6 @@ import {
 const CURRENT_COMPLIANCE_TERMS_VERSION = 'v1'
 
 const paymentSchema = z.object({
-  currency: z.string().min(1),
   min_topup: z
     .string()
     .trim()
@@ -96,18 +84,17 @@ const paymentSchema = z.object({
     )
     if (error) ctx.addIssue({ code: 'custom', message: error })
   }),
-  exchange_rate_api_key: z.string(),
 })
 
 type PaymentFormValues = z.infer<typeof paymentSchema>
 
 type PaymentSettingsSectionProps = {
   defaultValues: {
+    /** The site currency, set in the currency section. */
     currency: string
     minTopup: string
     amountOptions: string
     amountDiscount: string
-    exchangeRateKeyConfigured: boolean
   }
   complianceDefaults: {
     confirmed: boolean
@@ -121,18 +108,15 @@ export function PaymentSettingsSection(props: PaymentSettingsSectionProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const updateOption = useUpdateOption()
-  const platformsQuery = usePaymentPlatforms()
   const [amountOptionsVisual, setAmountOptionsVisual] = useState(true)
   const [amountDiscountVisual, setAmountDiscountVisual] = useState(true)
   const [showComplianceDialog, setShowComplianceDialog] = useState(false)
 
   const initialValues = useMemo<PaymentFormValues>(
     () => ({
-      currency: props.defaultValues.currency,
       min_topup: props.defaultValues.minTopup,
       amount_options: formatJsonForEditor(props.defaultValues.amountOptions),
       amount_discount: formatJsonForEditor(props.defaultValues.amountDiscount),
-      exchange_rate_api_key: '',
     }),
     [props.defaultValues]
   )
@@ -142,12 +126,7 @@ export function PaymentSettingsSection(props: PaymentSettingsSectionProps) {
   })
   const isSaving = form.formState.isSubmitting || updateOption.isPending
   useResetForm(form, isSaving ? undefined : initialValues)
-  const currency = useWatch({ control: form.control, name: 'currency' })
-
-  const currencies = platformsQuery.data?.currencies ?? []
-  const currencyOptions = currencies.includes(currency)
-    ? currencies
-    : [currency, ...currencies]
+  const currency = props.defaultValues.currency
 
   const complianceStatements = [
     t(
@@ -192,9 +171,6 @@ export function PaymentSettingsSection(props: PaymentSettingsSectionProps) {
 
   const onSubmit = async (values: PaymentFormValues) => {
     const updates: Array<{ key: string; value: string }> = []
-    if (values.currency !== initialValues.currency) {
-      updates.push({ key: 'payment_setting.currency', value: values.currency })
-    }
     const minTopup = values.min_topup.trim()
     if (minTopup !== initialValues.min_topup.trim()) {
       updates.push({ key: 'payment_setting.min_topup', value: minTopup })
@@ -217,14 +193,6 @@ export function PaymentSettingsSection(props: PaymentSettingsSectionProps) {
         value: values.amount_discount.trim(),
       })
     }
-    // A blank key keeps the stored one.
-    const apiKey = values.exchange_rate_api_key.trim()
-    if (apiKey) {
-      updates.push({
-        key: 'payment_setting.exchange_rate_api_key',
-        value: apiKey,
-      })
-    }
 
     if (updates.length === 0) {
       toast.info(t('No changes to save'))
@@ -234,7 +202,6 @@ export function PaymentSettingsSection(props: PaymentSettingsSectionProps) {
       for (const update of updates) {
         await updateOption.mutateAsync(update)
       }
-      form.setValue('exchange_rate_api_key', '')
     } catch (error) {
       handleServerError(error)
     }
@@ -336,45 +303,6 @@ export function PaymentSettingsSection(props: PaymentSettingsSectionProps) {
 
           <FormField
             control={form.control}
-            name='currency'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('Site currency')}</FormLabel>
-                <Select
-                  items={currencyOptions.map((code) => ({
-                    value: code,
-                    label: code,
-                  }))}
-                  value={field.value}
-                  onValueChange={(value) => field.onChange(String(value ?? ''))}
-                >
-                  <FormControl>
-                    <SelectTrigger className='w-full'>
-                      <SelectValue />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent alignItemWithTrigger={false}>
-                    <SelectGroup>
-                      {currencyOptions.map((code) => (
-                        <SelectItem key={code} value={code}>
-                          {code}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                <FormDescription>
-                  {t(
-                    'Prices, top-up amounts and fees are in this currency. Changing it does not convert existing prices.'
-                  )}
-                </FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            control={form.control}
             name='min_topup'
             render={({ field }) => (
               <FormItem>
@@ -392,48 +320,6 @@ export function PaymentSettingsSection(props: PaymentSettingsSectionProps) {
                 </FormControl>
                 <FormDescription>
                   {t('The smallest amount a user can top up at once')}
-                </FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            control={form.control}
-            name='exchange_rate_api_key'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel className='flex items-center gap-2'>
-                  {t('Exchange rate API key')}
-                  <StatusBadge
-                    label={
-                      props.defaultValues.exchangeRateKeyConfigured
-                        ? t('Configured')
-                        : t('Not configured')
-                    }
-                    variant={
-                      props.defaultValues.exchangeRateKeyConfigured
-                        ? 'success'
-                        : 'neutral'
-                    }
-                    copyable={false}
-                  />
-                </FormLabel>
-                <FormControl>
-                  <PasswordInput
-                    {...field}
-                    autoComplete='new-password'
-                    placeholder={
-                      props.defaultValues.exchangeRateKeyConfigured
-                        ? t('Enter new key to update')
-                        : undefined
-                    }
-                  />
-                </FormControl>
-                <FormDescription>
-                  {t(
-                    'An apilayer currency data key. Needed when the site currency is not USD, or for EPay when it is not CNY. Leave blank to keep the existing key.'
-                  )}
                 </FormDescription>
                 <FormMessage />
               </FormItem>

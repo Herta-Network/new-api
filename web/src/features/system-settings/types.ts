@@ -279,12 +279,8 @@ export type BillingSettings = {
   'quota_setting.trust_quota_usd': number
   'quota_setting.pre_consume_multiplier': number
   QuotaPerUnit: number
-  USDExchangeRate: number
-  'general_setting.quota_display_type': string
-  'general_setting.custom_currency_symbol': string
-  'general_setting.custom_currency_exchange_rate': number
-  DisplayInCurrencyEnabled: boolean
-  DisplayTokenStatEnabled: boolean
+  'general_setting.quota_display_mode': string
+  'general_setting.billing_api_uses_token_quota': boolean
   ModelPrice: string
   ModelRatio: string
   CacheRatio: string
@@ -310,6 +306,8 @@ export type BillingSettings = {
   'payment_setting.min_topup': string
   'payment_setting.amount_options': string
   'payment_setting.amount_discount': string
+  // Pinned rates by pair, e.g. {"USD/CNY":"7.2"}: one USD in CNY.
+  'payment_setting.exchange_rate_overrides': string
   'payment_setting.compliance_confirmed': boolean
   'payment_setting.compliance_terms_version': string
   'payment_setting.compliance_confirmed_at': number
