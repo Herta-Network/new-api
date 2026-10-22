@@ -4,7 +4,7 @@
   "%s failed: %s": "%s 构建失败，%s",
   "%s must be positive, using default value: %d": "%s 必须大于 0，已使用默认值: %d",
   "%s must be positive; using default": "%s 必须大于 0，已使用默认值",
-  "%s%.6f quota": "%s%.6f 额度",
+  "%s%s quota": "%s%s 额度",
   "--form 'file=@\"%s\"' (size: %d bytes, content-type: %s)": "--form 'file=@\"%s\"' (大小: %d 字节, content-type: %s)",
   "Add abilities for channel %d failed: %s": "修复渠道一致性: 为渠道 %d 重建 abilities 记录失败: %s",
   "Auto selected group: %s": "Auto 分组选定: %s",
@@ -714,7 +714,5 @@
   "websocket connection is nil": "WebSocket 连接为空",
   "zhipu_image_empty_b64": "智谱图片接口返回的 b64 为空",
   "zhipu_image_get_b64_failed: %s": "智谱图片转 b64 失败: %s",
-  "zhipu_image_missing_url": "智谱图片接口没有返回 URL",
-  "¥%.6f quota": "¥%.6f 额度",
-  "＄%.6f quota": "＄%.6f 额度"
+  "zhipu_image_missing_url": "智谱图片接口没有返回 URL"
 }

@@ -23,7 +23,6 @@ import { DEFAULT_SYSTEM_NAME, DEFAULT_LOGO } from '@/lib/constants'
 import {
   useSystemConfigStore,
   type CurrencyConfig,
-  type CurrencyDisplayType,
   type SystemConfig,
   DEFAULT_CURRENCY_CONFIG,
 } from '@/stores/system-config-store'
@@ -65,30 +64,32 @@ export function mapStatusDataToConfig(
 ): Partial<SystemConfig> {
   if (!data) return {}
 
-  const quotaDisplayType =
-    (data.quota_display_type as CurrencyDisplayType | undefined) ??
-    DEFAULT_CURRENCY_CONFIG.quotaDisplayType
+  const siteCurrency = (data.site_currency ?? {}) as Record<string, unknown>
+  const siteCurrencyCode =
+    typeof siteCurrency.code === 'string' && siteCurrency.code
+      ? siteCurrency.code
+      : DEFAULT_CURRENCY_CONFIG.siteCurrency
+  // An empty usd_rate means the site currency has no usable rate.
+  const usdRate = toNumber(siteCurrency.usd_rate, Number.NaN)
 
   const currency: CurrencyConfig = {
-    displayInCurrency:
-      (data.display_in_currency as boolean | undefined) ??
-      DEFAULT_CURRENCY_CONFIG.displayInCurrency,
-    quotaDisplayType,
+    quotaDisplayMode:
+      data.quota_display_mode === 'tokens' ? 'tokens' : 'currency',
     quotaPerUnit: toNumber(
       data.quota_per_unit,
       DEFAULT_CURRENCY_CONFIG.quotaPerUnit
     ),
-    usdExchangeRate: toNumber(
-      data.usd_exchange_rate,
-      DEFAULT_CURRENCY_CONFIG.usdExchangeRate
-    ),
-    customCurrencySymbol:
-      (data.custom_currency_symbol as string | undefined)?.trim() ||
-      DEFAULT_CURRENCY_CONFIG.customCurrencySymbol,
-    customCurrencyExchangeRate: toNumber(
-      data.custom_currency_exchange_rate,
-      DEFAULT_CURRENCY_CONFIG.customCurrencyExchangeRate
-    ),
+    siteCurrency: siteCurrencyCode,
+    siteCurrencySymbol:
+      typeof siteCurrency.symbol === 'string' && siteCurrency.symbol
+        ? siteCurrency.symbol
+        : siteCurrencyCode,
+    usdRate: usdRate > 0 ? usdRate : null,
+    rateSource:
+      typeof siteCurrency.rate_source === 'string'
+        ? siteCurrency.rate_source
+        : '',
+    rateFetchedAt: toNumber(siteCurrency.rate_fetched_at, 0),
   }
 
   return {
@@ -96,9 +97,6 @@ export function mapStatusDataToConfig(
     logo: (data.logo as string | undefined) || DEFAULT_LOGO,
     footerHtml: data.footer_html as string | undefined,
     demoSiteEnabled: data.demo_site_enabled as boolean | undefined,
-    displayTokenStatEnabled: data.display_token_stat_enabled as
-      | boolean
-      | undefined,
     currency,
   }
 }

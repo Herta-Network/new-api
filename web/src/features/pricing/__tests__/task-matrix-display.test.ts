@@ -297,13 +297,11 @@ describe('task matrix marketplace display rows', () => {
 
     const baseEntries = getDynamicPriceEntries(rows[0], {
       tokenUnit: 'K',
-      showRechargePrice: false,
       usageSchema: resolutionSchema,
       groupRatioMultiplier: 1,
     })
     const doubledEntries = getDynamicPriceEntries(rows[0], {
       tokenUnit: 'K',
-      showRechargePrice: false,
       usageSchema: resolutionSchema,
       groupRatioMultiplier: 2,
     })

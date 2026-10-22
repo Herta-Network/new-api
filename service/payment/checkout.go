@@ -217,7 +217,7 @@ func BuyerMethods(ctx context.Context, purpose string) ([]MethodOption, error) {
 	site := operation_setting.PaymentCurrency()
 	// Top-ups and balance purchases convert the site currency to USD for
 	// the quota.
-	_, quotaRateErr := Rate(ctx, site, "USD")
+	_, quotaRateErr := ResolveRate(ctx, site, "USD")
 	options := make([]MethodOption, 0, len(methods))
 	for _, method := range methods {
 		if !method.Enabled || (method.Platform == model.PaymentPlatformBalance && purpose != model.PaymentPurposeSubscription) {

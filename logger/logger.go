@@ -123,56 +123,22 @@ func logHelper(ctx context.Context, level string, msg string) {
 
 // LogQuota formats a quota for a server log line.
 func LogQuota(quota int) string {
-	// 新逻辑：根据额度展示类型输出
-	q := float64(quota)
-	switch operation_setting.GetQuotaDisplayType() {
-	case operation_setting.QuotaDisplayTypeCNY:
-		usd := q / common.QuotaPerUnit
-		cny := usd * operation_setting.USDExchangeRate
-		return common.LogText("¥%.6f quota", cny)
-	case operation_setting.QuotaDisplayTypeCustom:
-		usd := q / common.QuotaPerUnit
-		rate := operation_setting.GetGeneralSetting().CustomCurrencyExchangeRate
-		symbol := operation_setting.GetGeneralSetting().CustomCurrencySymbol
-		if symbol == "" {
-			symbol = "¤"
-		}
-		if rate <= 0 {
-			rate = 1
-		}
-		v := usd * rate
-		return common.LogText("%s%.6f quota", symbol, v)
-	case operation_setting.QuotaDisplayTypeTokens:
+	if operation_setting.IsTokensDisplay() {
 		return common.LogText("%d quota points", quota)
-	default: // USD
-		return common.LogText("＄%.6f quota", q/common.QuotaPerUnit)
 	}
+	amount, currency := operation_setting.QuotaDisplayAmount(int64(quota))
+	return common.LogText("%s%s quota", operation_setting.CurrencySymbol(currency), amount.StringFixed(6))
 }
 
+// FormatQuota formats a quota as it is shown to users: raw quota in the
+// tokens display mode, otherwise an amount in the site currency at the
+// rate payments convert with (USD while the site currency has no rate).
 func FormatQuota(quota int) string {
-	q := float64(quota)
-	switch operation_setting.GetQuotaDisplayType() {
-	case operation_setting.QuotaDisplayTypeCNY:
-		usd := q / common.QuotaPerUnit
-		cny := usd * operation_setting.USDExchangeRate
-		return fmt.Sprintf("¥%.6f", cny)
-	case operation_setting.QuotaDisplayTypeCustom:
-		usd := q / common.QuotaPerUnit
-		rate := operation_setting.GetGeneralSetting().CustomCurrencyExchangeRate
-		symbol := operation_setting.GetGeneralSetting().CustomCurrencySymbol
-		if symbol == "" {
-			symbol = "¤"
-		}
-		if rate <= 0 {
-			rate = 1
-		}
-		v := usd * rate
-		return fmt.Sprintf("%s%.6f", symbol, v)
-	case operation_setting.QuotaDisplayTypeTokens:
+	if operation_setting.IsTokensDisplay() {
 		return fmt.Sprintf("%d", quota)
-	default:
-		return fmt.Sprintf("＄%.6f", q/common.QuotaPerUnit)
 	}
+	amount, currency := operation_setting.QuotaDisplayAmount(int64(quota))
+	return operation_setting.CurrencySymbol(currency) + amount.StringFixed(6)
 }
 
 // LogJson 仅供测试使用 only for test

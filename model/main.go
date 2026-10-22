@@ -346,6 +346,9 @@ func migrateDB() error {
 	if err := dropRetiredPayments(DB); err != nil {
 		return err
 	}
+	if err := migrateRetiredCurrencyOptions(DB); err != nil {
+		return err
+	}
 	if err := ensureBalancePaymentMethod(DB); err != nil {
 		return err
 	}

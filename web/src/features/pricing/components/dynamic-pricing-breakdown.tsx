@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 
 import { StaticDataTable } from '@/components/data-table'
 import { Badge } from '@/components/ui/badge'
+import { getMoneyDisplay } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
@@ -51,7 +52,6 @@ import { isBreakdownTierMatched } from '../lib/breakdown-tier-match'
 import {
   formatTaskUsageUnitPrice,
   type DynamicPriceLabelKind,
-  type DynamicPriceOptions,
 } from '../lib/dynamic-price'
 import { getTaskPricingDisplayTiers } from '../lib/task-matrix-display'
 import {
@@ -87,10 +87,6 @@ type DynamicPricingBreakdownProps = {
    */
   compact?: boolean
   usageSchema?: BillingUsageSchema
-  taskPriceOptions?: Pick<
-    DynamicPriceOptions,
-    'showRechargePrice' | 'priceRate' | 'usdExchangeRate'
-  >
   /**
    * Settlement usage facts from the consume log. Used to highlight the
    * expanded matrix display row when the engine label no longer matches
@@ -200,14 +196,13 @@ function formatBreakdownPrice(
   symbol: string,
   rate: number,
   t: (key: string) => string,
-  taskPriceOptions: DynamicPricingBreakdownProps['taskPriceOptions'],
   language: string
 ): string {
   const amount =
     field.labelKind === 'schema' ||
     field.unit === 'request' ||
     field.unit === 'image'
-      ? formatTaskUsageUnitPrice(value, { tokenUnit: 'M', ...taskPriceOptions })
+      ? formatTaskUsageUnitPrice(value, { tokenUnit: 'M' })
       : `${symbol}${(value * rate).toFixed(4)}`
   if (field.unit === 'second') return `${amount}/${t('s')}`
   if (field.unit === 'count') {
@@ -288,25 +283,16 @@ export function DynamicPricingBreakdown({
   hideCacheColumns = false,
   compact = false,
   usageSchema,
-  taskPriceOptions,
   usageFacts,
 }: DynamicPricingBreakdownProps) {
   const { t, i18n } = useTranslation()
   const expr = billingExpr || ''
   const currency = useSystemConfigStore((s) => s.config.currency)
 
-  const { symbol, rate } = useMemo(() => {
-    if (currency.quotaDisplayType === 'CNY') {
-      return { symbol: '¥', rate: currency.usdExchangeRate || 7 }
-    }
-    if (currency.quotaDisplayType === 'CUSTOM') {
-      return {
-        symbol: currency.customCurrencySymbol || '¤',
-        rate: currency.customCurrencyExchangeRate || 1,
-      }
-    }
-    return { symbol: '$', rate: 1 }
-  }, [currency])
+  const { symbol, exchangeRate: rate } = useMemo(
+    () => getMoneyDisplay(currency),
+    [currency]
+  )
 
   const { tiers, ruleGroups } = useMemo(() => {
     const split = splitBillingExprAndRequestRules(expr)
@@ -567,7 +553,6 @@ export function DynamicPricingBreakdown({
                                   symbol,
                                   rate,
                                   t,
-                                  taskPriceOptions,
                                   i18n.language
                                 )
                               : '-'}
@@ -684,7 +669,6 @@ export function DynamicPricingBreakdown({
                         symbol,
                         rate,
                         t,
-                        taskPriceOptions,
                         i18n.language
                       )}
                     </span>

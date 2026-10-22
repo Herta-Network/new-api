@@ -47,10 +47,7 @@ import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
 export interface ModelCardProps {
   model: PricingModel
   onClick: (modelName: string) => void
-  priceRate?: number
-  usdExchangeRate?: number
   tokenUnit?: TokenUnit
-  showRechargePrice?: boolean
   selectedGroup?: string
   perf?: ModelPerfBadgeData
 }
@@ -58,9 +55,6 @@ export interface ModelCardProps {
 export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const { t, i18n } = useTranslation()
   const tokenUnit = props.tokenUnit ?? DEFAULT_TOKEN_UNIT
-  const priceRate = props.priceRate ?? 1
-  const usdExchangeRate = props.usdExchangeRate ?? 1
-  const showRechargePrice = props.showRechargePrice ?? false
   const isTokenBased = isTokenBasedModel(props.model)
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
   const tags = parseTags(props.model.tags)
@@ -76,23 +70,12 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
     () => ({
       now: billingTime === undefined ? undefined : new Date(billingTime),
       tokenUnit,
-      showRechargePrice,
-      priceRate,
-      usdExchangeRate,
       groupRatioMultiplier: getDynamicDisplayGroupRatio(
         props.model,
         props.selectedGroup
       ),
     }),
-    [
-      props.model,
-      props.selectedGroup,
-      billingTime,
-      tokenUnit,
-      showRechargePrice,
-      priceRate,
-      usdExchangeRate,
-    ]
+    [props.model, props.selectedGroup, billingTime, tokenUnit]
   )
   const dynamicSummary = useMemo(
     () => getDynamicPricingSummary(props.model, dynamicPriceOptions),
@@ -230,15 +213,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
       <div key={price.type} className='flex min-w-0 flex-col gap-1'>
         <span className='text-muted-foreground text-xs'>{price.label}</span>
         <span className='font-mono text-sm font-semibold tabular-nums'>
-          {formatPrice(
-            props.model,
-            price.type,
-            tokenUnit,
-            showRechargePrice,
-            priceRate,
-            usdExchangeRate,
-            props.selectedGroup
-          )}
+          {formatPrice(props.model, price.type, tokenUnit, props.selectedGroup)}
           <span className='text-muted-foreground text-xs font-normal'>
             {' '}
             / {tokenUnitLabel}
@@ -250,13 +225,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
     priceSummary = (
       <div className='col-span-full flex min-w-0 flex-col gap-1'>
         <span className='font-mono text-sm font-semibold tabular-nums'>
-          {formatRequestPrice(
-            props.model,
-            showRechargePrice,
-            priceRate,
-            usdExchangeRate,
-            props.selectedGroup
-          )}
+          {formatRequestPrice(props.model, props.selectedGroup)}
           <span className='text-muted-foreground text-xs font-normal'>
             {' '}
             / {t('request')}

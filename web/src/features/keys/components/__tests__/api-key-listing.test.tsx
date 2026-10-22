@@ -212,21 +212,22 @@ it('shows unlimited with cumulative usage and explains it on demand', async () =
   )
 })
 
-it('keeps small custom-currency amounts exact and shows full values in the detail', async () => {
+it('keeps small site-currency amounts exact and shows full values in the detail', async () => {
   useSystemConfigStore.getState().setConfig({
     currency: {
       ...DEFAULT_CURRENCY_CONFIG,
-      quotaDisplayType: 'CUSTOM',
-      customCurrencySymbol: '🐱',
+      siteCurrency: 'EUR',
+      siteCurrencySymbol: '€',
+      usdRate: 1,
     },
   })
   renderQuota({ ...key, remain_quota: 1900, used_quota: 1100 })
   expect(
-    screen.getByRole('columnheader', { name: 'Quota (🐱)' })
+    screen.getByRole('columnheader', { name: 'Quota (€)' })
   ).toBeInTheDocument()
   const button = screen.getByRole('button')
   expect(button).toHaveTextContent('0.0038')
-  expect(button).not.toHaveTextContent('🐱')
+  expect(button).not.toHaveTextContent('€')
   await userEvent.click(button)
   const detail = await screen.findByRole('dialog')
   expect(within(detail).getByText('0.0022')).toBeInTheDocument()

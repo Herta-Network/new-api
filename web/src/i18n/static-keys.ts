@@ -1008,4 +1008,16 @@ export const STATIC_I18N_KEYS = [
   'Current month',
   'All time',
   'Yesterday',
+  // Currency and exchange rate settings: pair uses, rate statuses, form and
+  // server messages.
+  'Top-ups and displayed amounts',
+  'EPay charges',
+  'Moonshot and DeepSeek balances',
+  'Overridden',
+  'Live',
+  'Stale',
+  'Missing',
+  'Enter a positive rate with at most 12 decimal places',
+  'Invalid exchange rate override for {{pair}}',
+  'Some exchange rates could not be refreshed. See the server log for details.',
 ] as const

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -166,4 +167,147 @@ func TestRetiredThemeOptionIsPersistedButNotPublished(t *testing.T) {
 	assert.Equal(t, "default", requireOptionValue(t, db, retiredThemeOptionKey))
 	_, published := common.OptionMap[retiredThemeOptionKey]
 	assert.False(t, published)
+}
+
+// The retired Currency & Display options map onto the site currency: the
+// display mode, the billing API toggle, and, where the typed CNY rate goes on
+// being used and no live rate replaces it, a USD/CNY override that never
+// starts pricing a payment the missing rate refused. A second run changes
+// nothing.
+func TestMigrateRetiredCurrencyOptions(t *testing.T) {
+	const overridesKey = "payment_setting.exchange_rate_overrides"
+	const siteKey = "payment_setting.currency"
+	tests := []struct {
+		name          string
+		options       map[string]string
+		storedRate    bool
+		moonshot      bool
+		epay          bool
+		wantMode      string
+		wantTokenStat string
+		wantOverrides string
+	}{
+		{
+			name: "CNY display on a CNY site without a live rate keeps the typed rate",
+			options: map[string]string{
+				siteKey: "CNY", retiredQuotaDisplayTypeKey: "CNY", retiredUSDExchangeRateKey: "7.1",
+				retiredDisplayInCurrencyKey: "true", retiredDisplayTokenStatKey: "false",
+			},
+			wantTokenStat: "false",
+			wantOverrides: `{"USD/CNY":"7.1"}`,
+		},
+		{
+			name:          "CNY display on a CNY site without a stored rate row keeps the old default",
+			options:       map[string]string{siteKey: "CNY", retiredQuotaDisplayTypeKey: "CNY"},
+			wantOverrides: `{"USD/CNY":"7.3"}`,
+		},
+		{
+			name: "CNY display with an exchange rate API key uses live rates",
+			options: map[string]string{
+				siteKey: "CNY", retiredQuotaDisplayTypeKey: "CNY", retiredUSDExchangeRateKey: "7.1",
+				"payment_setting.exchange_rate_api_key": "key",
+			},
+		},
+		{
+			name:       "CNY display with a fresh stored rate uses it",
+			options:    map[string]string{siteKey: "CNY", retiredQuotaDisplayTypeKey: "CNY", retiredUSDExchangeRateKey: "7.1"},
+			storedRate: true,
+		},
+		{
+			name: "an existing override of the pair is kept",
+			options: map[string]string{
+				siteKey: "CNY", retiredQuotaDisplayTypeKey: "CNY", retiredUSDExchangeRateKey: "7.1",
+				overridesKey: `{"CNY/USD":"0.14"}`,
+			},
+			wantOverrides: `{"CNY/USD":"0.14"}`,
+		},
+		{
+			name:     "tokens display becomes the tokens mode",
+			options:  map[string]string{retiredQuotaDisplayTypeKey: "TOKENS", retiredUSDExchangeRateKey: "7.1"},
+			wantMode: "tokens",
+		},
+		{
+			name:     "a disabled currency display without a display type becomes the tokens mode",
+			options:  map[string]string{retiredDisplayInCurrencyKey: "false"},
+			wantMode: "tokens",
+		},
+		{
+			name: "a custom display currency gives way to the site currency",
+			options: map[string]string{
+				retiredQuotaDisplayTypeKey: "CUSTOM", retiredCustomCurrencySymbolKey: "€",
+				retiredCustomCurrencyRateKey: "0.9", retiredUSDExchangeRateKey: "7.1",
+			},
+		},
+		{
+			name:          "USD display keeps the rate a Moonshot channel balance converts with",
+			options:       map[string]string{retiredQuotaDisplayTypeKey: "USD", retiredUSDExchangeRateKey: "7.2"},
+			moonshot:      true,
+			wantOverrides: `{"USD/CNY":"7.2"}`,
+		},
+		{
+			name:    "CNY display on a USD site drops a rate amounts no longer use",
+			options: map[string]string{retiredQuotaDisplayTypeKey: "CNY", retiredUSDExchangeRateKey: "7.2"},
+		},
+		{
+			name:          "CNY display on a USD site keeps the rate for Moonshot balances",
+			options:       map[string]string{retiredQuotaDisplayTypeKey: "CNY", retiredUSDExchangeRateKey: "7.2"},
+			moonshot:      true,
+			wantOverrides: `{"USD/CNY":"7.2"}`,
+		},
+		{
+			name:     "a USD site with EPay keeps EPay refused rather than pricing it at the typed rate",
+			options:  map[string]string{retiredQuotaDisplayTypeKey: "CNY", retiredUSDExchangeRateKey: "7.2"},
+			moonshot: true,
+			epay:     true,
+		},
+		{
+			name:     "a CNY site that displayed USD keeps top-ups refused rather than pricing them at the typed rate",
+			options:  map[string]string{siteKey: "CNY", retiredQuotaDisplayTypeKey: "USD", retiredUSDExchangeRateKey: "7.2"},
+			moonshot: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := useFrontendOptionMigrationDB(t)
+			for key, value := range test.options {
+				require.NoError(t, db.Create(&Option{Key: key, Value: value}).Error)
+			}
+			if test.storedRate {
+				require.NoError(t, SavePaymentExchangeRate(&PaymentExchangeRate{FromCurrency: "CNY", ToCurrency: "USD", Rate: "0.14", FetchedAt: common.GetTimestamp()}))
+			}
+			if test.moonshot {
+				require.NoError(t, db.Create(&Channel{Name: "moonshot", Type: constant.ChannelTypeMoonshot, Key: "sk"}).Error)
+			}
+			if test.epay {
+				require.NoError(t, db.Create(&PaymentMethod{Name: "Alipay", Platform: "epay", Enabled: true, Token: "epay-token"}).Error)
+			}
+
+			require.NoError(t, migrateRetiredCurrencyOptions(db))
+			for _, key := range retiredCurrencyOptionKeys {
+				requireOptionMissing(t, db, key)
+			}
+			if test.wantMode == "" {
+				requireOptionMissing(t, db, "general_setting.quota_display_mode")
+			} else {
+				assert.Equal(t, test.wantMode, requireOptionValue(t, db, "general_setting.quota_display_mode"))
+			}
+			if test.wantTokenStat == "" {
+				requireOptionMissing(t, db, "general_setting.billing_api_uses_token_quota")
+			} else {
+				assert.Equal(t, test.wantTokenStat, requireOptionValue(t, db, "general_setting.billing_api_uses_token_quota"))
+			}
+			if test.wantOverrides == "" {
+				requireOptionMissing(t, db, overridesKey)
+			} else {
+				assert.JSONEq(t, test.wantOverrides, requireOptionValue(t, db, overridesKey))
+			}
+
+			before, err := AllOption()
+			require.NoError(t, err)
+			require.NoError(t, migrateRetiredCurrencyOptions(db))
+			after, err := AllOption()
+			require.NoError(t, err)
+			assert.ElementsMatch(t, before, after)
+		})
+	}
 }

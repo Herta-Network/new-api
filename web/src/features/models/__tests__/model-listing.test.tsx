@@ -192,7 +192,7 @@ async function renderList(
 
 beforeEach(() => {
   useSystemConfigStore.getState().setConfig({
-    currency: { ...DEFAULT_CURRENCY_CONFIG, quotaDisplayType: 'USD' },
+    currency: { ...DEFAULT_CURRENCY_CONFIG },
   })
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
   i18n.addResourceBundle('fr', 'translation', fr.translation, true, true)
@@ -634,8 +634,9 @@ it('shows task tier ranges in the schema unit and converts site currency only on
   useSystemConfigStore.getState().setConfig({
     currency: {
       ...DEFAULT_CURRENCY_CONFIG,
-      quotaDisplayType: 'CNY',
-      usdExchangeRate: 7,
+      siteCurrency: 'CNY',
+      siteCurrencySymbol: '¥',
+      usdRate: 7,
     },
   })
   const expression =
@@ -819,18 +820,16 @@ it('keeps an active visibility filter when its server result is empty', async ()
   })
 })
 
-it.each([
-  { type: 'CUSTOM' as const, caption: '🐱 / 1M tokens' },
-  { type: 'TOKENS' as const, caption: 'USD / 1M tokens' },
-])(
-  'uses one currency caption in $type mode without replacing prices with quota counts',
-  async ({ type, caption }) => {
+it.each(['currency', 'tokens'] as const)(
+  'uses one site currency caption in the %s display mode without replacing prices with quota counts',
+  async (mode) => {
     useSystemConfigStore.getState().setConfig({
       currency: {
         ...DEFAULT_CURRENCY_CONFIG,
-        quotaDisplayType: type,
-        customCurrencySymbol: '🐱',
-        customCurrencyExchangeRate: 1,
+        quotaDisplayMode: mode,
+        siteCurrency: 'EUR',
+        siteCurrencySymbol: '€',
+        usdRate: 1,
       },
     })
     await renderList([channel], {
@@ -849,9 +848,7 @@ it.each([
     expect(button.textContent?.replaceAll(/\s/g, '')).toContain(
       'Input0.5Output1'
     )
-    expect(within(button).getByText(caption)).toBeVisible()
-    if (type === 'CUSTOM') {
-      expect(button.textContent?.match(/🐱/g)).toHaveLength(1)
-    }
+    expect(within(button).getByText('EUR / 1M tokens')).toBeVisible()
+    expect(button).not.toHaveTextContent('€')
   }
 )

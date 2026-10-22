@@ -33,7 +33,6 @@ function toolbarProps(): PricingToolbarProps {
     totalCount: 2,
     sortBy: 'name',
     tokenUnit: 'M',
-    showRechargePrice: false,
     viewMode: 'card',
     quotaTypeFilter: 'all',
     endpointTypeFilter: 'all',
@@ -42,7 +41,6 @@ function toolbarProps(): PricingToolbarProps {
     tagFilter: 'all',
     onSortChange: vi.fn(),
     onTokenUnitChange: vi.fn(),
-    onRechargePriceChange: vi.fn(),
     onViewModeChange: vi.fn(),
     onQuotaTypeChange: vi.fn(),
     onEndpointTypeChange: vi.fn(),
@@ -151,23 +149,6 @@ describe('pricing controls', () => {
     await user.click(selected)
     expect(selected).toHaveAttribute('aria-pressed', 'true')
     expect(props.onTokenUnitChange).toHaveBeenCalledTimes(1)
-  })
-
-  it('changes the recharge display mode with an accessible selected state', async () => {
-    const props = toolbarProps()
-    const user = userEvent.setup()
-    const { rerender } = render(<PricingToolbar {...props} />)
-    await user.click(screen.getByRole('button', { name: 'Recharge' }))
-    expect(props.onRechargePriceChange).toHaveBeenCalledWith(true)
-    rerender(<PricingToolbar {...props} showRechargePrice />)
-    expect(screen.getByRole('button', { name: 'Recharge' })).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
-    expect(screen.getByRole('button', { name: 'Standard' })).toHaveAttribute(
-      'aria-pressed',
-      'false'
-    )
   })
 
   it('switches to table view with the keyboard and exposes the selected view', async () => {

@@ -71,7 +71,7 @@ beforeEach(() => {
     storage: createJSONStorage(() => localStorage),
   })
   useSystemConfigStore.getState().setConfig({
-    currency: { ...DEFAULT_CURRENCY_CONFIG, quotaDisplayType: 'USD' },
+    currency: { ...DEFAULT_CURRENCY_CONFIG },
   })
   queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
@@ -341,50 +341,44 @@ describe('model cards', () => {
     }
   )
 
-  it('keeps group and recharge pricing correct when changing the token unit, including a free cache price', () => {
+  it('keeps group pricing correct when changing the token unit, including a free cache price', () => {
     const props = {
       model: pricingModel({ cache_ratio: 0 }),
       onClick: vi.fn(),
       selectedGroup: 'premium',
-      showRechargePrice: true,
-      priceRate: 3,
-      usdExchangeRate: 6,
     }
     const { rerender } = render(<ModelCard {...props} tokenUnit='M' />)
     expect(screen.getByText('Input').parentElement).toHaveTextContent(
-      /\$3\s*\/\s*1M/
+      /\$6\s*\/\s*1M/
     )
     expect(screen.getByText('Output').parentElement).toHaveTextContent(
-      /\$9\s*\/\s*1M/
+      /\$18\s*\/\s*1M/
     )
     expect(screen.getByText('Cached').parentElement).toHaveTextContent(
       /\$0\s*\/\s*1M/
     )
     rerender(<ModelCard {...props} tokenUnit='K' />)
     expect(screen.getByText('Input').parentElement).toHaveTextContent(
-      /\$0.003\s*\/\s*1K/
+      /\$0.006\s*\/\s*1K/
     )
     expect(screen.getByText('Output').parentElement).toHaveTextContent(
-      /\$0.009\s*\/\s*1K/
+      /\$0.018\s*\/\s*1K/
     )
     expect(screen.getByText('Cached').parentElement).toHaveTextContent(
       /\$0\s*\/\s*1K/
     )
   })
 
-  it('shows a per-request price with the selected group and recharge multiplier without a token unit', () => {
+  it('shows a per-request price with the selected group without a token unit', () => {
     render(
       <ModelCard
         model={pricingModel({ quota_type: 1, model_price: 0.4 })}
         onClick={vi.fn()}
         selectedGroup='premium'
-        showRechargePrice
-        priceRate={3}
-        usdExchangeRate={6}
         tokenUnit='K'
       />
     )
-    expect(screen.getByText(/\$0.6/)).toHaveTextContent(/\$0.6\s*\/\s*request/)
+    expect(screen.getByText(/\$1.2/)).toHaveTextContent(/\$1.2\s*\/\s*request/)
     expect(screen.queryByText(/1K|1M/)).not.toBeInTheDocument()
     expect(screen.getAllByText('Per Request')).toHaveLength(1)
     expect(screen.queryByText('Per-request')).not.toBeInTheDocument()
@@ -400,16 +394,13 @@ describe('model cards', () => {
         onClick={vi.fn()}
         tokenUnit='K'
         selectedGroup='premium'
-        showRechargePrice
-        priceRate={3}
-        usdExchangeRate={6}
       />
     )
     expect(screen.getByText('Input').parentElement).toHaveTextContent(
-      /\$0.0045\s*\/\s*1K/
+      /\$0.009\s*\/\s*1K/
     )
     expect(screen.getByText('Output').parentElement).toHaveTextContent(
-      /\$0.0225\s*\/\s*1K/
+      /\$0.045\s*\/\s*1K/
     )
   })
 

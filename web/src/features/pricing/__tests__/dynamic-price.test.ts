@@ -46,12 +46,10 @@ function pricingModel(overrides: Partial<PricingModel>): PricingModel {
   }
 }
 
+// The group ratio scales formatted prices; at 1 they equal the coefficients.
 const summaryOptions = {
   tokenUnit: 'K' as const,
-  showRechargePrice: true,
-  priceRate: 3,
-  usdExchangeRate: 6,
-  groupRatioMultiplier: 2,
+  groupRatioMultiplier: 1,
 }
 
 describe('expression price summaries', () => {

@@ -56,8 +56,9 @@ beforeEach(() => {
   useSystemConfigStore.getState().setConfig({
     currency: {
       ...DEFAULT_CURRENCY_CONFIG,
-      quotaDisplayType: 'CNY',
-      usdExchangeRate: 7,
+      siteCurrency: 'CNY',
+      siteCurrencySymbol: '¥',
+      usdRate: 7,
     },
   })
   vi.spyOn(api, 'get').mockResolvedValue({
@@ -647,8 +648,9 @@ it('switches currencies and refreshes exchange rates without changing stored pri
     useSystemConfigStore.getState().setConfig({
       currency: {
         ...DEFAULT_CURRENCY_CONFIG,
-        quotaDisplayType: 'CNY',
-        usdExchangeRate: 3,
+        siteCurrency: 'CNY',
+        siteCurrencySymbol: '¥',
+        usdRate: 3,
       },
     })
   )
@@ -695,18 +697,17 @@ it.each(['0', '0.0000007', '14'])(
   }
 )
 
-it('uses the custom currency exchange rate instead of the CNY exchange rate', async () => {
+it('converts prices at the site currency rate', async () => {
   useSystemConfigStore.getState().setConfig({
     currency: {
       ...DEFAULT_CURRENCY_CONFIG,
-      quotaDisplayType: 'CUSTOM',
-      usdExchangeRate: 7,
-      customCurrencySymbol: '€',
-      customCurrencyExchangeRate: 0.5,
+      siteCurrency: 'EUR',
+      siteCurrencySymbol: '€',
+      usdRate: 0.5,
     },
   })
   const editor = renderEditor({ price: '2', billingMode: 'per-request' })
-  await selectCurrency('Site currency (€)')
+  await selectCurrency('Site currency (EUR)')
   const fixed = screen.getByRole('textbox', { name: 'Fixed price' })
   expect(fixed).toHaveValue('1')
   fireEvent.change(fixed, { target: { value: '7' } })
@@ -720,8 +721,9 @@ it.each([0, -1, Infinity, Number.NaN, undefined])(
     useSystemConfigStore.getState().setConfig({
       currency: {
         ...DEFAULT_CURRENCY_CONFIG,
-        quotaDisplayType: 'CNY',
-        usdExchangeRate: rate as number,
+        siteCurrency: 'CNY',
+        siteCurrencySymbol: '¥',
+        usdRate: rate as number,
       },
     })
     renderEditor()
@@ -742,12 +744,12 @@ it.each([0, -1, Infinity, Number.NaN, undefined])(
   }
 )
 
-it.each(['USD', 'TOKENS'] as const)(
-  'offers only USD when the site uses %s',
-  async (type) => {
+it.each(['currency', 'tokens'] as const)(
+  'offers only USD on a USD site in the %s display mode',
+  async (mode) => {
     usePricingPreferencesStore.setState({ currency: 'site' })
     useSystemConfigStore.getState().setConfig({
-      currency: { ...DEFAULT_CURRENCY_CONFIG, quotaDisplayType: type },
+      currency: { ...DEFAULT_CURRENCY_CONFIG, quotaDisplayMode: mode },
     })
     renderEditor()
     await userEvent.click(
@@ -764,8 +766,9 @@ it('blocks a non-finite conversion and allows saving after the amount is correct
   useSystemConfigStore.getState().setConfig({
     currency: {
       ...DEFAULT_CURRENCY_CONFIG,
-      quotaDisplayType: 'CNY',
-      usdExchangeRate: 1e-308,
+      siteCurrency: 'CNY',
+      siteCurrencySymbol: '¥',
+      usdRate: 1e-308,
     },
   })
   const editor = renderEditor({ price: '1', billingMode: 'per-request' })
