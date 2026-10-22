@@ -195,7 +195,10 @@ type MethodOption struct {
 	FeeRateBp      int64  `json:"fee_rate_bp"`
 	FeeFixed       int64  `json:"fee_fixed"`
 	ChargeCurrency string `json:"charge_currency"`
-	Available      bool   `json:"available"`
+	// PaymentMethodType is the Stripe payment method type a Stripe method
+	// collects; empty for other platforms.
+	PaymentMethodType string `json:"payment_method_type,omitempty"`
+	Available         bool   `json:"available"`
 	// Unavailable says why the method cannot take an order now.
 	Unavailable *common.Message `json:"unavailable,omitempty"`
 }
@@ -223,6 +226,11 @@ func BuyerMethods(ctx context.Context, purpose string) ([]MethodOption, error) {
 		option := MethodOption{
 			Id: method.Id, Name: method.Name, Platform: method.Platform, Icon: method.Icon, Description: method.Description,
 			FeeMode: method.FeeMode, FeeRateBp: method.FeeRateBp, FeeFixed: method.FeeFixed, ChargeCurrency: site, Available: true,
+		}
+		if method.Platform == gateway.PlatformStripe {
+			var config gateway.StripeConfig
+			_ = common.UnmarshalJsonStr(method.Config, &config)
+			option.PaymentMethodType = config.PaymentMethodType
 		}
 		var unavailable error
 		if method.Platform == model.PaymentPlatformBalance {

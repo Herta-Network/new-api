@@ -34,6 +34,7 @@ const BRAND_AND_LITERAL_KEYS = new Set([
   'AI Proxy',
   'AIGC2D',
   'Alipay',
+  'WeChat Pay',
   'Anthropic',
   'API URL',
   'API2GPT',

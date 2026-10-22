@@ -106,6 +106,8 @@
   "SSE ping ticker stopped": "SSE ping ticker 已停止",
   "SYNC_FREQUENCY not set, use default value 60": "未设置 SYNC_FREQUENCY，使用默认值 60",
   "SetPayloadHash body: %s": "SetPayloadHash 请求体: %s",
+  "Stripe payment method %d has no readable configuration; set its payment method type by hand": "Stripe 支付方式 %d 的配置无法读取，请手动设置其支付类型",
+  "Stripe payment method %d now collects card payments": "Stripe 支付方式 %d 已设为银行卡支付",
   "Successfully migrated %s.%s to decimal(10,6)": "字段 %s.%s 的类型已改为 decimal(10,6)",
   "Successfully migrated %s.%s to text": "字段 %s.%s 的类型已改为 text",
   "Task %s CAS lost or no-op update, skip billing": "任务 %s 的状态已由其他进程更新或没有变化，跳过计费",

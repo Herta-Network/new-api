@@ -2345,7 +2345,7 @@
       "post": {
         "summary": "创建支付订单",
         "deprecated": false,
-        "description": "🔐 需要登录（User权限）。按用户限制建单频率（与关键操作限流同额度：CRITICAL_RATE_LIMIT / CRITICAL_RATE_LIMIT_DURATION）；建单后立即发起支付，返回 type 为 url / stripe / paid",
+        "description": "🔐 需要登录（User权限）。按用户限制建单频率（与关键操作限流同额度：CRITICAL_RATE_LIMIT / CRITICAL_RATE_LIMIT_DURATION）；建单后立即发起支付，返回 type 为 url / stripe / paid；stripe 附带 publishable_key、client_secret 和 payment_method_type（card / alipay / wechat_pay，由支付方式配置决定客户端流程）",
         "tags": [
           "支付"
         ],

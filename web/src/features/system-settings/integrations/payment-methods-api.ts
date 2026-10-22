@@ -34,11 +34,21 @@ export type PaymentPlatformField = {
   key: string
   /** English source text; the frontend translates it. */
   label: string
+  /** 'select' takes one of options; absent for a text field. */
+  type?: 'select'
   required: boolean
   /** Never returned by the server; empty input keeps the stored value. */
   secret: boolean
   /** Maintained by the server and not editable. */
   managed: boolean
+  /** The values of a select field, in display order. */
+  options?: PaymentPlatformFieldOption[]
+}
+
+export type PaymentPlatformFieldOption = {
+  value: string
+  /** English source text; the frontend translates it. */
+  label: string
 }
 
 export type PaymentPlatform = {

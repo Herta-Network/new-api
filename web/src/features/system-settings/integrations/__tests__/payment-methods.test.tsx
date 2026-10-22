@@ -88,6 +88,19 @@ const platforms: PaymentPlatformsInfo = {
           managed: false,
         },
         {
+          key: 'payment_method_type',
+          label: 'Payment method type',
+          type: 'select',
+          required: true,
+          secret: false,
+          managed: false,
+          options: [
+            { value: 'card', label: 'Card' },
+            { value: 'alipay', label: 'Alipay' },
+            { value: 'wechat_pay', label: 'WeChat Pay' },
+          ],
+        },
+        {
           key: 'webhook_url',
           label: 'Webhook URL',
           required: false,
@@ -142,6 +155,7 @@ const stripe = method({
   config: {
     public_key: 'pk_test_1',
     secret_key: '',
+    payment_method_type: 'wechat_pay',
     webhook_url: 'https://old.example.com/hook',
   },
   secrets_set: { secret_key: true },
@@ -318,6 +332,49 @@ describe('payment methods', () => {
       '/api/payment/settings/methods/-1',
       expect.objectContaining({ name: 'Balance', enabled: false })
     )
+  })
+
+  it('shows the payment method type of a Stripe method and saves another one chosen from the platform options', async () => {
+    const request = mockApi([balance, stripe])
+    const user = renderSection()
+    const row = within(await screen.findByRole('row', { name: /Card/ }))
+    expect(row.getByText('WeChat Pay')).toBeVisible()
+    await user.click(row.getByRole('button', { name: 'Edit' }))
+    const dialog = await screen.findByRole('dialog')
+    const paymentType = within(dialog).getByRole('combobox', {
+      name: 'Payment method type',
+    })
+    expect(paymentType).toHaveTextContent('WeChat Pay')
+    await user.click(paymentType)
+    await user.click(await screen.findByRole('option', { name: 'Alipay' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(request.put).toHaveBeenCalledTimes(1))
+    expect(request.put).toHaveBeenCalledWith(
+      '/api/payment/settings/methods/3',
+      expect.objectContaining({
+        config: {
+          public_key: 'pk_test_1',
+          secret_key: '',
+          payment_method_type: 'alipay',
+        },
+      })
+    )
+  })
+
+  it('starts a new Stripe method on the first payment method type', async () => {
+    mockApi([balance])
+    const user = renderSection()
+    await user.click(
+      await screen.findByRole('button', { name: 'Add payment method' })
+    )
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('combobox', { name: 'Platform' }))
+    await user.click(await screen.findByRole('option', { name: 'Stripe' }))
+
+    expect(
+      within(dialog).getByRole('combobox', { name: 'Payment method type' })
+    ).toHaveTextContent('Card')
   })
 
   it('shows the callback URL and lets a stale Stripe webhook be synced', async () => {
