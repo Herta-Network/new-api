@@ -2,13 +2,17 @@ package service
 
 import (
 	"fmt"
+	"maps"
 	"net/http/httptest"
+	"os"
+	"slices"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -69,4 +73,78 @@ func TestGetRequestAutoGroupsDoesNotFallBackAfterPermissionChange(t *testing.T) 
 	groups := GetRequestAutoGroups(ctx, "default")
 
 	assert.Empty(t, groups)
+}
+
+// testdata/group_rules_cases.json is shared with the web group pricing
+// simulator (web/src/features/system-settings/billing/group-pricing), whose
+// tests assert the same expectations, so both sides resolve groups alike.
+type groupRulesCases struct {
+	Settings struct {
+		GroupRatio              map[string]float64            `json:"GroupRatio"`
+		UserUsableGroups        map[string]string             `json:"UserUsableGroups"`
+		GroupGroupRatio         map[string]map[string]float64 `json:"GroupGroupRatio"`
+		GroupSpecialUsableGroup map[string]map[string]string  `json:"GroupSpecialUsableGroup"`
+		AutoGroups              []string                      `json:"AutoGroups"`
+	} `json:"settings"`
+	UsableGroups map[string][]string `json:"usable_groups"`
+	AutoGroups   map[string][]string `json:"auto_groups"`
+	GroupRatios  []struct {
+		UserGroup  string  `json:"user_group"`
+		UsingGroup string  `json:"using_group"`
+		Ratio      float64 `json:"ratio"`
+	} `json:"group_ratios"`
+}
+
+func loadGroupRulesCases(t *testing.T) groupRulesCases {
+	t.Helper()
+	data, err := os.ReadFile("testdata/group_rules_cases.json")
+	require.NoError(t, err)
+	var cases groupRulesCases
+	require.NoError(t, common.Unmarshal(data, &cases))
+
+	special := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup
+	original := map[string]string{
+		"GroupRatio":       ratio_setting.GroupRatio2JSONString(),
+		"UserUsableGroups": setting.UserUsableGroups2JSONString(),
+		"GroupGroupRatio":  ratio_setting.GroupGroupRatio2JSONString(),
+		"Special":          special.MarshalJSONString(),
+		"AutoGroups":       setting.AutoGroups2JsonString(),
+	}
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(original["GroupRatio"]))
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(original["UserUsableGroups"]))
+		require.NoError(t, ratio_setting.UpdateGroupGroupRatioByJSONString(original["GroupGroupRatio"]))
+		require.NoError(t, types.LoadFromJsonString(special, original["Special"]))
+		require.NoError(t, setting.UpdateAutoGroupsByJsonString(original["AutoGroups"]))
+	})
+
+	load := func(value any, update func(string) error) {
+		encoded, err := common.Marshal(value)
+		require.NoError(t, err)
+		require.NoError(t, update(string(encoded)))
+	}
+	load(cases.Settings.GroupRatio, ratio_setting.UpdateGroupRatioByJSONString)
+	load(cases.Settings.UserUsableGroups, setting.UpdateUserUsableGroupsByJSONString)
+	load(cases.Settings.GroupGroupRatio, ratio_setting.UpdateGroupGroupRatioByJSONString)
+	load(cases.Settings.GroupSpecialUsableGroup, func(value string) error {
+		return types.LoadFromJsonString(special, value)
+	})
+	load(cases.Settings.AutoGroups, setting.UpdateAutoGroupsByJsonString)
+	return cases
+}
+
+func TestGroupRulesMatchTheSharedSimulatorCases(t *testing.T) {
+	cases := loadGroupRulesCases(t)
+
+	for userGroup, expected := range cases.UsableGroups {
+		usable := slices.Sorted(maps.Keys(GetUserUsableGroups(userGroup)))
+		assert.Equal(t, expected, usable, "usable groups of %q", userGroup)
+	}
+	for userGroup, expected := range cases.AutoGroups {
+		assert.Equal(t, expected, GetUserAutoGroup(userGroup), "auto groups of %q", userGroup)
+	}
+	for _, item := range cases.GroupRatios {
+		assert.Equal(t, item.Ratio, GetUserGroupRatio(item.UserGroup, item.UsingGroup),
+			"ratio of %q using %q", item.UserGroup, item.UsingGroup)
+	}
 }
