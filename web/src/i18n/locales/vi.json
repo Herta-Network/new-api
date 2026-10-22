@@ -198,6 +198,8 @@
     "The user group the override applies to.": "Nhóm người dùng áp dụng ghi đè.",
     "The visual editor is off for it so no rule is lost. Fix it in JSON; nothing has been changed.": "Trình sửa trực quan đã tắt để không mất quy tắc nào. Hãy sửa trong JSON; chưa có gì bị thay đổi.",
     "Their rules add {{added}} and remove {{removed}}.": "Quy tắc của họ thêm {{added}} và bỏ {{removed}}.",
+    "Their rules add {{added}}.": "Quy tắc của họ thêm {{added}}.",
+    "Their rules remove {{removed}}.": "Quy tắc của họ bỏ {{removed}}.",
     "This group already exists": "Nhóm này đã tồn tại",
     "Tokens set to auto try these groups in order and use the first one with a channel for the model.": "Token đặt auto sẽ thử các nhóm này theo thứ tự và dùng nhóm đầu tiên có kênh cho mô hình.",
     "Tokens today": "Mã thông báo hôm nay",

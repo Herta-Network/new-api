@@ -97,8 +97,11 @@ export function PriceSimulator(props: PriceSimulatorProps) {
       : ''
 
   const models = pricing.models as PricingModel[]
+  // Until a model is picked, start with one the user group has a channel for.
   const model =
-    models.find((item) => item.model_name === modelName) ?? models[0]
+    models.find((item) => item.model_name === modelName) ??
+    models.find((item) => item.enable_groups.includes(userGroup)) ??
+    models[0]
 
   const simulation = useMemo(
     () =>

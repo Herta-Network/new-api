@@ -198,6 +198,8 @@
     "The user group the override applies to.": "Le groupe d'utilisateurs concerné par la dérogation.",
     "The visual editor is off for it so no rule is lost. Fix it in JSON; nothing has been changed.": "L'éditeur visuel est désactivé pour éviter de perdre des règles. Corrigez-le en JSON ; rien n'a été modifié.",
     "Their rules add {{added}} and remove {{removed}}.": "Leurs règles ajoutent {{added}} et retirent {{removed}}.",
+    "Their rules add {{added}}.": "Leurs règles ajoutent {{added}}.",
+    "Their rules remove {{removed}}.": "Leurs règles retirent {{removed}}.",
     "This group already exists": "Ce groupe existe déjà",
     "Tokens set to auto try these groups in order and use the first one with a channel for the model.": "Les jetons sur auto essaient ces groupes dans l'ordre et utilisent le premier disposant d'un canal pour le modèle.",
     "Tokens today": "Jetons aujourd'hui",

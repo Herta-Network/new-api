@@ -65,7 +65,7 @@ export function TopupRatioEditor(props: TopupRatioEditorProps) {
 
   return (
     <div className='flex flex-col gap-4'>
-      {sample && (
+      {sample && props.invalidFields.size === 0 && (
         <RuleExample>
           {t(
             'A {{group}} user who tops up {{amount}} pays {{due}}, before amount discounts and payment method fees.',

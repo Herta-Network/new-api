@@ -121,6 +121,8 @@ export function AdvancedRules(props: AdvancedRulesProps) {
   const topupSet = Object.keys(props.topupGroupRatio).length
   const sample = sampleUserGroup(props.rules)
   const sampleOrder = sample ? resolveAutoGroups(props.rules, sample) : []
+  // Examples read the parsed rules; hide them while any option is invalid.
+  const examplesShown = props.invalidFields.size === 0
   const invalidSummary = t('Not valid JSON')
   const summaryOf = (field: GroupJsonField, summary: string) =>
     props.invalidFields.has(field) ? invalidSummary : summary
@@ -205,7 +207,7 @@ export function AdvancedRules(props: AdvancedRulesProps) {
         )}
       >
         <div className='flex flex-col gap-4'>
-          {Number.isInteger(maxGroups) && maxGroups > 0 && (
+          {examplesShown && Number.isInteger(maxGroups) && maxGroups > 0 && (
             <RuleExample>
               {t(
                 'With {{count}}, a token that lists its own auto groups uses only the first {{count}} it may use; a token without a list tries all {{total}} groups in the order.',
@@ -253,19 +255,21 @@ export function AdvancedRules(props: AdvancedRulesProps) {
         )}
       >
         <div className='flex flex-col gap-4'>
-          <RuleExample>
-            {defaultAuto
-              ? t(
-                  "On: a new token starts with the group auto, so a {{group}} user's calls try {{order}}.",
-                  {
-                    group: sample ?? 'default',
-                    order: sampleOrder.join(' → ') || t('None'),
-                  }
-                )
-              : t(
-                  "Off: a new token starts with no group, so its calls are billed as the user's own group."
-                )}
-          </RuleExample>
+          {examplesShown && (
+            <RuleExample>
+              {defaultAuto
+                ? t(
+                    "On: a new token starts with the group auto, so a {{group}} user's calls try {{order}}.",
+                    {
+                      group: sample ?? 'default',
+                      order: sampleOrder.join(' → ') || t('None'),
+                    }
+                  )
+                : t(
+                    "Off: a new token starts with no group, so its calls are billed as the user's own group."
+                  )}
+            </RuleExample>
+          )}
           <FormField
             control={form.control}
             name='DefaultUseAutoGroup'

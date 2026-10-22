@@ -175,6 +175,12 @@ describe('group pricing page', () => {
     const vipRatio = within(editDrawer).getByLabelText('Price ratio')
     await user.clear(vipRatio)
     await user.type(vipRatio, '0.75')
+    const vipDescription = within(editDrawer).getByLabelText('Description')
+    expect(vipDescription).toBeDisabled()
+    await user.click(
+      within(editDrawer).getByRole('switch', { name: 'Users can select it' })
+    )
+    await user.type(vipDescription, 'VIP plan')
     await user.click(within(editDrawer).getByRole('button', { name: 'Apply' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
 
@@ -193,7 +199,7 @@ describe('group pricing page', () => {
       {
         key: 'UserUsableGroups',
         value:
-          '{"default":"Standard","premium":"Premium","auto":"Auto","team":"Team"}',
+          '{"default":"Standard","premium":"Premium","auto":"Auto","team":"Team","vip":"VIP plan"}',
       },
     ])
     await waitFor(() =>

@@ -84,7 +84,9 @@ export function AutoGroupsEditor(props: AutoGroupsEditorProps) {
 
   return (
     <div className='flex flex-col gap-4'>
-      {example && <RuleExample>{example}</RuleExample>}
+      {example && props.invalidFields.size === 0 && (
+        <RuleExample>{example}</RuleExample>
+      )}
       {!autoSelectable && (
         <p className='text-warning text-sm'>
           {t(

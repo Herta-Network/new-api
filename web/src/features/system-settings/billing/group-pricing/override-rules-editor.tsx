@@ -125,7 +125,9 @@ export function OverrideRulesEditor(props: OverrideRulesEditorProps) {
 
   return (
     <div className='flex flex-col gap-4'>
-      {example && <RuleExample>{example}</RuleExample>}
+      {example && props.invalidFields.size === 0 && (
+        <RuleExample>{example}</RuleExample>
+      )}
       <OptionEditor
         label={t('Inter-group overrides')}
         invalidFields={props.invalidFields}

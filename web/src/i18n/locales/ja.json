@@ -198,6 +198,8 @@
     "The user group the override applies to.": "上書きが適用されるユーザーグループです。",
     "The visual editor is off for it so no rule is lost. Fix it in JSON; nothing has been changed.": "ルールを失わないよう、ビジュアル編集を無効にしています。JSON で修正してください。何も変更されていません。",
     "Their rules add {{added}} and remove {{removed}}.": "このグループのルールで {{added}} が追加され、{{removed}} が外されます。",
+    "Their rules add {{added}}.": "このグループのルールで {{added}} が追加されます。",
+    "Their rules remove {{removed}}.": "このグループのルールで {{removed}} が外されます。",
     "This group already exists": "このグループは既に存在します",
     "Tokens set to auto try these groups in order and use the first one with a channel for the model.": "auto を設定したトークンはこれらのグループを順に試し、そのモデルのチャネルがある最初のグループを使います。",
     "Tokens today": "今日のトークン",

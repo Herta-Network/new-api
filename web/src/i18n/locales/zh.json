@@ -198,6 +198,8 @@
     "The user group the override applies to.": "覆盖规则适用的用户分组。",
     "The visual editor is off for it so no rule is lost. Fix it in JSON; nothing has been changed.": "为避免丢失规则，已停用其可视化编辑。请在 JSON 中修正；目前没有任何改动。",
     "Their rules add {{added}} and remove {{removed}}.": "其规则添加了 {{added}}，移除了 {{removed}}。",
+    "Their rules add {{added}}.": "其规则添加了 {{added}}。",
+    "Their rules remove {{removed}}.": "其规则移除了 {{removed}}。",
     "This group already exists": "该分组已存在",
     "Tokens set to auto try these groups in order and use the first one with a channel for the model.": "设置为 auto 的令牌会按顺序尝试这些分组，并使用第一个有该模型渠道的分组。",
     "Tokens today": "今日 Token",

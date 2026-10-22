@@ -198,6 +198,8 @@
     "The user group the override applies to.": "The user group the override applies to.",
     "The visual editor is off for it so no rule is lost. Fix it in JSON; nothing has been changed.": "The visual editor is off for it so no rule is lost. Fix it in JSON; nothing has been changed.",
     "Their rules add {{added}} and remove {{removed}}.": "Their rules add {{added}} and remove {{removed}}.",
+    "Their rules add {{added}}.": "Their rules add {{added}}.",
+    "Their rules remove {{removed}}.": "Their rules remove {{removed}}.",
     "This group already exists": "This group already exists",
     "Tokens set to auto try these groups in order and use the first one with a channel for the model.": "Tokens set to auto try these groups in order and use the first one with a channel for the model.",
     "Tokens today": "Tokens today",

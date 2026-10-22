@@ -103,17 +103,27 @@ export function SpecialUsableEditor(props: SpecialUsableEditorProps) {
       group: sampleGroup,
       groups: usable.join(', ') || t('None'),
     })
-    if (added.length > 0 || removed.length > 0) {
+    const addedGroups = added.map((rule) => rule.group).join(', ')
+    const removedGroups = removed.map((rule) => rule.group).join(', ')
+    if (added.length > 0 && removed.length > 0) {
       example += ` ${t('Their rules add {{added}} and remove {{removed}}.', {
-        added: added.map((rule) => rule.group).join(', ') || t('None'),
-        removed: removed.map((rule) => rule.group).join(', ') || t('None'),
+        added: addedGroups,
+        removed: removedGroups,
+      })}`
+    } else if (added.length > 0) {
+      example += ` ${t('Their rules add {{added}}.', { added: addedGroups })}`
+    } else if (removed.length > 0) {
+      example += ` ${t('Their rules remove {{removed}}.', {
+        removed: removedGroups,
       })}`
     }
   }
 
   return (
     <div className='flex flex-col gap-4'>
-      {example && <RuleExample>{example}</RuleExample>}
+      {example && props.invalidFields.size === 0 && (
+        <RuleExample>{example}</RuleExample>
+      )}
       <OptionEditor
         label={t('Special usable group rules')}
         invalidFields={props.invalidFields}

@@ -198,6 +198,8 @@
     "The user group the override applies to.": "Группа пользователей, к которой применяется переопределение.",
     "The visual editor is off for it so no rule is lost. Fix it in JSON; nothing has been changed.": "Визуальный редактор отключён, чтобы не потерять правила. Исправьте JSON; ничего не изменено.",
     "Their rules add {{added}} and remove {{removed}}.": "Их правила добавляют {{added}} и убирают {{removed}}.",
+    "Their rules add {{added}}.": "Их правила добавляют {{added}}.",
+    "Their rules remove {{removed}}.": "Их правила убирают {{removed}}.",
     "This group already exists": "Такая группа уже есть",
     "Tokens set to auto try these groups in order and use the first one with a channel for the model.": "Токены с auto перебирают эти группы по порядку и используют первую, где есть канал для модели.",
     "Tokens today": "Токены сегодня",
