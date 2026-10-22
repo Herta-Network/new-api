@@ -5491,6 +5491,31 @@
         ]
       }
     },
+    "/api/group/usage": {
+      "get": {
+        "summary": "获取各分组的用户数与令牌数",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）\n\n返回 `users`（按用户分组统计的用户数）与 `tokens`（按令牌分组统计的令牌数，未设置分组的令牌不计入），均不含已删除的记录。",
+        "tags": [
+          "分组"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
     "/api/prefill_group/": {
       "get": {
         "summary": "获取预填分组",

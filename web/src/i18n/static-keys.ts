@@ -1036,4 +1036,13 @@ export const STATIC_I18N_KEYS = [
   // Model pricing messages returned by the server.
   'This model has an inactive saved expression. Open its pricing to choose which price to keep.',
   'Invalid pricing mode',
+  // Group pricing: who can use a group, and the JSON shape each option needs.
+  'User selectable',
+  'Admin assigned',
+  'Hidden from everyone',
+  'Expected a JSON object of group → ratio (0 or more)',
+  'Expected a JSON object of group → description',
+  'Expected a JSON object of user group → { billing group → ratio }',
+  'Expected a JSON object of user group → { group → description }',
+  'Expected a JSON object of group → ratio',
 ] as const
