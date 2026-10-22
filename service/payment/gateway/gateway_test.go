@@ -182,6 +182,23 @@ func TestRegistryDescribesThePlatforms(t *testing.T) {
 		PlatformStripe:    {"secret_key", "webhook_secret"},
 		PlatformCryptomus: {"api_key"},
 	}, secrets)
+
+	// The Stripe form offers exactly the payment method types a save accepts.
+	var stripeTypes []string
+	for _, info := range Platforms() {
+		for _, field := range info.Fields {
+			if field.Type != FieldSelect {
+				continue
+			}
+			assert.Equal(t, PlatformStripe+".payment_method_type", info.Platform+"."+field.Key)
+			for _, option := range field.Options {
+				stripeTypes = append(stripeTypes, option.Value)
+				_, err := registry.NormalizeConfig(info.Platform, []byte(`{"public_key":"pk_test_a","secret_key":"sk_test_b","payment_method_type":"`+option.Value+`"}`))
+				assert.NoError(t, err, option.Value)
+			}
+		}
+	}
+	assert.Equal(t, []string{"card", "alipay", "wechat_pay"}, stripeTypes)
 }
 
 func TestNormalizeConfig(t *testing.T) {
@@ -193,10 +210,10 @@ func TestNormalizeConfig(t *testing.T) {
 			`{"url":"https://pay.example/","pid":"1001","key":"k","type":""}`},
 		{PlatformEPay, `{"url":"http://pay.example/submit.php","pid":"1","key":"k","type":"alipay"}`,
 			`{"url":"http://pay.example/submit.php","pid":"1","key":"k","type":"alipay"}`},
-		{PlatformStripe, `{"public_key":"pk_test_a","secret_key":"sk_test_b"}`,
-			`{"public_key":"pk_test_a","secret_key":"sk_test_b","webhook_endpoint_id":"","webhook_url":"","webhook_secret":""}`},
-		{PlatformStripe, `{"public_key":"pk_live_a","secret_key":"rk_live_b"}`,
-			`{"public_key":"pk_live_a","secret_key":"rk_live_b","webhook_endpoint_id":"","webhook_url":"","webhook_secret":""}`},
+		{PlatformStripe, `{"public_key":"pk_test_a","secret_key":"sk_test_b","payment_method_type":" wechat_pay "}`,
+			`{"public_key":"pk_test_a","secret_key":"sk_test_b","payment_method_type":"wechat_pay","webhook_endpoint_id":"","webhook_url":"","webhook_secret":""}`},
+		{PlatformStripe, `{"public_key":"pk_live_a","secret_key":"rk_live_b","payment_method_type":"card"}`,
+			`{"public_key":"pk_live_a","secret_key":"rk_live_b","payment_method_type":"card","webhook_endpoint_id":"","webhook_url":"","webhook_secret":""}`},
 		{PlatformCryptomus, `{"merchant_id":" m ","api_key":" k "}`, `{"merchant_id":"m","api_key":"k"}`},
 	}
 	for _, tt := range valid {
@@ -215,12 +232,12 @@ func TestNormalizeConfig(t *testing.T) {
 			`{"url":"https://pay.example","pid":"1","key":""}`,
 		},
 		PlatformStripe: {
-			`{"public_key":"pk_test_a","secret_key":"sk_live_b"}`,
-			`{"public_key":"pk_live_a","secret_key":"rk_test_b"}`,
-			`{"public_key":"sk_test_a","secret_key":"sk_test_b"}`,
-			`{"public_key":"pk_test_a","secret_key":"pk_test_b"}`,
-			`{"public_key":"pk_test_","secret_key":"sk_test_b"}`,
-			`{"public_key":"pk_test_a"}`,
+			`{"public_key":"pk_test_a","secret_key":"sk_live_b","payment_method_type":"card"}`,
+			`{"public_key":"pk_live_a","secret_key":"rk_test_b","payment_method_type":"card"}`,
+			`{"public_key":"sk_test_a","secret_key":"sk_test_b","payment_method_type":"card"}`,
+			`{"public_key":"pk_test_a","secret_key":"pk_test_b","payment_method_type":"card"}`,
+			`{"public_key":"pk_test_","secret_key":"sk_test_b","payment_method_type":"card"}`,
+			`{"public_key":"pk_test_a","payment_method_type":"card"}`,
 		},
 		PlatformCryptomus: {
 			`{"merchant_id":"m"}`,
@@ -233,9 +250,20 @@ func TestNormalizeConfig(t *testing.T) {
 			assert.Error(t, err, "%s accepted %s", platform, raw)
 		}
 	}
+	// The payment method type is a message the administrator reads.
+	for _, raw := range []string{
+		`{"public_key":"pk_test_a","secret_key":"sk_test_b"}`,
+		`{"public_key":"pk_test_a","secret_key":"sk_test_b","payment_method_type":"paypal"}`,
+		`{"public_key":"pk_test_a","secret_key":"sk_test_b","payment_method_type":"Card"}`,
+	} {
+		_, err := registry.NormalizeConfig(PlatformStripe, []byte(raw))
+		var message *common.Message
+		require.ErrorAs(t, err, &message, raw)
+		assert.Equal(t, "Select the Stripe payment method type: card, Alipay or WeChat Pay", message.Key)
+	}
 	for platform, config := range map[string]string{
 		PlatformEPay:      `{"url":"https://pay.example","pid":"","key":"k"}`,
-		PlatformStripe:    `{"secret_key":"sk_test_b"}`,
+		PlatformStripe:    `{"public_key":"pk_test_a","secret_key":"sk_test_b"}`,
 		PlatformCryptomus: `{"api_key":"k"}`,
 	} {
 		_, err := registry.Open(Method{Platform: platform, Config: config})
@@ -246,7 +274,7 @@ func TestNormalizeConfig(t *testing.T) {
 func TestChargeFor(t *testing.T) {
 	registry := NewRegistry()
 	epay := mustOpen(t, registry, Method{Platform: PlatformEPay, Config: `{"url":"https://pay.example","pid":"1","key":"k"}`})
-	stripeGW := mustOpen(t, registry, Method{Platform: PlatformStripe, Config: `{"public_key":"pk_test_a","secret_key":"sk_test_a"}`})
+	stripeGW := mustOpen(t, registry, Method{Platform: PlatformStripe, Config: `{"public_key":"pk_test_a","secret_key":"sk_test_a","payment_method_type":"card"}`})
 
 	tests := []struct {
 		name     string
@@ -800,11 +828,19 @@ func TestCryptomusConfirmPayment(t *testing.T) {
 
 // ---- Stripe ----
 
-const stripeTestConfig = `{"public_key":"pk_test_a","secret_key":"sk_test_a","webhook_secret":"whsec_test"}`
+func stripeTestConfig(paymentType string) string {
+	return `{"public_key":"pk_test_a","secret_key":"sk_test_a","payment_method_type":"` + paymentType + `","webhook_secret":"whsec_test"}`
+}
 
+// openFakeStripe opens card method methodID on the fake.
 func openFakeStripe(t *testing.T, fake *gatewaytest.FakeStripe, methodID int64) Gateway {
 	t.Helper()
-	return mustOpen(t, NewRegistry(WithStripeBackends(fake.Backends)), Method{ID: methodID, Platform: PlatformStripe, Config: stripeTestConfig})
+	return openFakeStripeType(t, fake, methodID, "card")
+}
+
+func openFakeStripeType(t *testing.T, fake *gatewaytest.FakeStripe, methodID int64, paymentType string) Gateway {
+	t.Helper()
+	return mustOpen(t, NewRegistry(WithStripeBackends(fake.Backends)), Method{ID: methodID, Platform: PlatformStripe, Config: stripeTestConfig(paymentType)})
 }
 
 func claimAs(winner string, err error) func(context.Context, string) (string, error) {
@@ -827,18 +863,19 @@ func TestStripeStartPaymentCreatesAndReusesTheIntent(t *testing.T) {
 
 	action, err := gw.StartPayment(context.Background(), checkout)
 	require.NoError(t, err)
-	assert.Equal(t, Action{Type: ActionStripe, Stripe: &StripeAction{PublishableKey: "pk_test_a", ClientSecret: "pi_1_secret"}}, *action)
+	assert.Equal(t, Action{Type: ActionStripe, Stripe: &StripeAction{PublishableKey: "pk_test_a", ClientSecret: "pi_1_secret", PaymentMethodType: "card"}}, *action)
 	created, keys, _ := fake.Snapshot()
 	require.Len(t, created, 1)
 	assert.Equal(t, []string{"newapi:pi:order-1"}, keys)
 	assert.Equal(t, "1990", created[0].Get("amount"))
 	assert.Equal(t, "usd", created[0].Get("currency"))
-	assert.Equal(t, "true", created[0].Get("automatic_payment_methods[enabled]"))
+	assert.Equal(t, []string{"card"}, created[0]["payment_method_types[0]"])
+	assert.False(t, created[0].Has("payment_method_types[1]"), "the intent collects the method's one payment method type")
+	assert.False(t, created[0].Has("automatic_payment_methods[enabled]"))
 	assert.Equal(t, "order-1", created[0].Get("metadata[newapi_order_no]"))
 	assert.Equal(t, "7", created[0].Get("metadata[newapi_method_id]"))
 	assert.Equal(t, "Top-up", created[0].Get("description"))
 	assert.False(t, created[0].Has("customer"), "no Stripe customer is attached")
-	assert.False(t, created[0].Has("payment_method_types[0]"), "payment methods are chosen by Stripe")
 
 	// A claimed order hands out the same client secret and creates nothing.
 	order.TradeNo = "pi_1"
@@ -859,9 +896,41 @@ func TestStripeStartPaymentCreatesAndReusesTheIntent(t *testing.T) {
 	}
 	_, err = openFakeStripe(t, fake, 8).StartPayment(context.Background(), checkout)
 	assert.Error(t, err, "another payment method's intent is not reused")
+	_, err = openFakeStripeType(t, fake, 7, "alipay").StartPayment(context.Background(), checkout)
+	assert.Error(t, err, "an intent of another payment method type is not reused")
+	fake.Set("pi_1", "payment_method_types", []string{"card", "alipay"})
+	_, err = gw.StartPayment(context.Background(), checkout)
+	assert.Error(t, err, "an intent that also collects other types is not reused")
+	fake.Seed(gatewaytest.LegacyIntent(gatewaytest.Intent("pi_1", 1990, "usd", "requires_payment_method", "order-1", "7")))
+	_, err = gw.StartPayment(context.Background(), checkout)
+	assert.Error(t, err, "an intent with automatic payment methods is not handed out again")
+	fake.Set("pi_1", "payment_method_types", []string{"card"})
+	fake.Set("pi_1", "automatic_payment_methods", nil)
 	fake.Set("pi_1", "status", "canceled")
 	_, err = gw.StartPayment(context.Background(), checkout)
 	assert.Error(t, err, "a canceled intent is not offered again")
+}
+
+// Each Stripe method creates its intents for its one payment method type
+// and tells the client which one to confirm.
+func TestStripeIntentsCollectTheMethodsType(t *testing.T) {
+	for i, paymentType := range []string{"card", "alipay", "wechat_pay"} {
+		fake := gatewaytest.NewFakeStripe(t)
+		gw := openFakeStripeType(t, fake, 7, paymentType)
+		order := &Order{OrderNo: fmt.Sprintf("order-%d", i), PaymentAmount: 1990, PaymentCurrency: "CNY"}
+		action, err := gw.StartPayment(context.Background(), Checkout{Order: order, Charge: Charge{1990, "CNY"}, Claim: claimAs("", nil)})
+		require.NoError(t, err, paymentType)
+		assert.Equal(t, paymentType, action.Stripe.PaymentMethodType)
+		created, _, _ := fake.Snapshot()
+		require.Len(t, created, 1)
+		assert.Equal(t, []string{paymentType}, created[0]["payment_method_types[0]"], paymentType)
+		assert.False(t, created[0].Has("payment_method_types[1]"), paymentType)
+
+		order.TradeNo = "pi_1"
+		action, err = gw.StartPayment(context.Background(), Checkout{Order: order, Charge: Charge{1990, "CNY"}})
+		require.NoError(t, err, "%s: a resumed checkout reuses the intent", paymentType)
+		assert.Equal(t, paymentType, action.Stripe.PaymentMethodType)
+	}
 }
 
 func TestStripeClaimFailureCancelsTheIntent(t *testing.T) {
@@ -940,11 +1009,26 @@ func TestStripeParseCallback(t *testing.T) {
 	assert.True(t, notice.Paid)
 	assert.False(t, notice.Ignore)
 
+	assert.Empty(t, notice.Unmatched)
+
 	notice, err = gw.ParseCallback(context.Background(), stripeEvent(t, "whsec_test", "payment_intent.payment_failed", failed))
 	require.NoError(t, err)
 	assert.False(t, notice.Paid, "a failed payment is a lifecycle event")
 	assert.False(t, notice.Ignore)
 	assert.Equal(t, int64(100100), notice.Amount, "a lifecycle event reports the requested amount")
+
+	// A payment of another type is authentic, so it is reported for an
+	// operator instead of rejected; one checked out before the method had a
+	// type settles.
+	otherType := maps.Clone(succeeded)
+	otherType["payment_method_types"] = []string{"wechat_pay"}
+	notice, err = gw.ParseCallback(context.Background(), stripeEvent(t, "whsec_test", "payment_intent.succeeded", otherType))
+	require.NoError(t, err)
+	assert.True(t, notice.Paid)
+	assert.Equal(t, "the Stripe payment intent collected wechat_pay, not the payment method's card", notice.Unmatched)
+	notice, err = gw.ParseCallback(context.Background(), stripeEvent(t, "whsec_test", "payment_intent.succeeded", gatewaytest.LegacyIntent(maps.Clone(succeeded))))
+	require.NoError(t, err)
+	assert.Empty(t, notice.Unmatched)
 
 	for name, n := range map[string]Notification{
 		"another site's intent":  stripeEvent(t, "whsec_test", "payment_intent.succeeded", gatewaytest.Intent("pi_2", 100, "usd", "succeeded", "", "")),
@@ -959,7 +1043,7 @@ func TestStripeParseCallback(t *testing.T) {
 
 	_, err = gw.ParseCallback(context.Background(), stripeEvent(t, "whsec_other", "payment_intent.succeeded", succeeded))
 	assert.Error(t, err, "an event signed with another secret is forged")
-	unregistered := mustOpen(t, NewRegistry(), Method{ID: 7, Platform: PlatformStripe, Config: `{"public_key":"pk_test_a","secret_key":"sk_test_a"}`})
+	unregistered := mustOpen(t, NewRegistry(), Method{ID: 7, Platform: PlatformStripe, Config: `{"public_key":"pk_test_a","secret_key":"sk_test_a","payment_method_type":"card"}`})
 	_, err = unregistered.ParseCallback(context.Background(), stripeEvent(t, "", "payment_intent.succeeded", succeeded))
 	assert.Error(t, err, "a method without a webhook secret verifies nothing")
 }
@@ -978,6 +1062,8 @@ func TestStripeConfirmPayment(t *testing.T) {
 		{name: "other currency", change: map[string]any{"currency": "eur"}, wantErr: true},
 		{name: "other order", change: map[string]any{"metadata": map[string]string{"newapi_order_no": "order-2", "newapi_method_id": "7"}}, wantErr: true},
 		{name: "other method", change: map[string]any{"metadata": map[string]string{"newapi_order_no": "order-1", "newapi_method_id": "8"}}, wantErr: true},
+		{name: "other payment method type", change: map[string]any{"payment_method_types": []string{"alipay"}}, wantErr: true},
+		{name: "checked out with automatic payment methods", change: gatewaytest.LegacyIntent(map[string]any{})},
 	}
 	for _, tt := range tests {
 		fake := gatewaytest.NewFakeStripe(t)
@@ -1030,6 +1116,20 @@ func TestStripeReconcile(t *testing.T) {
 	fake.Seed(gatewaytest.Intent("pi_1", 1000, "usd", "succeeded", "order-1", "7"))
 	_, err = gw.Reconcile(context.Background(), CloseRequest{Order: order})
 	assert.Error(t, err, "an intent of another amount is not trusted")
+	fake.Set("pi_1", "amount", 1990)
+	fake.Set("pi_1", "payment_method_types", []string{"alipay"})
+	_, err = gw.Reconcile(context.Background(), CloseRequest{Order: order})
+	assert.Error(t, err, "an intent of another payment method type does not settle the order")
+
+	// An order checked out before the method had a type still settles, or
+	// closes with its intent cancelled.
+	for status, want := range map[string]Reconciliation{"succeeded": {TradeNo: "pi_1"}, "requires_payment_method": {}} {
+		fake := gatewaytest.NewFakeStripe(t)
+		fake.Seed(gatewaytest.LegacyIntent(gatewaytest.Intent("pi_1", 1990, "usd", status, "order-1", "7")))
+		got, err := openFakeStripe(t, fake, 7).Reconcile(context.Background(), CloseRequest{Order: order})
+		require.NoError(t, err, status)
+		assert.Equal(t, want, got, status)
+	}
 }
 
 // A user's "check payment" asks every gateway without touching the payment:

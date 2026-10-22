@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
+import { STRIPE_PAYMENT_METHOD_TYPE_LABELS } from '../constants'
 import { getPaymentIcon } from '../lib/ui'
 import type { PaymentMethodOption } from '../types'
 
@@ -37,7 +38,8 @@ interface PaymentMethodPickerProps {
 
 /**
  * The payment methods of a purchase as a group of toggle buttons. An
- * unavailable method stays listed, disabled, with the server's reason.
+ * unavailable method stays listed, disabled, with the server's reason; a
+ * Stripe method names the payment method type it collects.
  */
 export function PaymentMethodPicker(props: PaymentMethodPickerProps) {
   const { t } = useTranslation()
@@ -66,6 +68,12 @@ export function PaymentMethodPicker(props: PaymentMethodPickerProps) {
               method.unavailable?.params
             )
         const selected = props.selectedId === method.id
+        const paymentType = method.payment_method_type
+          ? t(STRIPE_PAYMENT_METHOD_TYPE_LABELS[method.payment_method_type])
+          : undefined
+        const detail =
+          reason ||
+          [paymentType, method.description].filter(Boolean).join(' · ')
         return (
           <Button
             key={method.id}
@@ -86,14 +94,15 @@ export function PaymentMethodPicker(props: PaymentMethodPickerProps) {
                 method.platform,
                 'h-4 w-4',
                 method.icon,
-                method.name
+                method.name,
+                method.payment_method_type
               )}
             </span>
             <span className='flex min-w-0 flex-col items-start gap-0.5'>
               <span className='max-w-full truncate'>{method.name}</span>
-              {(reason || method.description) && (
+              {detail && (
                 <span className='text-muted-foreground line-clamp-2 max-w-full text-[11px] leading-4 font-normal'>
-                  {reason || method.description}
+                  {detail}
                 </span>
               )}
             </span>

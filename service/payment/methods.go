@@ -136,6 +136,24 @@ func mergeConfig(platform, stored string, input map[string]any) ([]byte, error) 
 	return common.Marshal(merged)
 }
 
+// normalizeMethodConfig validates the configuration of a gateway method and
+// returns the form to store. A message the gateway words for the
+// administrator is returned as it is; any other reason is quoted.
+func normalizeMethodConfig(platform string, merged []byte) (string, error) {
+	config, err := gatewayRegistry().NormalizeConfig(platform, merged)
+	if err == nil {
+		return config, nil
+	}
+	if errors.Is(err, gateway.ErrNotGateway) {
+		return "", errMethodPlatform
+	}
+	var message *common.Message
+	if errors.As(err, &message) {
+		return "", message
+	}
+	return "", common.NewMessage("Invalid payment configuration: {{error}}", map[string]any{"error": err.Error()})
+}
+
 // validateMethodInput checks the fields every platform shares.
 func validateMethodInput(in *MethodInput) error {
 	in.Name, in.Icon, in.Domain = strings.TrimSpace(in.Name), strings.TrimSpace(in.Icon), strings.TrimSpace(in.Domain)
@@ -165,12 +183,9 @@ func CreateMethod(ctx context.Context, in MethodInput) (*MethodDetail, error) {
 	if err != nil {
 		return nil, errInvalidPurchase
 	}
-	config, err := gatewayRegistry().NormalizeConfig(in.Platform, merged)
-	if errors.Is(err, gateway.ErrNotGateway) {
-		return nil, errMethodPlatform
-	}
+	config, err := normalizeMethodConfig(in.Platform, merged)
 	if err != nil {
-		return nil, common.NewMessage("Invalid payment configuration: {{error}}", map[string]any{"error": err.Error()})
+		return nil, err
 	}
 	token, err := common.GenerateRandomCharsKey(40)
 	if err != nil {
@@ -223,11 +238,17 @@ func UpdateMethod(ctx context.Context, id int, in MethodInput) (*MethodDetail, e
 		if err != nil {
 			return nil, errInvalidPurchase
 		}
-		if config, err = gatewayRegistry().NormalizeConfig(method.Platform, merged); err != nil {
-			return nil, common.NewMessage("Invalid payment configuration: {{error}}", map[string]any{"error": err.Error()})
+		if config, err = normalizeMethodConfig(method.Platform, merged); err != nil {
+			return nil, err
 		}
 	}
-	if config != method.Config || in.Domain != method.Domain {
+	// The stored configuration is compared in its canonical form: one a
+	// startup migration rewrote may order its fields differently.
+	stored := method.Config
+	if canonical, err := gatewayRegistry().NormalizeConfig(method.Platform, []byte(method.Config)); err == nil {
+		stored = canonical
+	}
+	if config != stored || in.Domain != method.Domain {
 		pending, err := model.CountPendingPaymentOrders(method.Id)
 		if err != nil {
 			return nil, err

@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
 
@@ -80,6 +81,38 @@ func ensureBalancePaymentMethod(db *gorm.DB) error {
 		Enabled:  true,
 		Token:    token,
 	}).Error
+}
+
+// ensureStripePaymentMethodTypes pins the Stripe methods saved before each
+// Stripe method collected one payment method type to card, which every
+// Stripe account offers. Deleted methods are included because late
+// callbacks still open their gateway. A method that has a type keeps it, so
+// running it again changes nothing.
+func ensureStripePaymentMethodTypes(db *gorm.DB) error {
+	var methods []*PaymentMethod
+	if err := db.Unscoped().Where("platform = ?", "stripe").Find(&methods).Error; err != nil {
+		return fmt.Errorf("list Stripe payment methods: %w", err)
+	}
+	for _, method := range methods {
+		var config map[string]any
+		if err := common.UnmarshalJsonStr(method.Config, &config); err != nil || config == nil {
+			common.SysError(common.LogText("Stripe payment method %d has no readable configuration; set its payment method type by hand", method.Id))
+			continue
+		}
+		if paymentType, _ := config["payment_method_type"].(string); paymentType != "" {
+			continue
+		}
+		config["payment_method_type"] = "card"
+		content, err := common.Marshal(config)
+		if err != nil {
+			return err
+		}
+		if err := db.Unscoped().Model(&PaymentMethod{}).Where("id = ?", method.Id).Update("config", string(content)).Error; err != nil {
+			return fmt.Errorf("set the payment method type of Stripe payment method %d: %w", method.Id, err)
+		}
+		common.SysLog(common.LogText("Stripe payment method %d now collects card payments", method.Id))
+	}
+	return nil
 }
 
 // GetPaymentMethod loads a method that is not deleted.

@@ -363,22 +363,55 @@ export function PaymentMethodDialog(props: PaymentMethodDialogProps) {
                             />
                           )}
                       </FormLabel>
-                      <FormControl>
-                        {platformField.secret ? (
-                          <PasswordInput
-                            {...field}
-                            value={field.value ?? ''}
-                            autoComplete='new-password'
-                            placeholder={
-                              secretsSet[platformField.key]
-                                ? t('Enter new key to update')
-                                : undefined
-                            }
-                          />
-                        ) : (
-                          <Input {...field} value={field.value ?? ''} />
-                        )}
-                      </FormControl>
+                      {platformField.type === 'select' ? (
+                        <Select
+                          items={(platformField.options ?? []).map(
+                            (option) => ({
+                              value: option.value,
+                              label: t(option.label),
+                            })
+                          )}
+                          value={field.value ?? ''}
+                          onValueChange={(value) =>
+                            field.onChange(String(value ?? ''))
+                          }
+                        >
+                          <FormControl>
+                            <SelectTrigger className='w-full'>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              {(platformField.options ?? []).map((option) => (
+                                <SelectItem
+                                  key={option.value}
+                                  value={option.value}
+                                >
+                                  {t(option.label)}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <FormControl>
+                          {platformField.secret ? (
+                            <PasswordInput
+                              {...field}
+                              value={field.value ?? ''}
+                              autoComplete='new-password'
+                              placeholder={
+                                secretsSet[platformField.key]
+                                  ? t('Enter new key to update')
+                                  : undefined
+                              }
+                            />
+                          ) : (
+                            <Input {...field} value={field.value ?? ''} />
+                          )}
+                        </FormControl>
+                      )}
                       {platformField.secret &&
                         secretsSet[platformField.key] && (
                           <FormDescription>

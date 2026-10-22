@@ -137,8 +137,10 @@ func setupPayment(t *testing.T) *paymentFixture {
 		{Id: testEPayMethod, Name: "Alipay", Platform: gateway.PlatformEPay, Enabled: true, Token: "epay-token",
 			Config:  `{"url":"` + epayServer.URL + `","pid":"1001","key":"` + testEPaySecret + `","type":""}`,
 			FeeMode: model.PaymentFeeRate, FeeRateBp: 300},
+		// The Stripe configuration is in the key order the startup migration
+		// that gave Stripe methods their payment method type writes.
 		{Id: testStripeMethod, Name: "Card", Platform: gateway.PlatformStripe, Enabled: true, Token: "stripe-token",
-			Config:  `{"public_key":"pk_test_a","secret_key":"sk_test_a","webhook_endpoint_id":"we_0","webhook_url":"","webhook_secret":"` + testStripeSecret + `"}`,
+			Config:  `{"payment_method_type":"card","public_key":"pk_test_a","secret_key":"sk_test_a","webhook_endpoint_id":"we_0","webhook_secret":"` + testStripeSecret + `","webhook_url":""}`,
 			FeeMode: model.PaymentFeeFixed, FeeFixed: 30},
 	} {
 		require.NoError(t, model.DB.Create(method).Error)
@@ -396,7 +398,7 @@ func TestStripeCheckoutAndWebhook(t *testing.T) {
 	order, checkout, err := CreateOrder(ctx, testUser, topup("10", testStripeMethod), "")
 	require.NoError(t, err)
 	require.Equal(t, gateway.ActionStripe, checkout.Type)
-	assert.Equal(t, &gateway.StripeAction{PublishableKey: "pk_test_a", ClientSecret: "pi_1_secret"}, checkout.Stripe)
+	assert.Equal(t, &gateway.StripeAction{PublishableKey: "pk_test_a", ClientSecret: "pi_1_secret", PaymentMethodType: "card"}, checkout.Stripe)
 	again, err := ResumeCheckout(ctx, testUser, order.OrderNo)
 	require.NoError(t, err)
 	assert.Equal(t, checkout.Stripe, again.Stripe, "a resumed checkout reuses the order's intent")
@@ -420,6 +422,28 @@ func TestStripeCheckoutAndWebhook(t *testing.T) {
 	forged := stripeEvent(t, "payment_intent.succeeded", intent)
 	forged.Signature = "t=1,v1=00"
 	assert.ErrorIs(t, HandleNotify(ctx, gateway.PlatformStripe, "stripe-token", forged, ""), gateway.ErrInvalidCallback)
+
+	// A payment of another payment method type does not settle the order:
+	// it is recorded for an operator, once, and acknowledged.
+	second, _, err := CreateOrder(ctx, testUser, topup("10", testStripeMethod), "")
+	require.NoError(t, err)
+	wechat := gatewaytest.Intent("pi_2", 830, "usd", "succeeded", second.OrderNo, "11")
+	wechat["amount_received"], wechat["payment_method_types"] = 830, []string{"wechat_pay"}
+	for range 2 {
+		require.NoError(t, HandleNotify(ctx, gateway.PlatformStripe, "stripe-token", stripeEvent(t, "payment_intent.succeeded", wechat), ""))
+	}
+	stored, err := model.GetPaymentOrderByNo(second.OrderNo)
+	require.NoError(t, err)
+	assert.Equal(t, model.PaymentOrderPending, stored.Status)
+	assert.Equal(t, 5_000_000, userQuota(t))
+	var unmatched []model.PaymentUnmatched
+	require.NoError(t, model.DB.Find(&unmatched).Error)
+	require.Len(t, unmatched, 1)
+	assert.Equal(t, model.PaymentUnmatched{
+		Id: unmatched[0].Id, Platform: gateway.PlatformStripe, TradeNo: "pi_2", OrderNo: second.OrderNo, PaymentMethodId: testStripeMethod,
+		UserId: testUser, Amount: 830, Currency: "USD", CreatedAt: unmatched[0].CreatedAt,
+		Reason: "the Stripe payment intent collected wechat_pay, not the payment method's card",
+	}, unmatched[0])
 }
 
 func TestCloseAndSyncAskTheGateway(t *testing.T) {
@@ -558,6 +582,20 @@ func TestAdminMethodsKeepSecrets(t *testing.T) {
 	assert.NoError(t, err)
 	assert.ErrorIs(t, DeleteMethod(ctx, detail.Id), errMethodPendingOrders)
 
+	// The same holds for the payment method type of a Stripe method, whose
+	// pending intents collect the old type; a migrated configuration in
+	// another key order is not a change.
+	_, _, err = CreateOrder(ctx, testUser, topup("10", testStripeMethod), "")
+	require.NoError(t, err)
+	stripeMethod := stripeInput("", "")
+	stripeMethod.Name = "Card 2"
+	_, err = UpdateMethod(ctx, testStripeMethod, stripeMethod)
+	require.NoError(t, err)
+	stripeMethod.Config["payment_method_type"] = "alipay"
+	_, err = UpdateMethod(ctx, testStripeMethod, stripeMethod)
+	assert.ErrorIs(t, err, errMethodPendingOrders)
+	assert.Equal(t, "card", storedConfig(t, testStripeMethod)["payment_method_type"])
+
 	assert.ErrorIs(t, DeleteMethod(ctx, model.BalancePaymentMethodID), errBalanceUndeletable)
 	_, err = CreateMethod(ctx, MethodInput{Name: "Balance 2", Platform: model.PaymentPlatformBalance})
 	assert.ErrorIs(t, err, errMethodPlatform)
@@ -574,7 +612,7 @@ func TestAdminMethodsKeepSecrets(t *testing.T) {
 func stripeInput(secretKey, domain string) MethodInput {
 	return MethodInput{
 		Name: "Card", Platform: gateway.PlatformStripe, Enabled: true, Domain: domain,
-		Config: map[string]any{"public_key": "pk_test_a", "secret_key": secretKey, "webhook_secret": "whsec_planted"},
+		Config: map[string]any{"public_key": "pk_test_a", "secret_key": secretKey, "payment_method_type": "card", "webhook_secret": "whsec_planted"},
 	}
 }
 
@@ -582,6 +620,16 @@ func stripeInput(secretKey, domain string) MethodInput {
 func TestStripeWebhookFollowsTheMethod(t *testing.T) {
 	f := setupPayment(t)
 	ctx := context.Background()
+	// A method without a payment method type is refused, in words the
+	// administrator reads, before anything is registered at Stripe.
+	untyped := stripeInput("sk_test_a", "")
+	delete(untyped.Config, "payment_method_type")
+	_, err := CreateMethod(ctx, untyped)
+	var message *common.Message
+	require.ErrorAs(t, err, &message)
+	assert.Equal(t, "Select the Stripe payment method type: card, Alipay or WeChat Pay", message.Key)
+	assert.Empty(t, f.stripe.Webhooks())
+
 	detail, err := CreateMethod(ctx, stripeInput("sk_test_a", ""))
 	require.NoError(t, err)
 	webhooks := f.stripe.Webhooks()

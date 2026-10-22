@@ -34,6 +34,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuShortcut,
 } from '@/components/ui/dropdown-menu'
+import { STRIPE_PAYMENT_METHOD_TYPE_LABELS } from '@/features/wallet/constants'
+import { getPaymentIcon } from '@/features/wallet/lib/ui'
+import type { StripePaymentMethodType } from '@/features/wallet/types'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 
@@ -149,21 +152,24 @@ export function PaymentMethodsSection(props: PaymentMethodsSectionProps) {
           {
             id: 'platform',
             header: t('Platform'),
-            className: 'w-24',
+            className: 'w-32',
             cell: (method) => (
-              <BadgeCell>
-                <StatusBadge
-                  label={
-                    method.id === BALANCE_PAYMENT_METHOD_ID
-                      ? t('Balance')
-                      : (platforms.find(
-                          (item) => item.platform === method.platform
-                        )?.name ?? method.platform)
-                  }
-                  variant='neutral'
-                  copyable={false}
-                />
-              </BadgeCell>
+              <span className='flex min-w-0 flex-col items-start gap-1'>
+                <BadgeCell>
+                  <StatusBadge
+                    label={
+                      method.id === BALANCE_PAYMENT_METHOD_ID
+                        ? t('Balance')
+                        : (platforms.find(
+                            (item) => item.platform === method.platform
+                          )?.name ?? method.platform)
+                    }
+                    variant='neutral'
+                    copyable={false}
+                  />
+                </BadgeCell>
+                <StripePaymentType method={method} />
+              </span>
             ),
           },
           {
@@ -299,6 +305,28 @@ export function PaymentMethodsSection(props: PaymentMethodsSectionProps) {
         isLoading={deleteMethod.isPending}
       />
     </SettingsSection>
+  )
+}
+
+/** The payment method type a Stripe method collects; nothing for others. */
+function StripePaymentType(props: { method: PaymentMethod }) {
+  const { t } = useTranslation()
+  const paymentType = props.method.config.payment_method_type
+  if (
+    props.method.platform !== 'stripe' ||
+    typeof paymentType !== 'string' ||
+    !(paymentType in STRIPE_PAYMENT_METHOD_TYPE_LABELS)
+  ) {
+    return null
+  }
+  const stripeType = paymentType as StripePaymentMethodType
+  return (
+    <span className='text-muted-foreground flex items-center gap-1.5 text-xs'>
+      <span aria-hidden='true' className='flex'>
+        {getPaymentIcon('stripe', 'size-3.5', '', '', stripeType)}
+      </span>
+      {t(STRIPE_PAYMENT_METHOD_TYPE_LABELS[stripeType])}
+    </span>
   )
 }
 

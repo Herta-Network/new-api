@@ -964,6 +964,13 @@ export const STATIC_I18N_KEYS = [
   'Secret key',
   'Merchant UUID',
   'Payment API key',
+  // Stripe payment method types: the platform field, its options (also the
+  // wallet's type labels) and the save validation message.
+  'Payment method type',
+  'Card',
+  'Alipay',
+  'WeChat Pay',
+  'Select the Stripe payment method type: card, Alipay or WeChat Pay',
   // Buyer payment orders: statuses, platforms and result dialog outcomes.
   'Paid',
   'EPay',
