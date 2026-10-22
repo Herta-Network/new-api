@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { getCurrencyLabel } from '@/lib/currency'
+import { getMoneyDisplay } from '@/lib/currency'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { DEFAULT_TOKEN_UNIT } from '../constants'
@@ -37,9 +37,6 @@ import type { PricingModel, TokenUnit } from '../types'
 
 export type ModelPriceCellOptions = {
   tokenUnit?: TokenUnit
-  priceRate?: number
-  usdExchangeRate?: number
-  showRechargePrice?: boolean
   selectedGroup?: string
 }
 
@@ -50,8 +47,7 @@ export function ModelPriceCell(props: {
 }) {
   const { t, i18n } = useTranslation()
   const currency = useSystemConfigStore((state) => state.config.currency)
-  const currencyLabel =
-    currency.quotaDisplayType === 'TOKENS' ? 'USD' : getCurrencyLabel()
+  const currencyLabel = getMoneyDisplay(currency).currencyCode
   const options = props.options ?? {}
   const tokenUnit = options.tokenUnit ?? DEFAULT_TOKEN_UNIT
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
@@ -59,9 +55,6 @@ export function ModelPriceCell(props: {
   const dynamic = useMemo(
     () =>
       getDynamicPricingSummary(props.model, {
-        priceRate: options.priceRate,
-        usdExchangeRate: options.usdExchangeRate,
-        showRechargePrice: options.showRechargePrice,
         now: billingTime === undefined ? undefined : new Date(billingTime),
         tokenUnit,
         showCurrencySymbol: false,
@@ -72,16 +65,7 @@ export function ModelPriceCell(props: {
       }),
     // Currency is read indirectly by the price formatter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      props.model,
-      tokenUnit,
-      options.priceRate,
-      options.usdExchangeRate,
-      options.showRechargePrice,
-      options.selectedGroup,
-      billingTime,
-      currency,
-    ]
+    [props.model, tokenUnit, options.selectedGroup, billingTime, currency]
   )
   let metrics: Array<{ label: string; value: string }>
   const providerCaption = dynamic?.providerCount
@@ -195,9 +179,6 @@ export function ModelPriceCell(props: {
             props.model,
             'input',
             tokenUnit,
-            options.showRechargePrice,
-            options.priceRate,
-            options.usdExchangeRate,
             options.selectedGroup,
             false
           ),
@@ -208,9 +189,6 @@ export function ModelPriceCell(props: {
             props.model,
             'output',
             tokenUnit,
-            options.showRechargePrice,
-            options.priceRate,
-            options.usdExchangeRate,
             options.selectedGroup,
             false
           ),
@@ -220,14 +198,7 @@ export function ModelPriceCell(props: {
       metrics = [
         {
           label: t('Per-request'),
-          value: formatRequestPrice(
-            props.model,
-            options.showRechargePrice,
-            options.priceRate,
-            options.usdExchangeRate,
-            options.selectedGroup,
-            false
-          ),
+          value: formatRequestPrice(props.model, options.selectedGroup, false),
         },
       ]
       caption = `${currencyLabel} / ${t('request')}`

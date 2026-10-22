@@ -31,21 +31,19 @@ export const USD_PRICING_CURRENCY: PricingCurrency = {
   exchangeRate: 1,
 }
 
+/**
+ * The site currency prices can be entered in, or null for a USD site. Its
+ * rate is NaN while the site currency has no usable rate.
+ */
 export function getSitePricingCurrency(
   config: CurrencyConfig
 ): PricingCurrency | null {
-  if (config.quotaDisplayType === 'CNY') {
-    return { label: 'CNY', symbol: '¥', exchangeRate: config.usdExchangeRate }
+  if (!config.siteCurrency || config.siteCurrency === 'USD') return null
+  return {
+    label: config.siteCurrency,
+    symbol: config.siteCurrencySymbol || config.siteCurrency,
+    exchangeRate: config.usdRate ?? Number.NaN,
   }
-  if (config.quotaDisplayType === 'CUSTOM') {
-    const symbol = config.customCurrencySymbol?.trim() || '¤'
-    return {
-      label: symbol,
-      symbol,
-      exchangeRate: config.customCurrencyExchangeRate,
-    }
-  }
-  return null
 }
 
 export function isValidPricingCurrency(

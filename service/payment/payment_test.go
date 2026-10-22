@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/service/payment/gateway/gatewaytest"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stripe/stripe-go/v81"
@@ -106,6 +107,7 @@ func setupPayment(t *testing.T) *paymentFixture {
 	savedSettings := *settings
 	t.Cleanup(func() { *settings = savedSettings })
 	settings.Currency, settings.MinTopup, settings.ExchangeRateAPIKey = "USD", "1", ""
+	settings.ExchangeRateOverrides = map[string]string{}
 	settings.AmountDiscount = map[int]float64{100: 0.9}
 	savedRatios := common.TopupGroupRatio2JSONString()
 	require.NoError(t, common.UpdateTopupGroupRatioByJSONString(`{"default":1,"vip":0.8}`))
@@ -291,6 +293,67 @@ func TestStaleRatesRefuseOrders(t *testing.T) {
 	stored, err = model.GetPaymentExchangeRate("CNY", "USD")
 	require.NoError(t, err)
 	assert.Equal(t, "0.14", stored.Rate)
+}
+
+// One resolved rate prices top-ups and shows amounts: an override wins over
+// the live rate in both directions of its pair and is not fetched; without
+// one a fresh live rate is used, and a stale one without an API key leaves
+// the pair without a rate, shown in USD.
+func TestResolveRatePrecedence(t *testing.T) {
+	f := setupPayment(t)
+	ctx := context.Background()
+	settings := operation_setting.GetPaymentSetting()
+	settings.Currency = "CNY"
+	storeRate(t, "CNY", "USD", "0.1381", time.Now())
+
+	quote, err := QuotePurchase(ctx, testUser, topup("100", testEPayMethod))
+	require.NoError(t, err)
+	assert.Equal(t, "0.1381", quote.QuotaRate)
+	assert.Equal(t, RateSourceLive, operation_setting.GetSiteCurrencyRate().Source)
+	amount, currency := operation_setting.QuotaDisplayAmount(int64(quote.QuotaAmount))
+	assert.Equal(t, "CNY", currency)
+	assert.Equal(t, "100.00", amount.StringFixed(2), "the credited quota shows as the amount paid")
+
+	settings.ExchangeRateOverrides = map[string]string{"USD/CNY": "7.3"}
+	resolved, err := ResolveRate(ctx, "CNY", "USD")
+	require.NoError(t, err)
+	assert.Equal(t, RateSourceManual, resolved.Source)
+	assert.Equal(t, "10", resolved.Convert(decimal.NewFromInt(73)).String())
+	quote, err = QuotePurchase(ctx, testUser, topup("100", testEPayMethod))
+	require.NoError(t, err)
+	assert.Equal(t, 6_849_315, quote.QuotaAmount)
+	PublishSiteCurrencyRate()
+	shown := operation_setting.GetSiteCurrencyRate()
+	assert.Equal(t, "7.3", shown.USDRate)
+	assert.Equal(t, RateSourceManual, shown.Source)
+	amount, _ = operation_setting.QuotaDisplayAmount(int64(quote.QuotaAmount))
+	assert.Equal(t, "100.00", amount.StringFixed(2))
+	pairs, err := RateOverview("CNY")
+	require.NoError(t, err)
+	require.Len(t, pairs, 1)
+	assert.Equal(t, RatePair{Base: "USD", Quote: "CNY", Uses: []string{RateUseQuota}, Override: "7.3", Status: RateStatusLive,
+		Live: &LiveRate{Rate: "7.2411296162201303", FetchedAt: pairs[0].Live.FetchedAt}}, pairs[0], "the live rate is the one the quota pair converts with")
+	settings.ExchangeRateAPIKey = "rate-key"
+	calls := f.rates.answer("0.2")
+	require.NoError(t, RefreshRates(ctx))
+	assert.Equal(t, calls, f.rates.answer("0.2"), "a pinned pair is not fetched")
+
+	settings.ExchangeRateOverrides, settings.ExchangeRateAPIKey = map[string]string{}, ""
+	storeRate(t, "CNY", "USD", "0.1381", time.Now().Add(-73*time.Hour))
+	rateCache.Lock()
+	rateCache.rates = map[string]cachedRate{}
+	rateCache.Unlock()
+	_, err = ResolveRate(ctx, "CNY", "USD")
+	assert.ErrorIs(t, err, ErrRateUnavailable)
+	pairs, err = RateOverview("CNY")
+	require.NoError(t, err)
+	require.Len(t, pairs, 1)
+	assert.Equal(t, RateStatusStale, pairs[0].Status)
+	PublishSiteCurrencyRate()
+	assert.Empty(t, operation_setting.GetSiteCurrencyRate().USDRate)
+	amount, currency = operation_setting.QuotaDisplayAmount(500_000)
+	assert.Equal(t, "USD", currency)
+	assert.Equal(t, "1", amount.String())
 }
 
 func signEPayCallback(params map[string]string) map[string]string {

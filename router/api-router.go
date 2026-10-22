@@ -216,6 +216,8 @@ func SetApiRouter(router *gin.Engine) {
 			paymentSettingsRoute.Use(middleware.RootAuth())
 			{
 				paymentSettingsRoute.GET("/platforms", controller.GetPaymentPlatforms)
+				paymentSettingsRoute.GET("/rates", controller.GetPaymentRates)
+				paymentSettingsRoute.POST("/rates/refresh", controller.RefreshPaymentRates)
 				paymentSettingsRoute.GET("/methods", controller.AdminListPaymentMethods)
 				paymentSettingsRoute.POST("/methods", controller.AdminCreatePaymentMethod)
 				paymentSettingsRoute.PUT("/methods/:id", controller.AdminUpdatePaymentMethod)

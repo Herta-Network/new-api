@@ -184,8 +184,9 @@ test('successful batch creation opens export with returned codes and the configu
   useSystemConfigStore.getState().setConfig({
     currency: {
       ...DEFAULT_CURRENCY_CONFIG,
-      quotaDisplayType: 'CNY',
-      usdExchangeRate: 7.2,
+      siteCurrency: 'CNY',
+      siteCurrencySymbol: '¥',
+      usdRate: 7.2,
     },
   })
   vi.spyOn(api, 'post').mockResolvedValue({

@@ -136,9 +136,11 @@ func main() {
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
 
-	// Payments: close expired orders through their gateway, refresh exchange rates
+	// Payments: close expired orders through their gateway, refresh exchange
+	// rates, and show amounts at the site currency's rate
 	payment.StartPaymentReconcileTask()
 	payment.StartExchangeRateRefreshTask()
+	payment.StartSiteCurrencyRateTask()
 
 	// Report this process as a system instance so the System Info page can show
 	// all currently alive nodes in multi-instance deployments.
