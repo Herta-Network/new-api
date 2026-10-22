@@ -220,8 +220,16 @@ describe('workspace sidebars', () => {
       'admin'
     )
     const site = result.current.find((group) => group.id === 'site')
-    expect(site?.items.map((item) => item.url)).toEqual([
-      '/admin/dashboard/models',
+    expect(
+      site?.items.map((item) => item.url ?? item.items?.map((sub) => sub.url))
+    ).toEqual([
+      '/admin',
+      [
+        '/admin/dashboard/models',
+        '/admin/dashboard/flow',
+        '/admin/dashboard/users',
+        '/admin/dashboard/performance',
+      ],
       '/admin/usage-logs/common',
       '/admin/usage-logs/audit',
       '/admin/usage-logs/task',

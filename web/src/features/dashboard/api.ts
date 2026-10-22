@@ -20,6 +20,11 @@ import { api } from '@/lib/api'
 import type { DataScope } from '@/lib/workspace'
 
 import type {
+  ConsoleOverview,
+  ConsoleRankingPeriod,
+  ConsoleRankings,
+  ConsoleRevenue,
+  ConsoleUsers,
   FlowQuotaDataItem,
   QuotaDataItem,
   UptimeGroupResult,
@@ -89,6 +94,41 @@ export async function getFlowQuotaDates(
 export async function getUptimeStatus() {
   const res = await api.get<{ success: boolean; data: UptimeGroupResult[] }>(
     '/api/uptime/status'
+  )
+  return res.data
+}
+
+// ----------------------------------------------------------------------------
+// Admin Operations Overview
+// ----------------------------------------------------------------------------
+
+type ConsoleResponse<T> = { success: boolean; message?: string; data: T }
+
+export async function getConsoleOverview() {
+  const res = await api.get<ConsoleResponse<ConsoleOverview>>(
+    '/api/admin/console/overview'
+  )
+  return res.data
+}
+
+export async function getConsoleRevenue() {
+  const res = await api.get<ConsoleResponse<ConsoleRevenue>>(
+    '/api/admin/console/revenue'
+  )
+  return res.data
+}
+
+export async function getConsoleUsers() {
+  const res = await api.get<ConsoleResponse<ConsoleUsers>>(
+    '/api/admin/console/users'
+  )
+  return res.data
+}
+
+export async function getConsoleRankings(period: ConsoleRankingPeriod) {
+  const res = await api.get<ConsoleResponse<ConsoleRankings>>(
+    '/api/admin/console/rankings',
+    { params: { period } }
   )
   return res.data
 }
