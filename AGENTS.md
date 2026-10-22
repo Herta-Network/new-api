@@ -177,6 +177,8 @@ Tasks that touch none of these (for example unrelated frontend work, authenticat
 
 ### Project Governance
 
+**Upstream sync (mandatory read gate):** This repository is a fork of `QuantumNous/new-api` that has diverged on purpose (PostgreSQL-only database, ppanel-style payments, one site currency, `/user` and `/admin` console workspaces, a model pricing workspace, and more). `.agents/rules/upstream-sync.md` lists those divergences and the rules for merging upstream. Before fetching, merging, or resolving conflicts with `upstream/main`, or porting any upstream commit, you MUST read that file in full with your file-read tool and follow every rule in it. Classify each incoming commit as adopted, adapted, or ignored before resolving it, and never push a sync without the maintainer's approval.
+
 **Protected project information:** The following project-related information is strictly protected and MUST NOT be modified, deleted, replaced, or removed under any circumstances:
 
 - Any references, mentions, branding, metadata, or attributions related to **nеw-аρi** (the project name/identity)
