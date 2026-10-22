@@ -39,7 +39,17 @@ type ModelPricingEntry struct {
 	Version        string                               `json:"version"`
 	Configured     PricingValues                        `json:"configured"`
 	UsageSchema    map[string]jsplugin.UsageFieldSchema `json:"usage_schema,omitempty"`
+	PricingMode    string                               `json:"pricing_mode"`
 }
+
+// Pricing modes of the admin model list. The editor tells its simple form
+// from the advanced editor within expression pricing; that shape is its own.
+const (
+	ModelPricingModeExpression = "expression"
+	ModelPricingModeTask       = "task"
+	ModelPricingModeLegacy     = "legacy"
+	ModelPricingModeUnpriced   = "unpriced"
+)
 
 type ModelPricingPluginVariant struct {
 	PluginKey     string                               `json:"plugin_key"`
@@ -219,6 +229,46 @@ func effectiveModelPricing(values map[string]map[string]any, name string) Pricin
 	return result
 }
 
+// modelPricingMode classifies the pricing that bills name. Legacy means a
+// configured ratio or per-request price, wildcard aliases included; the
+// self-use default ratio is no configured price and leaves a model unpriced.
+func modelPricingMode(values map[string]map[string]any, generation *jsplugin.RoutingGeneration, name string, effective PricingValues) string {
+	_, task := generation.GetByModel(name)
+	if !task {
+		_, task = ResolveTaskModelAlias(generation, name)
+	}
+	if effective["billing_setting.billing_mode"] == billing_setting.BillingModeTieredExpr {
+		if task {
+			return ModelPricingModeTask
+		}
+		return ModelPricingModeExpression
+	}
+	alias := ratio_setting.FormatMatchingModelName(name)
+	_, price := values["ModelPrice"][alias]
+	_, ratio := values["ModelRatio"][alias]
+	if price || ratio {
+		return ModelPricingModeLegacy
+	}
+	if variants, _ := modelPricingValues(values, name)[billing_setting.PluginBillingExprOption].(map[string]any); len(variants) > 0 {
+		return ModelPricingModeTask
+	}
+	return ModelPricingModeUnpriced
+}
+
+// ModelPricingModes classifies each name the same way as the pricing snapshot.
+func ModelPricingModes(names []string) (map[string]string, error) {
+	values, _, _, err := readModelPricingMaps(DB)
+	if err != nil {
+		return nil, err
+	}
+	generation := jsplugin.DefaultRegistry.Generation()
+	modes := make(map[string]string, len(names))
+	for _, name := range names {
+		modes[name] = modelPricingMode(values, generation, name, effectiveModelPricing(values, name))
+	}
+	return modes, nil
+}
+
 // PreviewModelPricing resolves a complete editable draft using the same defaults
 // as the saved-price display and conversion. It has no write side effects.
 func PreviewModelPricing(name string, draft PricingValues) (PricingValues, error) {
@@ -271,6 +321,7 @@ func GetModelPricingSnapshot(names []string) (*ModelPricingSnapshot, error) {
 			ModelPricingDescription: ModelPricingDescription{Effective: effectiveModelPricing(values, name)}}
 		entry.CacheWriteMode = ResolveCacheWriteMode(name, configured)
 		entry.BillingDetails = ResolveLegacyBillingDetails(name, entry.Effective, configured)
+		entry.PricingMode = modelPricingMode(values, generation, name, entry.Effective)
 		if plugin, ok := generation.GetByModel(name); ok {
 			entry.UsageSchema, _ = plugin.Meta.UsageForModel(name)
 		} else if target, ok := ResolveTaskModelAlias(generation, name); ok {

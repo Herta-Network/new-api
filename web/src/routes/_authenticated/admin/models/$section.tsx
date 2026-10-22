@@ -40,6 +40,10 @@ const modelsSearchSchema = z.object({
     .optional()
     .catch([]),
   sync: z.array(z.string()).optional().catch([]),
+  pricing: z
+    .array(z.enum(['expression', 'task', 'legacy', 'unpriced']))
+    .optional()
+    .catch([]),
   dPage: z.number().optional().catch(1),
   dPageSize: z.number().optional().catch(10),
   dFilter: z.string().optional().catch(''),

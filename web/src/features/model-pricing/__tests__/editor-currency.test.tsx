@@ -558,16 +558,17 @@ it.each([0, 2])(
   }
 )
 
-it('opens expression pricing by default when an existing model has no configured prices', () => {
+it('opens empty simple prices without legacy modes when an existing model has no configured prices', () => {
   const editor = renderEditor({
     ratio: '',
     completionRatio: '',
     billingMode: 'per-token',
   })
-  expect(screen.getByRole('tab', { name: 'Expression' })).toHaveAttribute(
-    'aria-selected',
-    'true'
-  )
+  expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: 'Input price' })).toHaveValue('')
+  expect(
+    screen.getByRole('switch', { name: 'Advanced editor' })
+  ).not.toBeChecked()
   expect(editor.dirty).toHaveBeenLastCalledWith(false)
 })
 
@@ -949,6 +950,9 @@ it('shows the estimated token cost in the selected currency while token quantiti
     billingMode: 'tiered_expr',
     billingExpr: 'tier("base", p * 2 + c * 4)',
   })
+  await userEvent
+    .setup()
+    .click(screen.getByRole('switch', { name: 'Advanced editor' }))
   const tokens = screen.getByRole('spinbutton', { name: 'Input tokens' })
   fireEvent.change(tokens, { target: { value: '1000000' } })
   expect(screen.getByText('Estimated cost: $2')).toBeVisible()

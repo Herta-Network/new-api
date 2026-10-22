@@ -2,6 +2,7 @@ package controller
 
 import (
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,15 +32,25 @@ func listModelsMeta(c *gin.Context, keyword, vendor string) {
 		return
 	}
 
+	pricingMode := c.Query("pricing_mode")
+	switch pricingMode {
+	case "", model.ModelPricingModeExpression, model.ModelPricingModeTask, model.ModelPricingModeLegacy, model.ModelPricingModeUnpriced:
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid pricing mode"})
+		return
+	}
+
 	pageInfo := common.GetPageQuery(c)
-	if squareState != "" && (pageInfo.GetPage() < 1 || pageInfo.GetPageSize() < 1) {
+	filtered := squareState != "" || pricingMode != ""
+	if filtered && (pageInfo.GetPage() < 1 || pageInfo.GetPageSize() < 1) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid pagination"})
 		return
 	}
 	offset, limit := pageInfo.GetStartIdx(), pageInfo.GetPageSize()
-	if squareState != "" {
-		// Visibility depends on live channels and metadata rules. Filter the
-		// enriched candidate set before counting and paginating the results.
+	if filtered {
+		// Visibility depends on live channels and metadata rules, and pricing
+		// on the option maps. Filter the candidate set before counting and
+		// paginating the results.
 		offset, limit = 0, -1
 	}
 	search := model.SearchModels
@@ -51,24 +62,38 @@ func listModelsMeta(c *gin.Context, keyword, vendor string) {
 		common.ApiError(c, err)
 		return
 	}
+	if pricingMode != "" {
+		// Prices belong to concrete names; name-rule metadata has none.
+		names := make([]string, 0, len(modelsMeta))
+		for _, metadata := range modelsMeta {
+			names = append(names, metadata.ModelName)
+		}
+		modes, err := model.ModelPricingModes(names)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		modelsMeta = slices.DeleteFunc(modelsMeta, func(metadata *model.Model) bool {
+			return metadata.NameRule != model.NameRuleExact || modes[metadata.ModelName] != pricingMode
+		})
+	}
 	if err := enrichModels(modelsMeta); err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if squareState != "" {
-		filtered := make([]*model.Model, 0, len(modelsMeta))
-		for _, metadata := range modelsMeta {
-			if metadata.SquareState == squareState {
-				filtered = append(filtered, metadata)
-			}
+	if filtered {
+		if squareState != "" {
+			modelsMeta = slices.DeleteFunc(modelsMeta, func(metadata *model.Model) bool {
+				return metadata.SquareState != squareState
+			})
 		}
-		total = int64(len(filtered))
-		start := len(filtered)
-		if pageInfo.GetPage()-1 <= len(filtered)/pageInfo.GetPageSize() {
+		total = int64(len(modelsMeta))
+		start := len(modelsMeta)
+		if pageInfo.GetPage()-1 <= len(modelsMeta)/pageInfo.GetPageSize() {
 			start = (pageInfo.GetPage() - 1) * pageInfo.GetPageSize()
 		}
-		end := min(start+pageInfo.GetPageSize(), len(filtered))
-		modelsMeta = filtered[start:end]
+		end := min(start+pageInfo.GetPageSize(), len(modelsMeta))
+		modelsMeta = modelsMeta[start:end]
 	}
 
 	vendorCounts, _ := model.GetVendorModelCounts()

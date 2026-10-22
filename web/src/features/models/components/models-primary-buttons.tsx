@@ -16,13 +16,20 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Plus, MoreHorizontal, List, AlertCircle } from 'lucide-react'
+import {
+  AlertCircle,
+  ChevronDown,
+  List,
+  MoreHorizontal,
+  Plus,
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
@@ -60,13 +67,26 @@ export function ModelsPrimaryButtons() {
         {t('Sync metadata')}
       </Button>
       {canPrice && (
-        <Button
-          onClick={() => setOpen('price-sync')}
-          variant='outline'
-          size='sm'
-        >
-          {t('Sync pricing')}
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button variant='outline' size='sm' />}>
+            {t('Pricing')}
+            <ChevronDown data-icon='inline-end' />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align='end' className='w-60'>
+            <DropdownMenuGroup>
+              <DropdownMenuItem onClick={() => setOpen('legacy-conversion')}>
+                {t('Convert legacy prices')}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setOpen('price-sync')}>
+                {t('Sync upstream prices')}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setOpen('pricing-settings')}>
+                {t('Tool prices and price API')}
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
       {/* Create Model */}
       <Button onClick={handleCreateModel} size='sm'>

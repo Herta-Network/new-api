@@ -403,11 +403,9 @@ it('opens task expression pricing when only provider metadata supplies a schema'
       compatible: false,
     }))
   )
-  await waitFor(() =>
-    expect(screen.getByRole('tab', { name: 'Expression' })).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
-  )
-  expect(screen.getByRole('textbox', { name: 'seconds' })).toBeVisible()
+  expect(await screen.findByRole('textbox', { name: 'seconds' })).toBeVisible()
+  // A model without saved legacy prices offers no deprecated modes.
+  expect(
+    screen.queryByRole('tab', { name: 'Per-token (deprecated)' })
+  ).not.toBeInTheDocument()
 })

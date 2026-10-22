@@ -23,7 +23,12 @@ import { useTranslation } from 'react-i18next'
 
 import { DataTablePage, useDataTable } from '@/components/data-table'
 import { ErrorState } from '@/components/error-state'
-import { useModelPricing } from '@/features/model-pricing/api'
+import {
+  useCanEditModelPricing,
+  useModelPricing,
+  type ServerPricingMode,
+} from '@/features/model-pricing/api'
+import { SERVER_PRICING_MODE_LABELS } from '@/features/model-pricing/pricing-mode'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import {
@@ -44,6 +49,7 @@ const route = getRouteApi('/_authenticated/admin/models/$section')
 export function ModelsTable() {
   const { t } = useTranslation()
   const { selectedVendor } = useModels()
+  const canPrice = useCanEditModelPricing()
   const isMobile = useMediaQuery('(max-width: 640px)')
 
   // URL state management
@@ -68,6 +74,15 @@ export function ModelsTable() {
       { columnId: 'square_state', searchKey: 'square_state', type: 'array' },
       { columnId: 'vendor_id', searchKey: 'vendor', type: 'array' },
       { columnId: 'sync_official', searchKey: 'sync', type: 'array' },
+      ...(canPrice
+        ? [
+            {
+              columnId: 'billing_mode',
+              searchKey: 'pricing',
+              type: 'array' as const,
+            },
+          ]
+        : []),
     ],
   })
 
@@ -84,6 +99,11 @@ export function ModelsTable() {
   const syncFilter =
     (columnFilters.find((f) => f.id === 'sync_official')?.value as string[]) ||
     []
+  const pricingMode = (
+    columnFilters.find((f) => f.id === 'billing_mode')?.value as
+      | ServerPricingMode[]
+      | undefined
+  )?.[0]
 
   // Fetch vendors for filter
   const { data: vendorsData } = useQuery({
@@ -126,6 +146,7 @@ export function ModelsTable() {
     activeVendorFilter ||
     statusFilterValue ||
     squareState ||
+    pricingMode ||
     syncFilterValue
   )
 
@@ -138,6 +159,7 @@ export function ModelsTable() {
       vendor: activeVendorFilter,
       status: statusFilterValue,
       square_state: squareState,
+      pricing_mode: pricingMode,
       sync_official: syncFilterValue,
       p: pagination.pageIndex + 1,
       page_size: pagination.pageSize,
@@ -151,6 +173,7 @@ export function ModelsTable() {
             vendor: activeVendorFilter,
             status: statusFilterValue,
             square_state: squareState,
+            pricing_mode: pricingMode,
             sync_official: syncFilterValue,
             p: pagination.pageIndex + 1,
             page_size: pagination.pageSize,
@@ -277,6 +300,23 @@ export function ModelsTable() {
             ],
             singleSelect: true,
           },
+          ...(canPrice
+            ? [
+                {
+                  columnId: 'billing_mode',
+                  title: t('Billing mode'),
+                  options: (
+                    Object.keys(
+                      SERVER_PRICING_MODE_LABELS
+                    ) as ServerPricingMode[]
+                  ).map((mode) => ({
+                    label: t(SERVER_PRICING_MODE_LABELS[mode]),
+                    value: mode,
+                  })),
+                  singleSelect: true,
+                },
+              ]
+            : []),
           {
             columnId: 'vendor_id',
             title: t('Vendor'),

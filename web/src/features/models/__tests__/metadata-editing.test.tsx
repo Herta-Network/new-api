@@ -196,7 +196,7 @@ describe('model pricing entry', () => {
       screen.queryByRole('textbox', { name: 'Model name' })
     ).not.toBeInTheDocument()
     expect(screen.getByRole('complementary', { name: 'Preview' })).toBeVisible()
-    for (const tab of ['Model metadata', 'Channels and groups', 'Pricing']) {
+    for (const tab of ['Basic info', 'Channels and groups', 'Pricing']) {
       expect(screen.getByRole('tab', { name: tab })).toHaveClass(
         'min-w-0',
         'whitespace-normal'
@@ -209,7 +209,7 @@ describe('model pricing entry', () => {
     await user.click(screen.getByRole('button', { name: 'Close' }))
     await user.click(screen.getByRole('button', { name: 'Edit' }))
     expect(await screen.findByLabelText('Description')).toHaveValue('Original')
-    expect(screen.getByRole('tab', { name: 'Model metadata' })).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: 'Basic info' })).toHaveAttribute(
       'aria-selected',
       'true'
     )
@@ -514,7 +514,7 @@ describe('metadata editing', () => {
     await waitFor(() => expect(price).toHaveValue('1.5'))
     await user.clear(price)
     await user.type(price, '0')
-    await user.click(screen.getByRole('tab', { name: 'Model metadata' }))
+    await user.click(screen.getByRole('tab', { name: 'Basic info' }))
     expect(screen.getByLabelText('Description')).toHaveValue(
       'Unsaved metadata draft'
     )
@@ -560,7 +560,7 @@ describe('metadata editing', () => {
     expect(
       get.mock.calls.some(([url]) => url === '/api/option/model_pricing')
     ).toBe(true)
-    await user.click(screen.getByRole('tab', { name: 'Model metadata' }))
+    await user.click(screen.getByRole('tab', { name: 'Basic info' }))
     expect(screen.getByLabelText('Description')).toHaveValue(
       'Unsaved metadata draft'
     )

@@ -17,9 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { DescriptionDialog } from './dialogs/description-dialog'
+import { LegacyPricingConversionDialog } from './dialogs/legacy-pricing-conversion-dialog'
 import { MissingModelsDialog } from './dialogs/missing-models-dialog'
 import { PrefillGroupManagement } from './dialogs/prefill-group-management'
 import { PriceSyncDialog } from './dialogs/price-sync-dialog'
+import { PricingSettingsDialog } from './dialogs/pricing-settings-dialog'
 import { SyncWizardDialog } from './dialogs/sync-wizard-dialog'
 import { VendorMutateDialog } from './dialogs/vendor-mutate-dialog'
 import { ModelMutateDrawer } from './drawers/model-mutate-drawer'
@@ -39,6 +41,14 @@ export function ModelsDialogs() {
     <>
       <PriceSyncDialog
         open={open === 'price-sync'}
+        onOpenChange={(value) => !value && setOpen(null)}
+      />
+      <LegacyPricingConversionDialog
+        open={open === 'legacy-conversion'}
+        onOpenChange={(value) => !value && setOpen(null)}
+      />
+      <PricingSettingsDialog
+        open={open === 'pricing-settings'}
         onOpenChange={(value) => !value && setOpen(null)}
       />
       {/* Model Create/Update Drawer */}

@@ -61,12 +61,16 @@ export type ModelPricingPluginVariant = {
   stale?: boolean
 }
 
+/** The server's coarse classification; the editor splits expressions. */
+export type ServerPricingMode = 'expression' | 'task' | 'legacy' | 'unpriced'
+
 export type ModelPricingEntry = ModelPricingDescription & {
   plugin_variants?: ModelPricingPluginVariant[]
   model_name: string
   version: string
   configured: PricingValues
   usage_schema?: BillingUsageSchema
+  pricing_mode?: ServerPricingMode
 }
 
 export type ModelPricingConfig = {
@@ -98,6 +102,26 @@ export async function previewModelPricingConversion(request: {
     )
   }
   return response.data.data
+}
+
+export type LegacyPricingConversion = ModelPricingConversion & {
+  model_name: string
+  version: string
+  configured: PricingValues
+}
+
+/** Previews every legacy-priced workspace model; nothing is saved. */
+export async function previewLegacyPricingConversions(): Promise<
+  LegacyPricingConversion[]
+> {
+  const response = await api.post('/api/option/model_pricing/convert_legacy')
+  if (!response.data.success) {
+    throw createServerError(
+      response.data,
+      t('Failed to prepare pricing conversion')
+    )
+  }
+  return response.data.data.entries
 }
 
 export async function previewModelPricing(request: {
