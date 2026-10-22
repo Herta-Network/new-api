@@ -6,18 +6,21 @@
 // AGPL-3.0 of new-api, as GPL-3.0 section 13 permits.
 //
 // Changed in new-api: the protocol client and the gateway are one type; a
-// PaymentIntent enables automatic_payment_methods instead of naming one
-// payment method type, carries the newapi_order_no and newapi_method_id
-// metadata and the idempotency key newapi:pi:<order number>; no Stripe
-// customer or ephemeral key is created; a replayed creation is re-read so a
-// cancelled intent is never handed out again; events of other sites or
-// other payment methods on the same account are ignored; payment_failed and
-// canceled events are acknowledged as lifecycle events; ConfirmPayment
-// checks the status, AmountReceived, currency and metadata of the intent; a
-// processing intent is not cancelled; the webhook endpoint pins the SDK's
-// API version, subscribes to the canceled event as well, and its URL can be
-// updated in place; the configuration is validated when it is saved (key
-// prefixes, test or live mode on both keys).
+// PaymentIntent carries the newapi_order_no and newapi_method_id metadata
+// and the idempotency key newapi:pi:<order number>; no Stripe customer or
+// ephemeral key is created; a replayed creation is re-read so a cancelled
+// intent is never handed out again; events of other sites or other payment
+// methods on the same account are ignored; a succeeded intent of another
+// payment method type is reported as an unmatched payment instead of being
+// rejected; an intent created with automatic payment methods by earlier
+// versions of new-api still settles or closes but is never handed out
+// again; payment_failed and canceled events are acknowledged as lifecycle
+// events; ConfirmPayment checks the status, AmountReceived, currency,
+// metadata and payment method type of the intent; a processing intent is not
+// cancelled; the webhook endpoint pins the SDK's API version, subscribes to
+// the canceled event as well, and its URL can be updated in place; the
+// configuration is validated when it is saved (key prefixes, test or live
+// mode on both keys, the payment method type).
 
 package gateway
 
@@ -44,6 +47,18 @@ const (
 	stripeMetadataMethodID = "newapi_method_id"
 )
 
+// Stripe payment method types a payment method can collect, the ones ppanel
+// allows. Each Stripe payment method collects exactly one of them.
+const (
+	stripeTypeCard      = "card"
+	stripeTypeAlipay    = "alipay"
+	stripeTypeWechatPay = "wechat_pay"
+)
+
+var stripePaymentMethodTypes = []string{stripeTypeCard, stripeTypeAlipay, stripeTypeWechatPay}
+
+var errStripePaymentMethodType error = common.NewMessage("Select the Stripe payment method type: card, Alipay or WeChat Pay")
+
 // stripeWebhookEvents are the events a payment method's webhook endpoint
 // subscribes to.
 var stripeWebhookEvents = []string{
@@ -56,8 +71,11 @@ var stripeWebhookEvents = []string{
 // webhook fields are maintained by the server when it registers the
 // method's webhook endpoint; administrators never set them.
 type StripeConfig struct {
-	PublicKey         string `json:"public_key"`
-	SecretKey         string `json:"secret_key"`
+	PublicKey string `json:"public_key"`
+	SecretKey string `json:"secret_key"`
+	// PaymentMethodType is the one Stripe payment method type the method
+	// collects: card, alipay or wechat_pay.
+	PaymentMethodType string `json:"payment_method_type"`
 	WebhookEndpointID string `json:"webhook_endpoint_id"`
 	WebhookURL        string `json:"webhook_url"`
 	WebhookSecret     string `json:"webhook_secret"`
@@ -78,7 +96,7 @@ func openStripe(r *Registry, method Method) (Gateway, error) {
 	if err := common.UnmarshalJsonStr(method.Config, &config); err != nil {
 		return nil, fmt.Errorf("decode Stripe configuration: %w", err)
 	}
-	if config.PublicKey == "" || config.SecretKey == "" {
+	if config.PublicKey == "" || config.SecretKey == "" || !slices.Contains(stripePaymentMethodTypes, config.PaymentMethodType) {
 		return nil, errors.New("incomplete Stripe configuration")
 	}
 	return &stripeGateway{
@@ -89,7 +107,8 @@ func openStripe(r *Registry, method Method) (Gateway, error) {
 }
 
 // normalizeStripe requires a publishable key (pk_) and a secret or
-// restricted key (sk_, rk_) of the same mode, test or live.
+// restricted key (sk_, rk_) of the same mode, test or live, and one of the
+// payment method types.
 func normalizeStripe(raw []byte) (string, error) {
 	var config StripeConfig
 	if err := common.Unmarshal(raw, &config); err != nil {
@@ -107,6 +126,10 @@ func normalizeStripe(raw []byte) (string, error) {
 	}
 	if publicMode != secretMode {
 		return "", errors.New("the Stripe publishable and secret keys must both be test keys or both be live keys")
+	}
+	config.PaymentMethodType = strings.TrimSpace(config.PaymentMethodType)
+	if !slices.Contains(stripePaymentMethodTypes, config.PaymentMethodType) {
+		return "", errStripePaymentMethodType
 	}
 	content, err := common.Marshal(config)
 	return string(content), err
@@ -138,10 +161,10 @@ func (g *stripeGateway) roundCharge(c Charge) Charge {
 // registered when the payment method was saved.
 func (g *stripeGateway) NeedsNotifyURL(*Order) bool { return false }
 
-// StartPayment returns the client secret of the order's only PaymentIntent.
-// Reusing it is essential: accepting two client secrets would let a buyer
-// pay an older intent whose callback no longer matches the stored trade
-// number.
+// StartPayment returns the client secret of the order's only PaymentIntent
+// and the payment method type the client confirms it with. Reusing it is
+// essential: accepting two client secrets would let a buyer pay an older
+// intent whose callback no longer matches the stored trade number.
 func (g *stripeGateway) StartPayment(ctx context.Context, c Checkout) (*Action, error) {
 	var (
 		intent *stripe.PaymentIntent
@@ -157,7 +180,7 @@ func (g *stripeGateway) StartPayment(ctx context.Context, c Checkout) (*Action, 
 	}
 	return &Action{
 		Type:   ActionStripe,
-		Stripe: &StripeAction{PublishableKey: g.config.PublicKey, ClientSecret: intent.ClientSecret},
+		Stripe: &StripeAction{PublishableKey: g.config.PublicKey, ClientSecret: intent.ClientSecret, PaymentMethodType: g.config.PaymentMethodType},
 	}, nil
 }
 
@@ -169,11 +192,9 @@ func (g *stripeGateway) claimNewIntent(ctx context.Context, c Checkout) (*stripe
 		return nil, errors.New("invalid Stripe charge")
 	}
 	params := &stripe.PaymentIntentParams{
-		Amount:   stripe.Int64(toStripeAmount(c.Charge.Amount, c.Charge.Currency)),
-		Currency: stripe.String(strings.ToLower(c.Charge.Currency)),
-		AutomaticPaymentMethods: &stripe.PaymentIntentAutomaticPaymentMethodsParams{
-			Enabled: stripe.Bool(true),
-		},
+		Amount:             stripe.Int64(toStripeAmount(c.Charge.Amount, c.Charge.Currency)),
+		Currency:           stripe.String(strings.ToLower(c.Charge.Currency)),
+		PaymentMethodTypes: stripe.StringSlice([]string{g.config.PaymentMethodType}),
 		Metadata: map[string]string{
 			stripeMetadataOrderNo:  c.Order.OrderNo,
 			stripeMetadataMethodID: g.methodID,
@@ -212,11 +233,16 @@ func (g *stripeGateway) claimNewIntent(ctx context.Context, c Checkout) (*stripe
 }
 
 // payableIntent loads the order's intent before its client secret is handed
-// out again: it must still match the order and not be cancelled.
+// out again: it must still match the order, collect exactly the method's
+// payment method type, which the client's payment flow is built for, and
+// not be cancelled.
 func (g *stripeGateway) payableIntent(ctx context.Context, orderNo string, charge Charge, tradeNo string) (*stripe.PaymentIntent, error) {
 	intent, err := g.matchingIntent(ctx, orderNo, charge, tradeNo)
 	if err != nil {
 		return nil, err
+	}
+	if legacyStripeIntent(intent) {
+		return nil, errors.New("the Stripe payment intent of the order predates its payment method type")
 	}
 	if intent.Status == stripe.PaymentIntentStatusCanceled {
 		return nil, errors.New("the Stripe payment intent of the order is canceled")
@@ -225,8 +251,8 @@ func (g *stripeGateway) payableIntent(ctx context.Context, orderNo string, charg
 }
 
 // matchingIntent loads PaymentIntent tradeNo and checks that it was created
-// for the order by this payment method: same order number, method, amount
-// and currency.
+// for the order by this payment method: same order number, method, amount,
+// currency and payment method type.
 func (g *stripeGateway) matchingIntent(ctx context.Context, orderNo string, charge Charge, tradeNo string) (*stripe.PaymentIntent, error) {
 	if tradeNo == "" {
 		return nil, errors.New("the Stripe payment intent is missing")
@@ -241,7 +267,28 @@ func (g *stripeGateway) matchingIntent(ctx context.Context, orderNo string, char
 		intent.Amount != toStripeAmount(charge.Amount, charge.Currency) || !strings.EqualFold(string(intent.Currency), charge.Currency) {
 		return nil, errors.New("the Stripe payment intent does not match the order")
 	}
+	if !g.collectsType(intent) {
+		return nil, fmt.Errorf("the Stripe payment intent collects %s, not %s", strings.Join(intent.PaymentMethodTypes, ", "), g.config.PaymentMethodType)
+	}
 	return intent, nil
+}
+
+// collectsType reports whether intent collects the method's payment method
+// type and nothing else. An intent created before Stripe payment methods
+// collected one type let Stripe choose; it counts as the method's, so the
+// orders checked out before the upgrade still settle or close.
+func (g *stripeGateway) collectsType(intent *stripe.PaymentIntent) bool {
+	if legacyStripeIntent(intent) {
+		return true
+	}
+	return len(intent.PaymentMethodTypes) == 1 && intent.PaymentMethodTypes[0] == g.config.PaymentMethodType
+}
+
+// legacyStripeIntent reports an intent created with automatic payment
+// methods, as new-api did before each Stripe payment method collected one
+// payment method type.
+func legacyStripeIntent(intent *stripe.PaymentIntent) bool {
+	return intent.AutomaticPaymentMethods != nil && intent.AutomaticPaymentMethods.Enabled
 }
 
 func (g *stripeGateway) cancelIntent(ctx context.Context, tradeNo string) error {
@@ -326,7 +373,9 @@ func stripeVerdict(intent *stripe.PaymentIntent) (Reconciliation, bool) {
 // ParseCallback verifies the webhook signature. A succeeded PaymentIntent of
 // this payment method announces a payment and a failed or canceled one is a
 // lifecycle event; every other event, and every intent of another site or
-// payment method on the same account, is ignored.
+// payment method on the same account, is ignored. A succeeded intent that
+// collects another payment method type is authentic but does not settle the
+// order: the notice reports it unmatched.
 func (g *stripeGateway) ParseCallback(_ context.Context, n Notification) (*Notice, error) {
 	if g.config.WebhookSecret == "" {
 		return nil, errors.New("the Stripe webhook of the payment method is not registered")
@@ -363,7 +412,7 @@ func (g *stripeGateway) ParseCallback(_ context.Context, n Notification) (*Notic
 		amount = intent.AmountReceived
 	}
 	currency := strings.ToUpper(string(intent.Currency))
-	return &Notice{
+	notice := &Notice{
 		OrderNo:  orderNo,
 		TradeNo:  intent.ID,
 		Amount:   fromStripeAmount(amount, currency),
@@ -371,17 +420,23 @@ func (g *stripeGateway) ParseCallback(_ context.Context, n Notification) (*Notic
 		Paid:     paid,
 		Status:   string(event.Type),
 		Details:  map[string]string{"event_id": event.ID, "intent_status": string(intent.Status)},
-	}, nil
+	}
+	if paid && !g.collectsType(&intent) {
+		notice.Unmatched = fmt.Sprintf("the Stripe payment intent collected %s, not the payment method's %s",
+			strings.Join(intent.PaymentMethodTypes, ", "), g.config.PaymentMethodType)
+	}
+	return notice, nil
 }
 
 // CheckOrder has nothing to add: ParseCallback only accepts intents whose
-// metadata names this payment method, and the order is looked up by the
-// order number in the same metadata.
+// metadata names this payment method, the order is looked up by the order
+// number in the same metadata, and an intent of another payment method type
+// is reported unmatched rather than rejected, since its money arrived.
 func (g *stripeGateway) CheckOrder(*Order, *Notice) error { return nil }
 
 // ConfirmPayment re-reads the intent from Stripe: it must have succeeded,
-// still belong to the order and this payment method, and have received
-// exactly the recorded payment expectation.
+// still belong to the order and this payment method, collect its payment
+// method type, and have received exactly the recorded payment expectation.
 func (g *stripeGateway) ConfirmPayment(ctx context.Context, o *Order, notice *Notice) error {
 	charge := Charge{Amount: o.PaymentAmount, Currency: o.PaymentCurrency}
 	intent, err := g.matchingIntent(ctx, o.OrderNo, charge, notice.TradeNo)

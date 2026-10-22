@@ -146,7 +146,9 @@ export function paymentMethodFormDefaults(
   const config: Record<string, string> = {}
   for (const field of editablePaymentFields(fields)) {
     const value = method?.config[field.key]
-    config[field.key] = typeof value === 'string' ? value : ''
+    // A new method starts on the first choice of a select field.
+    const initial = method ? '' : (field.options?.[0]?.value ?? '')
+    config[field.key] = typeof value === 'string' ? value : initial
   }
   return {
     platform: method?.platform ?? platform,

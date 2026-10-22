@@ -31,8 +31,9 @@ func NotifyStyle(platform string) (gateway.CallbackStyle, bool) {
 // gateway.ErrInvalidCallback answers 400 because redelivering it cannot
 // succeed; any other error answers 500 so the gateway retries. A payment
 // the gateway proves but that cannot settle its order (another amount, a
-// second payment, a failed fulfilment) is recorded in payment_unmatched and
-// acknowledged, so the gateway does not retry it forever.
+// second payment, another payment method type, a failed fulfilment) is
+// recorded in payment_unmatched and acknowledged, so the gateway does not
+// retry it forever.
 func HandleNotify(ctx context.Context, platform, token string, n gateway.Notification, clientIp string) error {
 	method, err := model.GetPaymentMethodByToken(token)
 	if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && method.Platform != platform) {
@@ -112,6 +113,17 @@ func settleNotice(ctx context.Context, gw gateway.Gateway, method *model.Payment
 		return acknowledgeLifecycle(ctx, order, notice)
 	}
 	if (order.Status == model.PaymentOrderFinished || order.Status == model.PaymentOrderPaid) && order.TradeNo == notice.TradeNo {
+		return nil
+	}
+	if notice.Unmatched != "" {
+		if err := model.RecordPaymentUnmatched(&model.PaymentUnmatched{
+			Platform: order.Platform, TradeNo: notice.TradeNo, OrderNo: order.OrderNo, PaymentMethodId: order.PaymentMethodId,
+			UserId: order.UserId, Amount: notice.Amount, Currency: strings.ToUpper(notice.Currency), Reason: notice.Unmatched,
+		}); err != nil {
+			return err
+		}
+		logger.LogWarn(ctx, common.LogText("unmatched payment recorded: order=%s trade=%s amount=%d %s reason=%s",
+			order.OrderNo, notice.TradeNo, notice.Amount, notice.Currency, notice.Unmatched))
 		return nil
 	}
 	// Ask the gateway itself before money is credited, when the payment can

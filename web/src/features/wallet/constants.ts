@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { StripePaymentMethodType } from './types'
+
 // ============================================================================
 // Wallet Constants
 // ============================================================================
@@ -44,6 +46,24 @@ export const PAYMENT_PLATFORM_LABELS: Record<string, string> = {
  * Stripe brand color for its built-in icon
  */
 export const STRIPE_ICON_COLOR = '#635BFF'
+
+/**
+ * Brand colors of the icons of Stripe's Alipay and WeChat Pay methods
+ */
+export const ALIPAY_ICON_COLOR = '#1677FF'
+export const WECHAT_PAY_ICON_COLOR = '#07C160'
+
+/**
+ * Labels (i18n keys) of the payment method types a Stripe method collects
+ */
+export const STRIPE_PAYMENT_METHOD_TYPE_LABELS: Record<
+  StripePaymentMethodType,
+  string
+> = {
+  card: 'Card',
+  alipay: 'Alipay',
+  wechat_pay: 'WeChat Pay',
+}
 
 /**
  * Default discount rate (no discount)

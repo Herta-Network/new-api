@@ -9,7 +9,8 @@
 // are lowercase names; NormalizeConfig validates the configuration a
 // method is saved with (EPay endpoint and credentials, Stripe key prefixes
 // and mode, Cryptomus credentials) instead of only re-encoding it; the
-// field descriptions mark secret and server-managed fields; an injected HTTP
+// field descriptions mark secret and server-managed fields and can offer a
+// fixed set of choices (the Stripe payment method type); an injected HTTP
 // client also carries Stripe traffic; the registry builds the exchange-rate
 // client.
 
@@ -149,17 +150,32 @@ func (r *Registry) NormalizeConfig(platform string, raw []byte) (string, error) 
 	return spec.normalize(raw)
 }
 
+// FieldSelect is the type of a field whose value is one of its Options; a
+// field without a type is free text.
+const FieldSelect = "select"
+
 // Field describes one configuration field of a platform for the
 // administrator's form.
 type Field struct {
 	Key string `json:"key"`
 	// Label is English source text the frontend translates.
-	Label    string `json:"label"`
+	Label string `json:"label"`
+	// Type is FieldSelect or empty for a text field.
+	Type     string `json:"type,omitempty"`
 	Required bool   `json:"required"`
 	// Secret fields are never returned to the browser.
 	Secret bool `json:"secret"`
 	// Managed fields are maintained by the server and not edited.
 	Managed bool `json:"managed"`
+	// Options are the values a FieldSelect field takes, in display order.
+	Options []FieldOption `json:"options,omitempty"`
+}
+
+// FieldOption is one value of a FieldSelect field.
+type FieldOption struct {
+	Value string `json:"value"`
+	// Label is English source text the frontend translates.
+	Label string `json:"label"`
 }
 
 // PlatformInfo describes a gateway platform for the administrator.
@@ -190,6 +206,11 @@ func Platforms() []PlatformInfo {
 			Fields: []Field{
 				{Key: "public_key", Label: "Publishable key", Required: true},
 				{Key: "secret_key", Label: "Secret key", Required: true, Secret: true},
+				{Key: "payment_method_type", Label: "Payment method type", Type: FieldSelect, Required: true, Options: []FieldOption{
+					{Value: stripeTypeCard, Label: "Card"},
+					{Value: stripeTypeAlipay, Label: "Alipay"},
+					{Value: stripeTypeWechatPay, Label: "WeChat Pay"},
+				}},
 				{Key: "webhook_endpoint_id", Label: "Webhook endpoint ID", Managed: true},
 				{Key: "webhook_url", Label: "Webhook URL", Managed: true},
 				{Key: "webhook_secret", Label: "Webhook signing secret", Secret: true, Managed: true},

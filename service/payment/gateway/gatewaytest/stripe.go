@@ -4,9 +4,10 @@
 // The original is licensed under GPL-3.0 and is redistributed here under the
 // AGPL-3.0 of new-api, as GPL-3.0 section 13 permits.
 //
-// Changed in new-api: the fake answers automatic-payment-method intents
-// with newapi metadata, replays idempotent creations as Stripe does,
-// updates webhook endpoints, and refuses customer calls.
+// Changed in new-api: the fake answers intents with newapi metadata and the
+// payment method types they were created with, or automatic payment
+// methods when none were named, replays idempotent creations as Stripe
+// does, updates webhook endpoints, and refuses customer calls.
 
 // Package gatewaytest provides a fake Stripe API for tests of the payment
 // gateway and the payment service.
@@ -85,6 +86,13 @@ func (f *FakeStripe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Sscan(r.PostForm.Get("amount"), &amount)
 		intent := Intent(id, amount, r.PostForm.Get("currency"), "requires_payment_method",
 			r.PostForm.Get("metadata[newapi_order_no]"), r.PostForm.Get("metadata[newapi_method_id]"))
+		// Like Stripe, an intent that names no payment method types gets
+		// automatic payment methods.
+		if types := formList(r.PostForm, "payment_method_types"); len(types) > 0 {
+			intent["payment_method_types"] = types
+		} else {
+			LegacyIntent(intent)
+		}
 		f.intents[id] = intent
 		f.replays[key] = maps.Clone(intent)
 		f.write(w, intent)
@@ -147,6 +155,8 @@ func (f *FakeStripe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Intent is a card PaymentIntent of payment method methodID for orderNo; an
+// empty orderNo leaves the newapi metadata out.
 func Intent(id string, amount int64, currency, status, orderNo, methodID string) map[string]any {
 	metadata := map[string]string{}
 	if orderNo != "" {
@@ -155,9 +165,17 @@ func Intent(id string, amount int64, currency, status, orderNo, methodID string)
 	}
 	return map[string]any{
 		"id": id, "object": "payment_intent", "amount": amount, "amount_received": 0, "currency": currency,
-		"client_secret": id + "_secret", "status": status, "metadata": metadata,
-		"automatic_payment_methods": map[string]any{"enabled": true},
+		"client_secret": id + "_secret", "status": status, "metadata": metadata, "payment_method_types": []string{"card"},
 	}
+}
+
+// LegacyIntent turns intent into one created with automatic payment
+// methods, as new-api did before each Stripe payment method collected one
+// payment method type, and returns it.
+func LegacyIntent(intent map[string]any) map[string]any {
+	intent["payment_method_types"] = []string{"card", "link", "alipay"}
+	intent["automatic_payment_methods"] = map[string]any{"enabled": true, "allow_redirects": "always"}
+	return intent
 }
 
 func formList(form url.Values, name string) []string {

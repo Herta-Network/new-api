@@ -83,6 +83,9 @@ export type PaymentPurpose = 'topup' | 'subscription'
 
 export type PaymentPlatform = 'epay' | 'stripe' | 'cryptomus' | 'balance'
 
+/** The one Stripe payment method type a Stripe payment method collects. */
+export type StripePaymentMethodType = 'card' | 'alipay' | 'wechat_pay'
+
 /** A web console message: an English locale key plus its params. */
 export interface ServerMessage {
   key: string
@@ -115,6 +118,8 @@ export interface PaymentMethodOption {
   fee_fixed: number
   /** Currency the gateway collects */
   charge_currency: string
+  /** What a Stripe method collects; absent for other platforms */
+  payment_method_type?: StripePaymentMethodType
   available: boolean
   /** Why the method cannot take an order now */
   unavailable?: ServerMessage
@@ -155,6 +160,8 @@ export interface PaymentQuote {
 export interface StripeCheckout {
   publishable_key: string
   client_secret: string
+  /** Selects how the client confirms the intent */
+  payment_method_type: StripePaymentMethodType
 }
 
 /** How to pay an order: open a URL, confirm with Stripe.js, or nothing left to pay. */

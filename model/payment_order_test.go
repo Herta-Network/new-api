@@ -408,20 +408,57 @@ func TestCompletePaymentOrderManually(t *testing.T) {
 }
 
 // The payment tables migrate on a fresh database, a second startup changes
-// nothing, and one gateway payment can bind one order of its platform.
+// nothing, one gateway payment can bind one order of its platform, and the
+// Stripe methods of an upgraded database collect card payments.
 func TestPaymentSchemaMigration(t *testing.T) {
 	recorder := &migrationSQLRecorder{}
 	db := pgtest.NewSchemaDB(t).Session(&gorm.Session{Logger: recorder})
+	const untypedStripe = `{"public_key":"pk_live_a","secret_key":"sk_live_a","webhook_endpoint_id":"we_1","webhook_url":"https://pay.example/n","webhook_secret":"whsec_1"}`
 	for pass := range 2 {
 		recorder.reset()
 		require.NoError(t, db.AutoMigrate(&PaymentMethod{}, &PaymentOrder{}, &PaymentUnmatched{}, &PaymentExchangeRate{}))
 		require.NoError(t, ensureBalancePaymentMethod(db))
+		if pass == 0 {
+			// Methods saved before each Stripe method had one payment method
+			// type, one of them deleted, and one with a type already.
+			for _, method := range []PaymentMethod{
+				{Id: 2, Platform: "stripe", Token: "t2", Config: untypedStripe},
+				{Id: 3, Platform: "stripe", Token: "t3", Config: untypedStripe, DeletedAt: gorm.DeletedAt{Time: time.Now(), Valid: true}},
+				{Id: 4, Platform: "stripe", Token: "t4", Config: `{"public_key":"pk_test_a","secret_key":"sk_test_a","payment_method_type":"wechat_pay"}`},
+				{Id: 5, Platform: "epay", Token: "t5", Config: `{"url":"https://pay.example","pid":"1","key":"k","type":""}`},
+				{Id: 6, Platform: "stripe", Token: "t6", Config: ""},
+			} {
+				require.NoError(t, db.Create(&method).Error)
+			}
+		}
+		require.NoError(t, ensureStripePaymentMethodTypes(db))
 		if pass == 1 {
 			assert.Empty(t, recorder.schemaMutations(), "repeated startup must not change the schema")
+			for _, statement := range recorder.statements {
+				assert.NotContains(t, statement, `SET "config"`, "repeated startup must not rewrite a configuration")
+			}
 		}
 		// An administrator's choice survives the seed.
 		require.NoError(t, db.Model(&PaymentMethod{}).Where("id = ?", BalancePaymentMethodID).Update("enabled", false).Error)
 	}
+	configs := map[int]map[string]any{}
+	var methods []PaymentMethod
+	require.NoError(t, db.Unscoped().Where("id > 0").Find(&methods).Error)
+	for _, method := range methods {
+		var config map[string]any
+		_ = common.UnmarshalJsonStr(method.Config, &config)
+		configs[method.Id] = config
+	}
+	card := map[string]any{"public_key": "pk_live_a", "secret_key": "sk_live_a", "payment_method_type": "card",
+		"webhook_endpoint_id": "we_1", "webhook_url": "https://pay.example/n", "webhook_secret": "whsec_1"}
+	assert.Equal(t, map[int]map[string]any{
+		2: card,
+		3: card,
+		4: {"public_key": "pk_test_a", "secret_key": "sk_test_a", "payment_method_type": "wechat_pay"},
+		5: {"url": "https://pay.example", "pid": "1", "key": "k", "type": ""},
+		6: nil,
+	}, configs)
+
 	var balance PaymentMethod
 	require.NoError(t, db.Where("id = ?", BalancePaymentMethodID).First(&balance).Error)
 	assert.Equal(t, PaymentPlatformBalance, balance.Platform)

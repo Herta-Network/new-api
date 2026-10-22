@@ -349,6 +349,9 @@ func migrateDB() error {
 	if err := ensureBalancePaymentMethod(DB); err != nil {
 		return err
 	}
+	if err := ensureStripePaymentMethodTypes(DB); err != nil {
+		return err
+	}
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err
 	}

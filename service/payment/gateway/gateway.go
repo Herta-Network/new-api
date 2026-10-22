@@ -10,7 +10,9 @@
 // gateway returns an Action instead of the HTTP response DTO, the Payer and
 // the legacy system-currency fallback are gone (no Stripe customers, every
 // order records its payment expectation), ChargeFor takes the rate as a
-// decimal string, and notices carry plain string details for the log.
+// decimal string, notices carry plain string details for the log, and a
+// notice can report an authentic payment that must not settle its order as
+// unmatched.
 
 // Package gateway is the protocol layer of new-api payments. A Gateway
 // speaks one payment provider's protocol for one configured payment method:
@@ -113,6 +115,9 @@ type Action struct {
 type StripeAction struct {
 	PublishableKey string `json:"publishable_key"`
 	ClientSecret   string `json:"client_secret"`
+	// PaymentMethodType is the one Stripe payment method type the intent
+	// collects (card, alipay or wechat_pay); it selects the client's flow.
+	PaymentMethodType string `json:"payment_method_type"`
 }
 
 // CloseRequest asks whether a pending order may close locally.
@@ -170,6 +175,10 @@ type Notice struct {
 	// ManualReview marks a lifecycle event that needs an operator, such as
 	// an underpaid or frozen payment.
 	ManualReview bool
+	// Unmatched explains why an authentic payment must not settle the order,
+	// such as a Stripe intent of another payment method type. The payment is
+	// recorded for an operator and the callback acknowledged.
+	Unmatched string
 	// Details describe the callback in the log. ConfirmPayment may add to
 	// them.
 	Details map[string]string

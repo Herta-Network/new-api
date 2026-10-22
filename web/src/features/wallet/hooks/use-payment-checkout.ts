@@ -24,24 +24,29 @@ import { toast } from 'sonner'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { checkoutPaymentOrder, createPaymentOrder } from '../api'
-import type { CheckoutAction, PurchaseRequest } from '../types'
+import type {
+  CheckoutAction,
+  PurchaseRequest,
+  StripePaymentMethodType,
+} from '../types'
 import { paymentQueryKeys } from './use-payment-queries'
 
 // ============================================================================
 // Payment Checkout Hook
 // ============================================================================
 
-/** A Stripe PaymentIntent the buyer confirms in the Payment Element. */
+/** A Stripe PaymentIntent the buyer confirms in the flow of its payment method type. */
 export interface StripeSession {
   orderNo: string
   publishableKey: string
   clientSecret: string
+  paymentMethodType: StripePaymentMethodType
 }
 
 /**
  * Create orders and follow their checkout: a URL is opened in this tab, a
- * Stripe intent opens the Payment Element, and an order that needs no
- * payment (balance or free) goes straight to onSettling.
+ * Stripe intent opens the Stripe dialog, and an order that needs no payment
+ * (balance or free) goes straight to onSettling.
  */
 export function usePaymentCheckout(onSettling: (orderNo: string) => void) {
   const { t } = useTranslation()
@@ -61,6 +66,7 @@ export function usePaymentCheckout(onSettling: (orderNo: string) => void) {
             orderNo: checkout.order_no,
             publishableKey: checkout.stripe.publishable_key,
             clientSecret: checkout.stripe.client_secret,
+            paymentMethodType: checkout.stripe.payment_method_type,
           })
           return
         default:

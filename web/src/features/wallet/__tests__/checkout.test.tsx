@@ -32,32 +32,33 @@ import type {
   PaymentQuote,
 } from '../types'
 
-// Stripe.js is the external boundary: the Payment Element lives in Stripe's
-// iframe, so the test stands in for it and records the confirmation.
-const stripe = vi.hoisted(() => ({ confirmPayment: vi.fn() }))
+// Stripe.js is the external boundary: the card fields live in Stripe's
+// iframes and the confirmations talk to Stripe, so the test stands in for
+// them and records each confirmation.
+const stripe = vi.hoisted(() => ({
+  confirmCardPayment: vi.fn(),
+  confirmAlipayPayment: vi.fn(),
+  confirmWechatPayPayment: vi.fn(),
+}))
+const cardNumberElement = vi.hoisted(() => ({ element: 'cardNumber' }))
 
 vi.mock('@stripe/stripe-js', () => ({
   loadStripe: vi.fn(async () => stripe),
 }))
 
 vi.mock('@stripe/react-stripe-js', () => ({
-  // Like Stripe.js, refuse a malformed client secret while rendering.
-  Elements: (props: {
-    children: ReactNode
-    options: { clientSecret: string }
-  }) => {
-    if (!props.options.clientSecret.includes('_secret_')) {
-      throw new Error('Invalid value for elements(): clientSecret')
-    }
-    return props.children
-  },
-  PaymentElement: function PaymentElement(props: { onReady?: () => void }) {
+  Elements: (props: { children: ReactNode }) => props.children,
+  CardNumberElement: function CardNumberElement(props: {
+    onReady?: () => void
+  }) {
     const onReady = props.onReady
     useEffect(() => onReady?.(), [onReady])
-    return <div>Stripe Payment Element</div>
+    return <div>Stripe card number</div>
   },
+  CardExpiryElement: () => <div>Stripe card expiry</div>,
+  CardCvcElement: () => <div>Stripe card CVC</div>,
   useStripe: () => stripe,
-  useElements: () => ({ elements: 'stripe' }),
+  useElements: () => ({ getElement: () => cardNumberElement }),
 }))
 
 const info = {
@@ -91,7 +92,13 @@ function method(
 }
 
 const alipay = method(3, 'Alipay', 'epay', { charge_currency: 'CNY' })
-const card = method(4, 'Card', 'stripe')
+const card = method(4, 'Card', 'stripe', { payment_method_type: 'card' })
+const stripeAlipay = method(6, 'Stripe Alipay', 'stripe', {
+  payment_method_type: 'alipay',
+})
+const stripeWechat = method(7, 'Stripe WeChat', 'stripe', {
+  payment_method_type: 'wechat_pay',
+})
 const balance = method(-1, 'Balance', 'balance')
 
 const topupQuote: PaymentQuote = {
@@ -154,7 +161,8 @@ interface ServerFixture {
   quote?: PaymentQuote | Record<string, unknown>
   checkout?: CheckoutAction
   orders?: Record<string, PaymentOrder>
-  synced?: PaymentOrder
+  /** What asking the gateway answers, possibly later */
+  synced?: PaymentOrder | Promise<PaymentOrder>
 }
 
 /** Answer the wallet's requests from the fixture and record every POST. */
@@ -220,7 +228,7 @@ function mockServer(fixture: ServerFixture) {
       }
     }
     if (url.endsWith('/sync') && fixture.synced) {
-      return { data: { success: true, data: fixture.synced } }
+      return { data: { success: true, data: await fixture.synced } }
     }
     return { data: { success: false, message: 'unexpected request' } }
   })
@@ -251,8 +259,26 @@ function postsTo(post: ReturnType<typeof mockServer>, url: string) {
   return post.mock.calls.filter((call) => call[0] === url).map((c) => c[1])
 }
 
+function stripeCheckout(
+  orderNo: string,
+  clientSecret: string,
+  paymentMethodType: 'card' | 'alipay' | 'wechat_pay'
+): CheckoutAction {
+  return {
+    type: 'stripe',
+    stripe: {
+      publishable_key: 'pk_test_1',
+      client_secret: clientSecret,
+      payment_method_type: paymentMethodType,
+    },
+    order_no: orderNo,
+  }
+}
+
 beforeEach(() => {
-  stripe.confirmPayment.mockReset()
+  stripe.confirmCardPayment.mockReset()
+  stripe.confirmAlipayPayment.mockReset()
+  stripe.confirmWechatPayPayment.mockReset()
 })
 
 afterEach(() => {
@@ -342,18 +368,36 @@ it('shows why a quote failed and does not offer to pay', async () => {
   expect(screen.getByRole('button', { name: 'Pay' })).toBeDisabled()
 })
 
-it('confirms a Stripe checkout in the Payment Element and then shows the settled order', async () => {
-  stripe.confirmPayment.mockResolvedValue({
+it('names the payment method type of each Stripe method and shows its icon', async () => {
+  mockServer({
+    methods: { topup: [card, stripeAlipay, stripeWechat] },
+    quote: topupQuote,
+  })
+  renderWallet()
+
+  const alipayButton = await screen.findByRole('button', {
+    name: /Stripe Alipay/,
+  })
+  expect(alipayButton).toHaveTextContent('Stripe AlipayAlipay')
+  expect(
+    within(alipayButton).getByRole('img', { name: 'Alipay' })
+  ).toBeVisible()
+  const wechat = screen.getByRole('button', { name: /Stripe WeChat/ })
+  expect(wechat).toHaveTextContent('Stripe WeChatWeChat Pay')
+  expect(within(wechat).getByRole('img', { name: 'WeChat' })).toBeVisible()
+  expect(screen.getByRole('button', { name: /^Card/ })).toHaveTextContent(
+    'CardCard'
+  )
+})
+
+it('pays a card checkout in Stripe card fields with the cardholder name and then shows the settled order', async () => {
+  stripe.confirmCardPayment.mockResolvedValue({
     paymentIntent: { status: 'succeeded' },
   })
   const post = mockServer({
     methods: { topup: [card] },
     quote: { ...topupQuote, payment_amount: 1155, payment_currency: 'USD' },
-    checkout: {
-      type: 'stripe',
-      stripe: { publishable_key: 'pk_test_1', client_secret: 'pi_1_secret_a' },
-      order_no: 'P2',
-    },
+    checkout: stripeCheckout('P2', 'pi_1_secret_a', 'card'),
     orders: { P2: order('P2', 5) },
   })
   renderWallet()
@@ -362,14 +406,18 @@ it('confirms a Stripe checkout in the Payment Element and then shows the settled
     await screen.findByRole('button', { name: 'Pay $11.55' })
   )
   const dialog = await screen.findByRole('dialog', { name: 'Pay with Stripe' })
+  expect(within(dialog).getByText('Stripe card number')).toBeVisible()
+  await userEvent.type(
+    within(dialog).getByRole('textbox', { name: 'Cardholder name' }),
+    ' Ada Lovelace '
+  )
   await userEvent.click(within(dialog).getByRole('button', { name: 'Pay now' }))
 
-  expect(stripe.confirmPayment).toHaveBeenCalledWith({
-    elements: { elements: 'stripe' },
-    confirmParams: {
-      return_url: `${window.location.origin}/wallet?payment_order=P2`,
+  expect(stripe.confirmCardPayment).toHaveBeenCalledWith('pi_1_secret_a', {
+    payment_method: {
+      card: cardNumberElement,
+      billing_details: { name: 'Ada Lovelace' },
     },
-    redirect: 'if_required',
   })
   const result = await screen.findByRole('dialog', { name: 'Payment status' })
   expect(await within(result).findByText('Payment successful')).toBeVisible()
@@ -381,18 +429,11 @@ it('confirms a Stripe checkout in the Payment Element and then shows the settled
   ])
 })
 
-it('keeps the Stripe dialog open with the decline reason when the card is declined', async () => {
-  stripe.confirmPayment.mockResolvedValue({
-    error: { message: 'Your card was declined.' },
-  })
+it('asks for the cardholder name before confirming a card payment', async () => {
   mockServer({
     methods: { topup: [card] },
     quote: topupQuote,
-    checkout: {
-      type: 'stripe',
-      stripe: { publishable_key: 'pk_test_1', client_secret: 'pi_2_secret_b' },
-      order_no: 'P5',
-    },
+    checkout: stripeCheckout('P8', 'pi_8_secret_a', 'card'),
   })
   renderWallet()
 
@@ -402,24 +443,141 @@ it('keeps the Stripe dialog open with the decline reason when the card is declin
   const dialog = await screen.findByRole('dialog', { name: 'Pay with Stripe' })
   await userEvent.click(within(dialog).getByRole('button', { name: 'Pay now' }))
 
+  expect(within(dialog).getByText('Enter the cardholder name')).toBeVisible()
+  expect(
+    within(dialog).getByRole('textbox', { name: 'Cardholder name' })
+  ).toHaveAttribute('aria-invalid', 'true')
+  expect(stripe.confirmCardPayment).not.toHaveBeenCalled()
+})
+
+it('keeps the Stripe dialog open with the decline reason when the card is declined', async () => {
+  stripe.confirmCardPayment.mockResolvedValue({
+    error: { message: 'Your card was declined.' },
+  })
+  mockServer({
+    methods: { topup: [card] },
+    quote: topupQuote,
+    checkout: stripeCheckout('P5', 'pi_2_secret_b', 'card'),
+  })
+  renderWallet()
+
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Pay $11.55' })
+  )
+  const dialog = await screen.findByRole('dialog', { name: 'Pay with Stripe' })
+  await userEvent.type(
+    within(dialog).getByRole('textbox', { name: 'Cardholder name' }),
+    'Ada Lovelace'
+  )
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Pay now' }))
+
   expect(
     await within(dialog).findByText('Your card was declined.')
   ).toBeVisible()
+  expect(within(dialog).getByRole('button', { name: 'Pay now' })).toBeEnabled()
   expect(
     screen.queryByRole('dialog', { name: 'Payment status' })
   ).not.toBeInTheDocument()
 })
 
-it('keeps a client secret Stripe rejects inside the Stripe dialog', async () => {
-  vi.spyOn(console, 'error').mockImplementation(() => {})
-  mockServer({
-    methods: { topup: [card] },
-    quote: topupQuote,
-    checkout: {
-      type: 'stripe',
-      stripe: { publishable_key: 'pk_test_1', client_secret: 'malformed' },
-      order_no: 'P6',
+it('shows the Alipay QR code, offers to open it on this device and follows the order until it settles', async () => {
+  const redirect = 'https://pm-redirects.stripe.com/authorize/acct_1/pa_nonce_1'
+  stripe.confirmAlipayPayment.mockResolvedValue({
+    paymentIntent: {
+      status: 'requires_action',
+      next_action: {
+        type: 'alipay_handle_redirect',
+        alipay_handle_redirect: { url: redirect },
+      },
     },
+  })
+  let settle: (settled: PaymentOrder) => void = () => {}
+  mockServer({
+    methods: { topup: [stripeAlipay] },
+    quote: topupQuote,
+    checkout: stripeCheckout('P7', 'pi_7_secret_a', 'alipay'),
+    orders: { P7: order('P7', 1) },
+    synced: new Promise((resolve) => {
+      settle = resolve
+    }),
+  })
+  renderWallet()
+
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Pay $11.55' })
+  )
+  const dialog = await screen.findByRole('dialog', { name: 'Pay with Stripe' })
+  expect(
+    await within(dialog).findByRole('img', { name: 'Scan with Alipay to pay' })
+  ).toBeVisible()
+  expect(stripe.confirmAlipayPayment).toHaveBeenCalledTimes(1)
+  expect(stripe.confirmAlipayPayment).toHaveBeenCalledWith(
+    'pi_7_secret_a',
+    { return_url: `${window.location.origin}/wallet?payment_order=P7` },
+    { handleActions: false }
+  )
+  expect(
+    within(dialog).getByRole('button', { name: 'Open Alipay on this device' })
+  ).toHaveAttribute('href', redirect)
+
+  settle(order('P7', 5))
+  const result = await screen.findByRole('dialog', { name: 'Payment status' })
+  expect(await within(result).findByText('Payment successful')).toBeVisible()
+  expect(
+    screen.queryByRole('dialog', { name: 'Pay with Stripe' })
+  ).not.toBeInTheDocument()
+})
+
+it('shows the WeChat Pay QR image Stripe returns', async () => {
+  const image = 'data:image/png;base64,iVBORw0KGgo='
+  stripe.confirmWechatPayPayment.mockResolvedValue({
+    paymentIntent: {
+      status: 'requires_action',
+      next_action: {
+        type: 'wechat_pay_display_qr_code',
+        wechat_pay_display_qr_code: {
+          data: 'weixin://wxpay/bizpayurl?pr=1',
+          image_data_url: image,
+        },
+      },
+    },
+  })
+  mockServer({
+    methods: { topup: [stripeWechat] },
+    quote: topupQuote,
+    checkout: stripeCheckout('P9', 'pi_9_secret_a', 'wechat_pay'),
+    orders: { P9: order('P9', 1) },
+    synced: order('P9', 1),
+  })
+  renderWallet()
+
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Pay $11.55' })
+  )
+  const dialog = await screen.findByRole('dialog', { name: 'Pay with Stripe' })
+  expect(
+    await within(dialog).findByRole('img', { name: 'Scan with WeChat to pay' })
+  ).toHaveAttribute('src', image)
+  expect(stripe.confirmWechatPayPayment).toHaveBeenCalledWith(
+    'pi_9_secret_a',
+    { payment_method_options: { wechat_pay: { client: 'web' } } },
+    { handleActions: false }
+  )
+  expect(
+    within(dialog).queryByRole('button', { name: 'Open Alipay on this device' })
+  ).not.toBeInTheDocument()
+})
+
+it('keeps an error Stripe.js throws inside the Stripe dialog', async () => {
+  stripe.confirmWechatPayPayment.mockImplementation(() => {
+    throw new Error(
+      'IntegrationError: Invalid value for confirmWechatPayPayment: clientSecret'
+    )
+  })
+  mockServer({
+    methods: { topup: [stripeWechat] },
+    quote: topupQuote,
+    checkout: stripeCheckout('P6', 'malformed', 'wechat_pay'),
   })
   renderWallet()
 
@@ -429,7 +587,7 @@ it('keeps a client secret Stripe rejects inside the Stripe dialog', async () => 
   const dialog = await screen.findByRole('dialog', { name: 'Pay with Stripe' })
   expect(
     await within(dialog).findByText(
-      'The payment form could not be loaded. Try again later.'
+      'The payment could not be started. Try again later.'
     )
   ).toBeVisible()
   await userEvent.keyboard('{Escape}')
