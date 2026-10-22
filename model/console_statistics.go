@@ -501,9 +501,17 @@ func consoleUserPeriod(buckets consoleBuckets) (ConsoleUserPeriod, error) {
 		Group("bucket").Scan(&payers).Error; err != nil {
 		return ConsoleUserPeriod{}, err
 	}
-	firstPaid := gatewayPaidOrders().Select("user_id, min(" + paymentPaidTimeSQL + ") AS first_paid").Group("user_id")
+	// A payer of the period who paid nothing before it made their first
+	// payment at their earliest one in the period. Only the period's orders
+	// are grouped, and the earlier orders are looked up per payer.
+	firstPaid := gatewayPaidOrders().Select("user_id, min("+paymentPaidTimeSQL+") AS first_paid").
+		Where(paymentPaidInRangeSQL, start, end, start, end).
+		Group("user_id")
+	paidBefore := DB.Table("payment_orders AS earlier").Select("1").
+		Where("earlier.user_id = firsts.user_id AND earlier.status IN ? AND earlier.platform <> ?", paidPaymentStatuses, PaymentPlatformBalance).
+		Where("((earlier.paid_at > 0 AND earlier.paid_at < ?) OR (earlier.paid_at = 0 AND earlier.finished_at < ?))", start, start)
 	if err := DB.Table("(?) AS firsts", firstPaid).Select("? AS bucket, count(*) AS count", buckets.index("first_paid")).
-		Where("first_paid >= ? AND first_paid < ?", start, end).
+		Where("NOT EXISTS (?)", paidBefore).
 		Group("bucket").Scan(&firstPayers).Error; err != nil {
 		return ConsoleUserPeriod{}, err
 	}
