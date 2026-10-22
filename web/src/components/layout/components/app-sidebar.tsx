@@ -18,16 +18,26 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 
-import { Sidebar, SidebarContent, SidebarRail } from '@/components/ui/sidebar'
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarHeader,
+  SidebarRail,
+} from '@/components/ui/sidebar'
 import { useLayout } from '@/context/layout-provider'
 import { useSidebarView } from '@/hooks/use-sidebar-view'
 import { MOTION_TRANSITION, MOTION_VARIANTS } from '@/lib/motion'
+import { canUseAdminWorkspace } from '@/lib/workspace'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { NavGroup } from './nav-group'
 import { SidebarViewHeader } from './sidebar-view-header'
+import { WorkspaceSwitcher } from './workspace-switcher'
 
 /**
  * Application sidebar.
+ *
+ * Administrators get a workspace switcher at the top (user / admin).
  *
  * Adopts the Vercel / Cloudflare "drill-in" pattern: the URL drives
  * which sidebar *view* is rendered. Clicking a top-level entry like
@@ -46,10 +56,18 @@ import { SidebarViewHeader } from './sidebar-view-header'
 export function AppSidebar() {
   const { collapsible, variant } = useLayout()
   const { key, view, navGroups } = useSidebarView()
+  const canSwitchWorkspace = useAuthStore((state) =>
+    canUseAdminWorkspace(state.auth.user?.role)
+  )
   const shouldReduce = useReducedMotion()
 
   return (
     <Sidebar collapsible={collapsible} variant={variant}>
+      {canSwitchWorkspace && (
+        <SidebarHeader className='px-2 pt-2 pb-0'>
+          <WorkspaceSwitcher />
+        </SidebarHeader>
+      )}
       {view && <SidebarViewHeader view={view} />}
 
       <SidebarContent className='py-2'>

@@ -7318,6 +7318,11 @@
     "Use at most 255 characters": "最多 255 个字符",
     "Webhook outdated": "Webhook 待同步",
     "Webhook synced": "Webhook 已同步",
-    "Unresolved": "未处理"
+    "Unresolved": "未处理",
+    "User Console": "用户控制台",
+    "Admin Console": "管理控制台",
+    "Your keys, usage and billing": "个人密钥、用量与账单",
+    "Site operations and settings": "站点运营与设置",
+    "Switch console": "切换控制台"
   }
 }

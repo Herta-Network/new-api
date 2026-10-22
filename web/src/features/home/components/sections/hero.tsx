@@ -23,6 +23,8 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { useStatus } from '@/hooks/use-status'
+import { getWorkspaceLanding } from '@/lib/workspace'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { HeroTerminalDemo } from '../hero-terminal-demo'
 
@@ -47,6 +49,7 @@ const MoreIcon = () => (
 
 export function Hero(props: HeroProps) {
   const { t } = useTranslation()
+  const role = useAuthStore((state) => state.auth.user?.role)
   const { status } = useStatus()
   const docsUrl =
     (status?.docs_link as string | undefined) || 'https://docs.newapi.pro'
@@ -141,7 +144,7 @@ export function Hero(props: HeroProps) {
               <>
                 <Button
                   className='group h-11 rounded-lg px-5 text-sm font-medium'
-                  render={<Link to='/user/dashboard' />}
+                  render={<Link to={getWorkspaceLanding(role)} />}
                 >
                   {t('Go to Dashboard')}
                   <ArrowRight className='ml-1.5 size-4 transition-transform duration-200 group-hover:translate-x-0.5' />

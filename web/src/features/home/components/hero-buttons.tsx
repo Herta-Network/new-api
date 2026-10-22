@@ -21,6 +21,8 @@ import { ArrowRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { getWorkspaceLanding } from '@/lib/workspace'
+import { useAuthStore } from '@/stores/auth-store'
 
 interface HeroButtonsProps {
   isAuthenticated: boolean
@@ -31,9 +33,10 @@ interface HeroButtonsProps {
  */
 export function HeroButtons({ isAuthenticated }: HeroButtonsProps) {
   const { t } = useTranslation()
+  const role = useAuthStore((state) => state.auth.user?.role)
   if (isAuthenticated) {
     return (
-      <Button size='lg' render={<Link to='/user/dashboard' />}>
+      <Button size='lg' render={<Link to={getWorkspaceLanding(role)} />}>
         {t('Go to Dashboard')} <ArrowRight className='ml-2 h-5 w-5' />
       </Button>
     )

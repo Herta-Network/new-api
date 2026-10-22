@@ -19,12 +19,18 @@ For commercial licensing, please contact support@quantumnous.com
 import { isRedirect } from '@tanstack/react-router'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { removeCookie } from '@/lib/cookies'
 import { ROLE } from '@/lib/roles'
-import { getWorkspaceFromPathname } from '@/lib/workspace'
+import {
+  getWorkspaceFromPathname,
+  getWorkspaceLanding,
+  rememberWorkspace,
+} from '@/lib/workspace'
 import { Route as AdminWorkspaceRoute } from '@/routes/_authenticated/admin/route'
 import { useAuthStore } from '@/stores/auth-store'
 
 afterEach(() => {
+  removeCookie('console_workspace')
   useAuthStore.setState(useAuthStore.getInitialState(), true)
 })
 
@@ -48,6 +54,27 @@ describe('workspace of a path', () => {
     ['/', undefined],
   ])('reads %s as %s', (pathname, workspace) => {
     expect(getWorkspaceFromPathname(pathname)).toBe(workspace)
+  })
+})
+
+describe('landing after sign-in', () => {
+  it('returns administrators to the admin workspace they used last', () => {
+    rememberWorkspace('admin')
+    expect(getWorkspaceLanding(ROLE.ADMIN)).toBe('/admin')
+    expect(getWorkspaceLanding(ROLE.SUPER_ADMIN)).toBe('/admin')
+  })
+
+  it('opens the user workspace for administrators who used it last or never switched', () => {
+    expect(getWorkspaceLanding(ROLE.SUPER_ADMIN)).toBe('/user')
+    rememberWorkspace('admin')
+    rememberWorkspace('user')
+    expect(getWorkspaceLanding(ROLE.ADMIN)).toBe('/user')
+  })
+
+  it('always opens the user workspace for regular users', () => {
+    rememberWorkspace('admin')
+    expect(getWorkspaceLanding(ROLE.USER)).toBe('/user')
+    expect(getWorkspaceLanding(undefined)).toBe('/user')
   })
 })
 

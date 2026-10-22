@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { getCookie, setCookie } from '@/lib/cookies'
 import { ROLE } from '@/lib/roles'
 
 /**
@@ -39,6 +40,9 @@ export const WORKSPACE_HOME = {
   admin: '/admin',
 } as const satisfies Record<Workspace, string>
 
+const WORKSPACE_COOKIE_NAME = 'console_workspace'
+const WORKSPACE_COOKIE_MAX_AGE = 60 * 60 * 24 * 365 // 1 year
+
 export function getWorkspaceFromPathname(
   pathname: string
 ): Workspace | undefined {
@@ -48,4 +52,26 @@ export function getWorkspaceFromPathname(
 
 export function canUseAdminWorkspace(role: number | undefined): boolean {
   return (role ?? ROLE.GUEST) >= ROLE.ADMIN
+}
+
+export function rememberWorkspace(workspace: Workspace): void {
+  if (getCookie(WORKSPACE_COOKIE_NAME) === workspace) return
+  setCookie(WORKSPACE_COOKIE_NAME, workspace, WORKSPACE_COOKIE_MAX_AGE)
+}
+
+/**
+ * Where a signed-in user lands when nothing asked for a specific page:
+ * administrators return to the workspace they used last, everyone else goes
+ * to the user workspace.
+ */
+export function getWorkspaceLanding(
+  role: number | undefined
+): (typeof WORKSPACE_HOME)[Workspace] {
+  if (
+    canUseAdminWorkspace(role) &&
+    getCookie(WORKSPACE_COOKIE_NAME) === 'admin'
+  ) {
+    return WORKSPACE_HOME.admin
+  }
+  return WORKSPACE_HOME.user
 }

@@ -26,6 +26,7 @@ import { applyAuthBundle, isAuthBundle } from '@/lib/api'
 import { handleServerError } from '@/lib/handle-server-error'
 import { AuthOperationError } from '@/lib/secure-verification'
 import { createServerError } from '@/lib/server-error-message'
+import { getWorkspaceLanding } from '@/lib/workspace'
 
 function OAuthComponent() {
   const navigate = useNavigate()
@@ -45,7 +46,7 @@ function OAuthComponent() {
             applyAuthBundle(res.data)
             const target =
               sanitizeAuthRedirect(search?.redirect, window.location.origin) ??
-              '/user/dashboard'
+              getWorkspaceLanding(res.data.user.role)
             navigate({ href: target, replace: true })
             return
           }

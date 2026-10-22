@@ -7318,6 +7318,11 @@
     "Use at most 255 characters": "Не более 255 символов",
     "Webhook outdated": "Вебхук не синхронизирован",
     "Webhook synced": "Вебхук синхронизирован",
-    "Unresolved": "Не решено"
+    "Unresolved": "Не решено",
+    "User Console": "Консоль пользователя",
+    "Admin Console": "Консоль администратора",
+    "Your keys, usage and billing": "Ваши ключи, использование и оплата",
+    "Site operations and settings": "Управление сайтом и настройки",
+    "Switch console": "Сменить консоль"
   }
 }

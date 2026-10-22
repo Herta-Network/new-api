@@ -202,6 +202,12 @@ export const STATIC_I18N_KEYS = [
   'Docs',
   'About',
 
+  // Console workspace switcher (user / admin)
+  'User Console',
+  'Admin Console',
+  'Your keys, usage and billing',
+  'Site operations and settings',
+
   // Dashboard section titles
   'User Analytics',
   'Performance',

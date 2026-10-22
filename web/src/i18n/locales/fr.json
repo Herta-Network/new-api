@@ -7318,6 +7318,11 @@
     "Use at most 255 characters": "255 caractères maximum",
     "Webhook outdated": "Webhook à synchroniser",
     "Webhook synced": "Webhook synchronisé",
-    "Unresolved": "Non résolu"
+    "Unresolved": "Non résolu",
+    "User Console": "Console utilisateur",
+    "Admin Console": "Console d'administration",
+    "Your keys, usage and billing": "Vos clés, votre usage et votre facturation",
+    "Site operations and settings": "Exploitation et paramètres du site",
+    "Switch console": "Changer de console"
   }
 }

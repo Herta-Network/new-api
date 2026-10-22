@@ -40,94 +40,157 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import type { SidebarData } from '@/components/layout/types'
+import type { NavItem, SidebarData } from '@/components/layout/types'
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+  hasPermission,
+} from '@/lib/admin-permissions'
 import { ROLE } from '@/lib/roles'
+import type { Workspace } from '@/lib/workspace'
+import { useAuthStore } from '@/stores/auth-store'
 
 /**
- * Root navigation groups for the application sidebar.
+ * Root navigation groups of a workspace's sidebar.
  *
  * These are shown when the URL does not match any nested sidebar view
- * registered in `layout/lib/sidebar-view-registry.ts`.
+ * registered in `layout/lib/sidebar-view-registry.ts`. The user workspace
+ * holds the signed-in user's own pages; the admin workspace holds the
+ * site-wide views and the site administration pages.
  */
-export function useSidebarData(): SidebarData {
+export function useSidebarData(workspace: Workspace): SidebarData {
   const { t } = useTranslation()
+  const user = useAuthStore((state) => state.auth.user)
+
+  if (workspace === 'user') {
+    return {
+      navGroups: [
+        {
+          id: 'chat',
+          title: t('Chat'),
+          items: [
+            {
+              title: t('Playground'),
+              url: '/user/playground',
+              icon: FlaskConical,
+            },
+            {
+              title: t('Chat'),
+              icon: MessageSquare,
+              type: 'chat-presets',
+            },
+          ],
+        },
+        {
+          id: 'general',
+          title: t('General'),
+          items: [
+            {
+              title: t('Overview'),
+              url: '/user/dashboard/overview',
+              icon: Activity,
+            },
+            {
+              title: t('Dashboard'),
+              url: '/user/dashboard/models',
+              activeUrls: ['/user/dashboard/flow'],
+              icon: LayoutDashboard,
+            },
+            {
+              title: t('API Keys'),
+              url: '/user/keys',
+              icon: Key,
+            },
+            {
+              title: t('Usage Logs'),
+              url: '/user/usage-logs/common',
+              icon: FileText,
+            },
+            {
+              title: t('Audit Logs'),
+              url: '/user/usage-logs/audit',
+              icon: ClipboardList,
+            },
+            {
+              title: t('Task Logs'),
+              url: '/user/usage-logs/task',
+              activeUrls: ['/user/usage-logs/drawing'],
+              configUrls: ['/user/usage-logs/drawing', '/user/usage-logs/task'],
+              icon: ListTodo,
+            },
+          ],
+        },
+        {
+          id: 'personal',
+          title: t('Personal'),
+          items: [
+            {
+              title: t('Wallet'),
+              url: '/user/wallet',
+              icon: Wallet,
+            },
+            {
+              title: t('Profile'),
+              url: '/user/profile',
+              icon: User,
+            },
+            {
+              title: t('Security & Access'),
+              url: '/user/security',
+              icon: ShieldCheck,
+            },
+          ],
+        },
+      ],
+    }
+  }
+
+  const siteItems: NavItem[] = [
+    {
+      title: t('Dashboard'),
+      url: '/admin/dashboard/models',
+      activeUrls: [
+        '/admin/dashboard/flow',
+        '/admin/dashboard/users',
+        '/admin/dashboard/performance',
+      ],
+      icon: LayoutDashboard,
+    },
+    {
+      title: t('Usage Logs'),
+      url: '/admin/usage-logs/common',
+      icon: FileText,
+    },
+  ]
+  // Without the audit grant the page could only show the admin's own
+  // records, which the user workspace already lists.
+  if (
+    user &&
+    hasPermission(
+      user,
+      ADMIN_PERMISSION_RESOURCES.AUDIT,
+      ADMIN_PERMISSION_ACTIONS.READ
+    )
+  ) {
+    siteItems.push({
+      title: t('Audit Logs'),
+      url: '/admin/usage-logs/audit',
+      icon: ClipboardList,
+    })
+  }
+  siteItems.push({
+    title: t('Task Logs'),
+    url: '/admin/usage-logs/task',
+    activeUrls: ['/admin/usage-logs/drawing'],
+    icon: ListTodo,
+  })
 
   return {
     navGroups: [
       {
-        id: 'chat',
-        title: t('Chat'),
-        items: [
-          {
-            title: t('Playground'),
-            url: '/user/playground',
-            icon: FlaskConical,
-          },
-          {
-            title: t('Chat'),
-            icon: MessageSquare,
-            type: 'chat-presets',
-          },
-        ],
-      },
-      {
-        id: 'general',
+        id: 'site',
         title: t('General'),
-        items: [
-          {
-            title: t('Overview'),
-            url: '/user/dashboard/overview',
-            icon: Activity,
-          },
-          {
-            title: t('Dashboard'),
-            url: '/user/dashboard/models',
-            icon: LayoutDashboard,
-          },
-          {
-            title: t('API Keys'),
-            url: '/user/keys',
-            icon: Key,
-          },
-          {
-            title: t('Usage Logs'),
-            url: '/user/usage-logs/common',
-            icon: FileText,
-          },
-          {
-            title: t('Audit Logs'),
-            url: '/user/usage-logs/audit',
-            icon: ClipboardList,
-          },
-          {
-            title: t('Task Logs'),
-            url: '/user/usage-logs/task',
-            activeUrls: ['/user/usage-logs/drawing'],
-            configUrls: ['/user/usage-logs/drawing', '/user/usage-logs/task'],
-            icon: ListTodo,
-          },
-        ],
-      },
-      {
-        id: 'personal',
-        title: t('Personal'),
-        items: [
-          {
-            title: t('Wallet'),
-            url: '/user/wallet',
-            icon: Wallet,
-          },
-          {
-            title: t('Profile'),
-            url: '/user/profile',
-            icon: User,
-          },
-          {
-            title: t('Security & Access'),
-            url: '/user/security',
-            icon: ShieldCheck,
-          },
-        ],
+        items: siteItems,
       },
       {
         id: 'admin',

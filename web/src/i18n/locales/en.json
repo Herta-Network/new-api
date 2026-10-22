@@ -7318,6 +7318,11 @@
     "Use at most 255 characters": "Use at most 255 characters",
     "Webhook outdated": "Webhook outdated",
     "Webhook synced": "Webhook synced",
-    "Unresolved": "Unresolved"
+    "Unresolved": "Unresolved",
+    "User Console": "User Console",
+    "Admin Console": "Admin Console",
+    "Your keys, usage and billing": "Your keys, usage and billing",
+    "Site operations and settings": "Site operations and settings",
+    "Switch console": "Switch console"
   }
 }

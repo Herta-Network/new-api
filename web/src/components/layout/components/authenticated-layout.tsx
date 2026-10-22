@@ -16,6 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useLocation } from '@tanstack/react-router'
+import { useEffect } from 'react'
+
 import { CommandMenu } from '@/components/command-menu'
 import { AnimatedOutlet } from '@/components/page-transition'
 import { SkipToMain } from '@/components/skip-to-main'
@@ -24,6 +27,7 @@ import { LayoutProvider } from '@/context/layout-provider'
 import { SearchProvider } from '@/context/search-provider'
 import { getCookie } from '@/lib/cookies'
 import { cn } from '@/lib/utils'
+import { getWorkspaceFromPathname, rememberWorkspace } from '@/lib/workspace'
 
 import { AppHeader } from './app-header'
 import { AppSidebar } from './app-sidebar'
@@ -34,6 +38,13 @@ type AuthenticatedLayoutProps = {
 
 export function AuthenticatedLayout(props: AuthenticatedLayoutProps) {
   const defaultOpen = getCookie('sidebar_state') !== 'false'
+  const pathname = useLocation({ select: (location) => location.pathname })
+
+  // The next sign-in without a redirect target opens the workspace used last.
+  useEffect(() => {
+    const workspace = getWorkspaceFromPathname(pathname)
+    if (workspace) rememberWorkspace(workspace)
+  }, [pathname])
 
   return (
     <LayoutProvider>

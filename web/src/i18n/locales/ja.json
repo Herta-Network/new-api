@@ -7318,6 +7318,11 @@
     "Use at most 255 characters": "255 文字以内で入力してください",
     "Webhook outdated": "Webhook 未同期",
     "Webhook synced": "Webhook を同期しました",
-    "Unresolved": "未解決"
+    "Unresolved": "未解決",
+    "User Console": "ユーザーコンソール",
+    "Admin Console": "管理コンソール",
+    "Your keys, usage and billing": "自分のキー・利用状況・請求",
+    "Site operations and settings": "サイトの運用と設定",
+    "Switch console": "コンソールを切り替え"
   }
 }

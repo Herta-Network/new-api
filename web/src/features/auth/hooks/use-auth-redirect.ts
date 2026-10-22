@@ -27,6 +27,7 @@ import {
 import { changeInterfaceLanguage } from '@/i18n/locale-loader'
 import { applyAuthBundle, isAuthBundle } from '@/lib/api'
 import { AuthOperationError } from '@/lib/secure-verification'
+import { getWorkspaceLanding } from '@/lib/workspace'
 import { useAuthStore, type AuthBundle } from '@/stores/auth-store'
 
 import { isLoginChallenge } from '../secure-verification/api'
@@ -66,9 +67,11 @@ export function useAuthRedirect() {
         await changeInterfaceLanguage(i18n, savedLang)
       }
 
+      // An explicit redirect wins; otherwise administrators return to the
+      // workspace they used last and everyone else opens the user workspace.
       const targetPath =
         sanitizeAuthRedirect(redirectTo, window.location.origin) ??
-        '/user/dashboard'
+        getWorkspaceLanding(bundle.user.role)
       await navigate({ href: targetPath, replace: true })
     },
     [navigate, sessionID]

@@ -68,7 +68,11 @@ afterEach(() => {
   window.localStorage.clear()
 })
 
-async function searchEntriesFor(role: number, sidebarModulesAdmin = '') {
+async function searchEntriesFor(
+  role: number,
+  sidebarModulesAdmin = '',
+  path = '/user/dashboard/overview'
+) {
   useAuthStore.getState().auth.setUser({ id: 1, username: 'alice', role })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -85,9 +89,7 @@ async function searchEntriesFor(role: number, sidebarModulesAdmin = '') {
         </SearchProvider>
       ),
     }),
-    history: createMemoryHistory({
-      initialEntries: ['/user/dashboard/overview'],
-    }),
+    history: createMemoryHistory({ initialEntries: [path] }),
   })
   await router.load()
   render(
@@ -112,11 +114,21 @@ test('regular users only find their own console pages in search', async () => {
   }
 })
 
-test('admins find admin pages in search but not super admin pages', async () => {
-  const entries = await searchEntriesFor(ROLE.ADMIN)
+test('admins find admin pages in the admin workspace but not super admin pages', async () => {
+  const entries = await searchEntriesFor(ROLE.ADMIN, '', '/admin/channels')
 
   expect(entries).toEqual(expect.arrayContaining(adminEntries))
   for (const entry of superAdminEntries) {
+    expect(entries).not.toContain(entry)
+  }
+  expect(entries).not.toContain('Wallet')
+})
+
+test('admins in the user workspace only find their own console pages', async () => {
+  const entries = await searchEntriesFor(ROLE.SUPER_ADMIN)
+
+  expect(entries).toEqual(expect.arrayContaining(['API Keys', 'Wallet']))
+  for (const entry of [...adminEntries, ...superAdminEntries]) {
     expect(entries).not.toContain(entry)
   }
 })

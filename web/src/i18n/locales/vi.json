@@ -7318,6 +7318,11 @@
     "Use at most 255 characters": "Tối đa 255 ký tự",
     "Webhook outdated": "Webhook chưa đồng bộ",
     "Webhook synced": "Đã đồng bộ webhook",
-    "Unresolved": "Chưa xử lý"
+    "Unresolved": "Chưa xử lý",
+    "User Console": "Bảng điều khiển người dùng",
+    "Admin Console": "Bảng điều khiển quản trị",
+    "Your keys, usage and billing": "Khóa, mức sử dụng và thanh toán của bạn",
+    "Site operations and settings": "Vận hành và cài đặt trang",
+    "Switch console": "Chuyển bảng điều khiển"
   }
 }
