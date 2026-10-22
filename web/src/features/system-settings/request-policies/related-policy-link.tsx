@@ -36,7 +36,7 @@ export function RelatedPolicyLink(props: { section: 'routing' | 'health' }) {
   return (
     <Link
       className='text-primary ml-1 underline underline-offset-4'
-      to='/system-settings/request-policies/$section'
+      to='/admin/system-settings/request-policies/$section'
       params={{ section: props.section }}
     >
       {t('Request policies')}

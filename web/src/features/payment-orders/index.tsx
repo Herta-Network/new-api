@@ -30,11 +30,11 @@ import {
   type PaymentOrdersSectionId,
 } from './constants'
 
-const route = getRouteApi('/_authenticated/payment-orders/$section')
+const route = getRouteApi('/_authenticated/admin/payment-orders/$section')
 
 export function PaymentOrders() {
   const { t } = useTranslation()
-  const navigate = useNavigate({ from: '/payment-orders/$section' })
+  const navigate = useNavigate({ from: '/admin/payment-orders/$section' })
   const section = route.useParams().section as PaymentOrdersSectionId
 
   return (
@@ -46,7 +46,7 @@ export function PaymentOrders() {
             value={section}
             onValueChange={(value) =>
               void navigate({
-                to: '/payment-orders/$section',
+                to: '/admin/payment-orders/$section',
                 params: { section: value as PaymentOrdersSectionId },
                 search: (previous) => previous,
               })

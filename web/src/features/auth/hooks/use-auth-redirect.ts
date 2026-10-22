@@ -67,7 +67,8 @@ export function useAuthRedirect() {
       }
 
       const targetPath =
-        sanitizeAuthRedirect(redirectTo, window.location.origin) ?? '/dashboard'
+        sanitizeAuthRedirect(redirectTo, window.location.origin) ??
+        '/user/dashboard'
       await navigate({ href: targetPath, replace: true })
     },
     [navigate, sessionID]

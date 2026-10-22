@@ -30,7 +30,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { api } from '@/lib/api'
-import { Route as UsersRoute } from '@/routes/_authenticated/users/index'
+import { Route as UsersRoute } from '@/routes/_authenticated/admin/users/index'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { UsersProvider } from '../users-provider'
@@ -52,7 +52,7 @@ afterEach(() => {
   useAuthStore.getState().auth.reset()
 })
 
-async function renderUsers(initialEntry = '/users/') {
+async function renderUsers(initialEntry = '/admin/users/') {
   const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/group/') {
       return { data: { success: true, data: ['default', 'premium'] } }
@@ -83,7 +83,7 @@ async function renderUsers(initialEntry = '/users/') {
   const auth = createRoute({ getParentRoute: () => root, id: '_authenticated' })
   const users = createRoute({
     getParentRoute: () => auth,
-    path: 'users/',
+    path: 'admin/users/',
     validateSearch: UsersRoute.options.validateSearch,
     component: () => (
       <TooltipProvider>
@@ -146,7 +146,7 @@ it('searches only the selected user group and lists all users again after the fi
 })
 
 it('restores the user group filter from the page URL on load', async () => {
-  const { get } = await renderUsers('/users/?group=%5B%22premium%22%5D')
+  const { get } = await renderUsers('/admin/users/?group=%5B%22premium%22%5D')
 
   expect(get).toHaveBeenCalledWith(premiumSearchUrl)
   expect(get).not.toHaveBeenCalledWith('/api/user/', expect.anything())

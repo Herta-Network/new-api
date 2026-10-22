@@ -60,7 +60,7 @@ export function useSidebarData(): SidebarData {
         items: [
           {
             title: t('Playground'),
-            url: '/playground',
+            url: '/user/playground',
             icon: FlaskConical,
           },
           {
@@ -76,34 +76,34 @@ export function useSidebarData(): SidebarData {
         items: [
           {
             title: t('Overview'),
-            url: '/dashboard/overview',
+            url: '/user/dashboard/overview',
             icon: Activity,
           },
           {
             title: t('Dashboard'),
-            url: '/dashboard/models',
+            url: '/user/dashboard/models',
             icon: LayoutDashboard,
           },
           {
             title: t('API Keys'),
-            url: '/keys',
+            url: '/user/keys',
             icon: Key,
           },
           {
             title: t('Usage Logs'),
-            url: '/usage-logs/common',
+            url: '/user/usage-logs/common',
             icon: FileText,
           },
           {
             title: t('Audit Logs'),
-            url: '/usage-logs/audit',
+            url: '/user/usage-logs/audit',
             icon: ClipboardList,
           },
           {
             title: t('Task Logs'),
-            url: '/usage-logs/task',
-            activeUrls: ['/usage-logs/drawing'],
-            configUrls: ['/usage-logs/drawing', '/usage-logs/task'],
+            url: '/user/usage-logs/task',
+            activeUrls: ['/user/usage-logs/drawing'],
+            configUrls: ['/user/usage-logs/drawing', '/user/usage-logs/task'],
             icon: ListTodo,
           },
         ],
@@ -114,17 +114,17 @@ export function useSidebarData(): SidebarData {
         items: [
           {
             title: t('Wallet'),
-            url: '/wallet',
+            url: '/user/wallet',
             icon: Wallet,
           },
           {
             title: t('Profile'),
-            url: '/profile',
+            url: '/user/profile',
             icon: User,
           },
           {
             title: t('Security & Access'),
-            url: '/security',
+            url: '/user/security',
             icon: ShieldCheck,
           },
         ],
@@ -135,51 +135,51 @@ export function useSidebarData(): SidebarData {
         items: [
           {
             title: t('Channels'),
-            url: '/channels',
+            url: '/admin/channels',
             icon: Radio,
           },
           {
             title: t('Models'),
-            url: '/models/metadata',
+            url: '/admin/models/metadata',
             icon: Box,
           },
           {
             title: t('Users'),
-            url: '/users',
+            url: '/admin/users',
             icon: Users,
           },
           {
             title: t('Redemption Codes'),
-            url: '/redemption-codes',
+            url: '/admin/redemption-codes',
             icon: Ticket,
           },
           {
             title: t('Subscriptions'),
-            url: '/subscriptions',
+            url: '/admin/subscriptions',
             icon: CreditCard,
           },
           {
             title: t('Payment Orders'),
-            url: '/payment-orders/orders',
-            activeUrls: ['/payment-orders'],
+            url: '/admin/payment-orders/orders',
+            activeUrls: ['/admin/payment-orders'],
             icon: Receipt,
           },
           {
             title: t('System Info'),
-            url: '/system-info',
+            url: '/admin/system-info',
             icon: ServerCog,
             requiredRole: ROLE.SUPER_ADMIN,
           },
           {
             title: t('Task Plugins'),
-            url: '/task-plugins',
+            url: '/admin/task-plugins',
             icon: PlugZap,
             requiredRole: ROLE.SUPER_ADMIN,
           },
           {
             title: t('System Settings'),
-            url: '/system-settings/site',
-            activeUrls: ['/system-settings'],
+            url: '/admin/system-settings/site',
+            activeUrls: ['/admin/system-settings'],
             icon: Settings,
             requiredRole: ROLE.SUPER_ADMIN,
           },

@@ -38,7 +38,7 @@ import { formatOrderAmount, paymentPlatformLabel } from '../lib/format'
 import type { PaymentUnmatched } from '../types'
 import { PaymentNoteDialog } from './payment-note-dialog'
 
-const route = getRouteApi('/_authenticated/payment-orders/$section')
+const route = getRouteApi('/_authenticated/admin/payment-orders/$section')
 
 const paymentUnmatchedQueryKey = ['payment-unmatched'] as const
 

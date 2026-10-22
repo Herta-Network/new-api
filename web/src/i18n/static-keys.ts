@@ -202,6 +202,10 @@ export const STATIC_I18N_KEYS = [
   'Docs',
   'About',
 
+  // Dashboard section titles
+  'User Analytics',
+  'Performance',
+
   // Sidebar views (drill-in workspaces)
   'System Settings',
   'Back to Dashboard',

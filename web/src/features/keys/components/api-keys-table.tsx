@@ -64,7 +64,7 @@ import { useApiKeys } from './api-keys-provider'
 import { DataTableBulkActions } from './data-table-bulk-actions'
 import { DataTableRowActions } from './data-table-row-actions'
 
-const route = getRouteApi('/_authenticated/keys/')
+const route = getRouteApi('/_authenticated/user/keys/')
 const API_KEYS_COLUMN_VISIBILITY_STORAGE_KEY = 'api-keys:column-visibility'
 const API_KEYS_MOBILE_SKELETON_IDS = Array.from(
   { length: 5 },

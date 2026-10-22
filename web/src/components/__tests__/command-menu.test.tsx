@@ -85,7 +85,9 @@ async function searchEntriesFor(role: number, sidebarModulesAdmin = '') {
         </SearchProvider>
       ),
     }),
-    history: createMemoryHistory({ initialEntries: ['/dashboard/overview'] }),
+    history: createMemoryHistory({
+      initialEntries: ['/user/dashboard/overview'],
+    }),
   })
   await router.load()
   render(

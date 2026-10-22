@@ -17,22 +17,36 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 /* eslint-disable react-refresh/only-export-components */
+import { getRouteApi } from '@tanstack/react-router'
 import { createContext, useContext, useState, type ReactNode } from 'react'
 
 import { ROLE } from '@/lib/roles'
+import type { DataScope } from '@/lib/workspace'
 import { useAuthStore } from '@/stores/auth-store'
 
 import type { ChannelAffinityInfo } from '../types'
 
-export type LogsViewScope = 'all' | 'self'
 export type LogsViewAccess = 'self' | 'admin' | 'root'
 
 export function resolveLogsViewAccess(
   role: number,
-  viewScope: LogsViewScope
+  scope: DataScope
 ): LogsViewAccess {
-  if (viewScope !== 'all' || role < ROLE.ADMIN) return 'self'
+  if (scope !== 'site' || role < ROLE.ADMIN) return 'self'
   return role === ROLE.SUPER_ADMIN ? 'root' : 'admin'
+}
+
+const userUsageLogsRoute = getRouteApi(
+  '/_authenticated/user/usage-logs/$section'
+)
+
+// Both workspaces validate the same search schema, so the admin route is
+// read through the user route's types.
+const USAGE_LOGS_ROUTES: Record<DataScope, typeof userUsageLogsRoute> = {
+  self: userUsageLogsRoute,
+  site: getRouteApi(
+    '/_authenticated/admin/usage-logs/$section'
+  ) as unknown as typeof userUsageLogsRoute,
 }
 
 interface UsageLogsContextValue {
@@ -46,22 +60,23 @@ interface UsageLogsContextValue {
   setAffinityDialogOpen: (open: boolean) => void
   sensitiveVisible: boolean
   setSensitiveVisible: (visible: boolean) => void
-  viewScope: LogsViewScope
-  setViewScope: (scope: LogsViewScope) => void
+  scope: DataScope
 }
 
 const UsageLogsContext = createContext<UsageLogsContextValue | undefined>(
   undefined
 )
 
-export function UsageLogsProvider({ children }: { children: ReactNode }) {
+export function UsageLogsProvider(props: {
+  scope: DataScope
+  children: ReactNode
+}) {
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
   const [userInfoDialogOpen, setUserInfoDialogOpen] = useState(false)
   const [affinityTarget, setAffinityTarget] =
     useState<ChannelAffinityInfo | null>(null)
   const [affinityDialogOpen, setAffinityDialogOpen] = useState(false)
   const [sensitiveVisible, setSensitiveVisible] = useState(true)
-  const [viewScope, setViewScope] = useState<LogsViewScope>('all')
 
   return (
     <UsageLogsContext.Provider
@@ -76,11 +91,10 @@ export function UsageLogsProvider({ children }: { children: ReactNode }) {
         setAffinityDialogOpen,
         sensitiveVisible,
         setSensitiveVisible,
-        viewScope,
-        setViewScope,
+        scope: props.scope,
       }}
     >
-      {children}
+      {props.children}
     </UsageLogsContext.Provider>
   )
 }
@@ -94,27 +108,25 @@ export function useUsageLogsContext() {
 }
 
 /**
- * Resolves the effective admin scope for usage logs: whether the current
- * user is allowed to view all users' logs (`canManageScope`), and whether
- * their current view preference (`viewScope`) has that scope active
- * (`isAdminView`). Data fetching and admin-only UI should key off
- * `isAdminView` rather than raw role, so an admin who switches to "only
- * mine" is treated exactly like a regular user for that view.
+ * Resolves the effective scope of the usage logs page. The route decides the
+ * scope (`self` in the user workspace, `site` in the admin workspace); the
+ * role only narrows it, so data fetching and admin-only UI key off
+ * `isAdminView`, and an admin in the user workspace is treated exactly like
+ * a regular user.
  */
 export function useLogsViewScope() {
   const role = useAuthStore((state) => state.auth.user?.role ?? ROLE.GUEST)
-  const { viewScope, setViewScope } = useUsageLogsContext()
-  const canManageScope = role >= ROLE.ADMIN
-  const viewAccess = resolveLogsViewAccess(role, viewScope)
-  const isAdminView = viewAccess !== 'self'
-  const isRootView = viewAccess === 'root'
+  const { scope } = useUsageLogsContext()
+  const viewAccess = resolveLogsViewAccess(role, scope)
 
   return {
-    canManageScope,
-    viewScope,
-    setViewScope,
-    isAdminView,
-    isRootView,
+    isAdminView: viewAccess !== 'self',
+    isRootView: viewAccess === 'root',
     viewAccess,
   }
+}
+
+/** The usage logs route of the page's workspace, for its params and search. */
+export function useUsageLogsRoute() {
+  return USAGE_LOGS_ROUTES[useUsageLogsContext().scope]
 }

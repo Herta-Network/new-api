@@ -45,7 +45,7 @@ function OAuthComponent() {
             applyAuthBundle(res.data)
             const target =
               sanitizeAuthRedirect(search?.redirect, window.location.origin) ??
-              '/dashboard'
+              '/user/dashboard'
             navigate({ href: target, replace: true })
             return
           }

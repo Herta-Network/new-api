@@ -54,7 +54,6 @@ import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { getUserModels } from '@/lib/api'
 import { handleServerError } from '@/lib/handle-server-error'
 import { MOTION_TRANSITION } from '@/lib/motion'
-import { ROLE } from '@/lib/roles'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
@@ -66,7 +65,6 @@ import {
 import { AnnouncementsPanel } from './announcements-panel'
 import { ApiInfoPanel } from './api-info-panel'
 import { FAQPanel } from './faq-panel'
-import { PerformanceHealthPanel } from './performance-health-panel'
 import { SummaryCards } from './summary-cards'
 import { UptimePanel } from './uptime-panel'
 
@@ -85,11 +83,10 @@ const SETUP_GUIDE_CODE_PATTERN = [
 ].join('\n')
 
 type DashboardActionPath =
-  | '/keys'
-  | '/wallet'
-  | '/playground'
-  | '/channels'
-  | '/usage-logs'
+  | '/user/keys'
+  | '/user/wallet'
+  | '/user/playground'
+  | '/user/usage-logs'
   | '/pricing'
 
 interface StartStep {
@@ -105,7 +102,6 @@ interface QuickAction {
   description: string
   to: DashboardActionPath
   icon: LucideIcon
-  adminOnly?: boolean
 }
 
 interface RequestExample {
@@ -367,7 +363,7 @@ function RequestPreview(props: {
             {isCopying ? t('Loading') : t('Copy')}
           </Button>
         ) : (
-          <Button size='sm' variant='outline' render={<Link to='/keys' />}>
+          <Button size='sm' variant='outline' render={<Link to='/user/keys' />}>
             {t('Create API Key')}
           </Button>
         )}
@@ -479,7 +475,6 @@ export function OverviewDashboard() {
   const requestCount = Number(user?.request_count ?? 0)
   const remainQuota = Number(user?.quota ?? 0)
   const usedQuota = Number(user?.used_quota ?? 0)
-  const isAdmin = Boolean(user?.role && user.role >= ROLE.ADMIN)
 
   const apiKeysQuery = useQuery({
     queryKey: ['dashboard', 'overview', 'api-keys'],
@@ -509,21 +504,21 @@ export function OverviewDashboard() {
       {
         title: t('Create API Key'),
         description: t('Create a key for your app or service'),
-        to: '/keys',
+        to: '/user/keys',
         icon: KeyRound,
         completed: Boolean(preferredKey),
       },
       {
         title: t('Add credits'),
         description: t('Keep enough balance before production traffic'),
-        to: '/wallet',
+        to: '/user/wallet',
         icon: CreditCard,
         completed: remainQuota > 0 || usedQuota > 0,
       },
       {
         title: t('Send a request'),
         description: t('Verify routing with Playground or your client'),
-        to: '/playground',
+        to: '/user/playground',
         icon: TerminalSquare,
         completed: requestCount > 0,
       },
@@ -536,20 +531,13 @@ export function OverviewDashboard() {
       {
         title: t('API Keys'),
         description: t('Create a key for your app or service'),
-        to: '/keys',
+        to: '/user/keys',
         icon: KeyRound,
-      },
-      {
-        title: t('Channels'),
-        description: t('Configure upstream providers and routing.'),
-        to: '/channels',
-        icon: RadioTower,
-        adminOnly: true,
       },
       {
         title: t('Usage Logs'),
         description: t('Inspect requests, errors, and billing details'),
-        to: '/usage-logs',
+        to: '/user/usage-logs',
         icon: FileText,
       },
       {
@@ -560,11 +548,6 @@ export function OverviewDashboard() {
       },
     ],
     [t]
-  )
-
-  const visibleQuickActions = useMemo(
-    () => quickActions.filter((action) => !action.adminOnly || isAdmin),
-    [isAdmin, quickActions]
   )
 
   const heroSignals = useMemo<HeroSignal[]>(
@@ -615,7 +598,7 @@ export function OverviewDashboard() {
   const setupGuideExpanded =
     manualSetupGuideExpanded ?? (setupStatusReady && !setupComplete)
   const showLeftContentPanels =
-    isAdmin || showApiInfoPanel || showAnnouncementsPanel || showFAQPanel
+    showApiInfoPanel || showAnnouncementsPanel || showFAQPanel
   const showContentPanels = showLeftContentPanels || showUptimePanel
 
   const handleSetupGuideToggle = () => {
@@ -684,7 +667,7 @@ export function OverviewDashboard() {
                               <ChevronUp data-icon='inline-start' />
                               {t('Hide setup guide')}
                             </Button>
-                            <Button size='sm' render={<Link to='/keys' />}>
+                            <Button size='sm' render={<Link to='/user/keys' />}>
                               <KeyRound data-icon='inline-start' />
                               {t('Create API Key')}
                             </Button>
@@ -722,7 +705,7 @@ export function OverviewDashboard() {
                       </h3>
                     </div>
                     <div className='grid gap-2'>
-                      {visibleQuickActions.map((action) => (
+                      {quickActions.map((action) => (
                         <QuickActionItem key={action.title} action={action} />
                       ))}
                     </div>
@@ -763,7 +746,7 @@ export function OverviewDashboard() {
                     </div>
 
                     <div className='flex flex-wrap items-center gap-2'>
-                      {visibleQuickActions.map((action) => (
+                      {quickActions.map((action) => (
                         <CompactQuickAction
                           key={action.title}
                           action={action}
@@ -808,11 +791,6 @@ export function OverviewDashboard() {
                       'lg:grid-cols-2'
                   )}
                 >
-                  {isAdmin && (
-                    <CardStaggerItem className='lg:col-span-2'>
-                      <PerformanceHealthPanel />
-                    </CardStaggerItem>
-                  )}
                   {showApiInfoPanel && (
                     <CardStaggerItem>
                       <ApiInfoPanel />

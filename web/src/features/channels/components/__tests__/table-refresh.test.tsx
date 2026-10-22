@@ -106,7 +106,7 @@ async function renderChannelsPage(searchGate: () => Promise<void>) {
   const auth = createRoute({ getParentRoute: () => root, id: '_authenticated' })
   const channelsRoute = createRoute({
     getParentRoute: () => auth,
-    path: 'channels/',
+    path: 'admin/channels/',
     component: () => (
       <ChannelsProvider>
         <ChannelsTable />
@@ -114,7 +114,7 @@ async function renderChannelsPage(searchGate: () => Promise<void>) {
     ),
   })
   const initialEntry =
-    '/channels/?filter=prod&group=%5B%22vip%22%5D&status=%5B%22enabled%22%5D&model=gpt-4o'
+    '/admin/channels/?filter=prod&group=%5B%22vip%22%5D&status=%5B%22enabled%22%5D&model=gpt-4o'
   const router = createRouter({
     routeTree: root.addChildren([auth.addChildren([channelsRoute])]),
     history: createMemoryHistory({ initialEntries: [initialEntry] }),

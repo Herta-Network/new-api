@@ -47,7 +47,7 @@ function FilterFixture() {
     getCoreRowModel: getCoreRowModel(),
   })
   return (
-    <UsageLogsProvider>
+    <UsageLogsProvider scope='self'>
       <CommonLogsFilterBar table={table} />
     </UsageLogsProvider>
   )
@@ -64,13 +64,15 @@ async function renderFilter() {
   const auth = createRoute({ getParentRoute: () => root, id: '_authenticated' })
   const logs = createRoute({
     getParentRoute: () => auth,
-    path: '/usage-logs/$section',
+    path: '/user/usage-logs/$section',
     component: FilterFixture,
     validateSearch: (search: Record<string, unknown>) => search,
   })
   const router = createRouter({
     routeTree: root.addChildren([auth.addChildren([logs])]),
-    history: createMemoryHistory({ initialEntries: ['/usage-logs/common'] }),
+    history: createMemoryHistory({
+      initialEntries: ['/user/usage-logs/common'],
+    }),
   })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },

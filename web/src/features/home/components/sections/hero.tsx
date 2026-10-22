@@ -141,7 +141,7 @@ export function Hero(props: HeroProps) {
               <>
                 <Button
                   className='group h-11 rounded-lg px-5 text-sm font-medium'
-                  render={<Link to='/dashboard' />}
+                  render={<Link to='/user/dashboard' />}
                 >
                   {t('Go to Dashboard')}
                   <ArrowRight className='ml-1.5 size-4 transition-transform duration-200 group-hover:translate-x-0.5' />

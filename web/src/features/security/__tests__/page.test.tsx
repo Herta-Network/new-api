@@ -111,7 +111,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function renderPage(path = '/security') {
+async function renderPage(path = '/user/security') {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -134,12 +134,12 @@ async function renderPage(path = '/security') {
   const root = createRootRoute()
   const security = createRoute({
     getParentRoute: () => root,
-    path: '/security',
+    path: '/user/security',
     component: Security,
   })
   const personal = createRoute({
     getParentRoute: () => root,
-    path: '/profile',
+    path: '/user/profile',
     component: Profile,
   })
   const router = createRouter({
@@ -244,7 +244,7 @@ describe('security page migration', () => {
   })
 
   it('Profile retains preferences and no longer mounts security controls or requests', async () => {
-    await renderPage('/profile')
+    await renderPage('/user/profile')
     await waitFor(() =>
       expect(
         screen.getByRole('button', { name: 'Save Settings' })

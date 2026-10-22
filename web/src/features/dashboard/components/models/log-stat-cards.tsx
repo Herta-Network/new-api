@@ -36,9 +36,10 @@ import { toIntlLocale } from '@/i18n/languages'
 import { formatCompactNumber, formatNumber, formatQuota } from '@/lib/format'
 import { computeTimeRange } from '@/lib/time'
 import { cn } from '@/lib/utils'
-import { useAuthStore } from '@/stores/auth-store'
+import type { DataScope } from '@/lib/workspace'
 
 interface LogStatCardsProps {
+  scope: DataScope
   filters?: DashboardFilters
   onDataUpdate?: (data: QuotaDataItem[], loading: boolean) => void
 }
@@ -61,8 +62,6 @@ function formatStatNumber(value: number, locale: Intl.LocalesArgument) {
 export function LogStatCards(props: LogStatCardsProps) {
   const { i18n } = useTranslation()
   const statCardsConfig = useModelStatCardsConfig()
-  const user = useAuthStore((state) => state.auth.user)
-  const isAdmin = !!(user?.role && user.role >= 10)
   const [stats, setStats] = useState<ReturnType<
     typeof calculateDashboardStats
   > | null>(null)
@@ -71,7 +70,7 @@ export function LogStatCards(props: LogStatCardsProps) {
 
   const [timeRangeMinutes, setTimeRangeMinutes] = useState(0)
 
-  const { filters, onDataUpdate } = props
+  const { scope, filters, onDataUpdate } = props
 
   useEffect(() => {
     const abortController = new AbortController()
@@ -89,7 +88,7 @@ export function LogStatCards(props: LogStatCardsProps) {
     const timeDiff = (timeRange.end_timestamp - timeRange.start_timestamp) / 60
     setTimeRangeMinutes(timeDiff)
 
-    void getUserQuotaDates(buildQueryParams(timeRange, filters), isAdmin)
+    void getUserQuotaDates(buildQueryParams(timeRange, filters), scope)
       .then((res) => {
         if (abortController.signal.aborted) return
         const data = res?.data || []
@@ -111,7 +110,7 @@ export function LogStatCards(props: LogStatCardsProps) {
     return () => {
       abortController.abort()
     }
-  }, [filters, isAdmin, onDataUpdate])
+  }, [filters, scope, onDataUpdate])
 
   const adaptedStats = {
     rpm: stats?.totalCount ?? 0,
