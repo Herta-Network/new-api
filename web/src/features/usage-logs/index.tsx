@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -25,13 +24,13 @@ import type { NavGroup } from '@/components/layout/types'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { CacheStatsDialog } from '@/features/system-settings/general/channel-affinity/cache-stats-dialog'
 import { useSidebarConfig } from '@/hooks/use-sidebar-config'
+import { type DataScope, WORKSPACE_HOME } from '@/lib/workspace'
 
 import { UserInfoDialog } from './components/dialogs/user-info-dialog'
 import {
-  type LogsViewScope,
   UsageLogsProvider,
-  useLogsViewScope,
   useUsageLogsContext,
+  useUsageLogsRoute,
 } from './components/usage-logs-provider'
 import { UsageLogsTable } from './components/usage-logs-table'
 import {
@@ -40,7 +39,6 @@ import {
   type UsageLogsSectionId,
 } from './section-registry'
 
-const route = getRouteApi('/_authenticated/usage-logs/$section')
 const TASK_LOG_SECTIONS = ['drawing', 'task'] as const
 
 const SECTION_META: Record<UsageLogsSectionId, { titleKey: string }> = {
@@ -57,7 +55,8 @@ const SECTION_META: Record<UsageLogsSectionId, { titleKey: string }> = {
 
 function UsageLogsContent() {
   const { t } = useTranslation()
-  const navigate = useNavigate()
+  const route = useUsageLogsRoute()
+  const navigate = route.useNavigate()
   const params = route.useParams()
   const activeCategory: UsageLogsSectionId =
     params.section && isUsageLogsSectionId(params.section)
@@ -71,14 +70,15 @@ function UsageLogsContent() {
     affinityDialogOpen,
     setAffinityDialogOpen,
   } = useUsageLogsContext()
-  const { canManageScope, viewScope, setViewScope } = useLogsViewScope()
+  // Both workspaces show the task log tabs the sidebar module toggles allow
+  // for the user workspace's task log entries.
   const tabNavGroups = useMemo<NavGroup[]>(
     () => [
       {
         title: 'Task Logs',
         items: TASK_LOG_SECTIONS.map((section) => ({
           title: SECTION_META[section].titleKey,
-          url: `/usage-logs/${section}`,
+          url: `${WORKSPACE_HOME.user}/usage-logs/${section}`,
         })),
       },
     ],
@@ -101,20 +101,10 @@ function UsageLogsContent() {
   const handleSectionChange = useCallback(
     (section: string) => {
       void navigate({
-        to: '/usage-logs/$section',
         params: { section: section as UsageLogsSectionId },
       })
     },
     [navigate]
-  )
-
-  const handleViewScopeChange = useCallback(
-    (scope: string) => {
-      if (scope === 'all' || scope === 'self') {
-        setViewScope(scope as LogsViewScope)
-      }
-    },
-    [setViewScope]
   )
 
   const pageMeta =
@@ -128,16 +118,6 @@ function UsageLogsContent() {
         <SectionPageLayout.Title>
           {t(pageMeta.titleKey)}
         </SectionPageLayout.Title>
-        <SectionPageLayout.Actions>
-          {canManageScope && (
-            <Tabs value={viewScope} onValueChange={handleViewScopeChange}>
-              <TabsList>
-                <TabsTrigger value='all'>{t('All')}</TabsTrigger>
-                <TabsTrigger value='self'>{t('Only Mine')}</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          )}
-        </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
           <div className='flex h-full min-h-0 flex-col gap-4'>
             {showTaskSwitcher && (
@@ -185,9 +165,9 @@ function UsageLogsContent() {
   )
 }
 
-export function UsageLogs() {
+export function UsageLogs(props: { scope: DataScope }) {
   return (
-    <UsageLogsProvider>
+    <UsageLogsProvider scope={props.scope}>
       <UsageLogsContent />
     </UsageLogsProvider>
   )

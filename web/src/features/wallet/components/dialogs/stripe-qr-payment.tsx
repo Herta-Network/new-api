@@ -75,7 +75,7 @@ export function StripeQrPayment(props: StripeQrPaymentProps) {
           ? await props.stripe.confirmAlipayPayment(
               session.clientSecret,
               {
-                return_url: `${window.location.origin}/wallet?payment_order=${encodeURIComponent(session.orderNo)}`,
+                return_url: `${window.location.origin}/user/wallet?payment_order=${encodeURIComponent(session.orderNo)}`,
               },
               { handleActions: false }
             )

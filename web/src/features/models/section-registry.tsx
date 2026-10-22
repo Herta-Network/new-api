@@ -48,7 +48,7 @@ const modelsRegistry = createSectionRegistry<
 >({
   sections: MODELS_SECTIONS,
   defaultSection: 'metadata',
-  basePath: '/models',
+  basePath: '/admin/models',
   urlStyle: 'path',
 })
 

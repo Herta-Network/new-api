@@ -12,5 +12,5 @@ func TestPaymentReturnURLUsesSuppliedDefaultDashboardPath(t *testing.T) {
 	system_setting.ServerAddress = "https://dashboard.example.com/"
 	t.Cleanup(func() { system_setting.ServerAddress = previousAddress })
 
-	assert.Equal(t, "https://dashboard.example.com/wallet", PaymentReturnURL("/wallet"))
+	assert.Equal(t, "https://dashboard.example.com/user/wallet", PaymentReturnURL("/user/wallet"))
 }

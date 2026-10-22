@@ -92,11 +92,14 @@ import { computeTimeRange } from '@/lib/time'
 import { useChartTheme } from '@/lib/use-chart-theme'
 import { cn } from '@/lib/utils'
 import { VCHART_OPTION } from '@/lib/vchart'
+import type { DataScope } from '@/lib/workspace'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { FlowNodeFilterControl } from './flow-node-filter'
 
 interface FlowChartsProps {
+  /** `site` shows every user's traffic; root also sees channel stages. */
+  scope: DataScope
   filters?: DashboardFilters
   // When false, sensitive node labels are masked in the rendered Sankey.
   sensitiveVisible?: boolean
@@ -259,14 +262,11 @@ export function FlowCharts(props: FlowChartsProps) {
   const { resolvedTheme, themeReady } = useChartTheme()
   const textColor = useThemeColor('--foreground')
   const chartInstanceRef = useRef<IVChart | null>(null)
-  const user = useAuthStore((state) => state.auth.user)
-  const isRoot = Boolean(user?.role && user.role >= ROLE.SUPER_ADMIN)
-  const isAdmin = Boolean(user?.role && user.role >= ROLE.ADMIN)
+  const userRole = useAuthStore((state) => state.auth.user?.role)
+  const isSiteScope = props.scope === 'site'
   let flowRole: FlowRole = 'user'
-  if (isRoot) {
-    flowRole = 'root'
-  } else if (isAdmin) {
-    flowRole = 'admin'
+  if (isSiteScope) {
+    flowRole = userRole === ROLE.SUPER_ADMIN ? 'root' : 'admin'
   }
   const [metric, setMetric] = useState<FlowMetric>('quota')
   const [topNodeLimit, setTopNodeLimit] = useState(DEFAULT_FLOW_TOP_NODE_LIMIT)
@@ -340,7 +340,9 @@ export function FlowCharts(props: FlowChartsProps) {
   } = useQuery({
     queryKey: ['dashboard', 'flow', flowQueryParams, flowRole],
     queryFn: async () =>
-      requireServerSuccess(await getFlowQuotaDates(flowQueryParams, isAdmin)),
+      requireServerSuccess(
+        await getFlowQuotaDates(flowQueryParams, props.scope)
+      ),
     select: (res) =>
       requireSuccessfulFlowRows(res, t('Please try again later.')),
     staleTime: 60_000,
@@ -653,7 +655,7 @@ export function FlowCharts(props: FlowChartsProps) {
         </div>
 
         <div className='flex min-w-0 items-center gap-2 xl:justify-end'>
-          {isAdmin && (
+          {isSiteScope && (
             <div className='flex min-w-0 flex-col gap-2 sm:flex-row xl:w-[min(24rem,34vw)]'>
               <MultiSelect
                 options={userFilterOptions}

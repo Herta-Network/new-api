@@ -820,6 +820,16 @@ func TestDeclarativeRouteValidationProtectsNamespacesAndCanonicalSyntax(t *testi
 			expectedError: "reserved namespace /console",
 		},
 		{
+			name:          "admin console workspace",
+			route:         Route{Method: "POST", Path: "/admin/jobs", Type: RouteTypeSubmit},
+			expectedError: "reserved namespace /admin",
+		},
+		{
+			name:          "moved console page kept reserved",
+			route:         Route{Method: "POST", Path: "/wallet/jobs", Type: RouteTypeSubmit},
+			expectedError: "reserved namespace /wallet",
+		},
+		{
 			name:          "dynamic root can claim reserved subtree",
 			route:         Route{Method: "POST", Path: "/:root/jobs", Type: RouteTypeSubmit},
 			expectedError: "intersects reserved namespace",

@@ -25,35 +25,25 @@ import {
   RouterProvider,
 } from '@tanstack/react-router'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
+import type { DataScope } from '@/lib/workspace'
 import { useAuthStore } from '@/stores/auth-store'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { usageLogSchema } from '../../data/schema'
-import { UsageLogsProvider, useUsageLogsContext } from '../usage-logs-provider'
+import { UsageLogsProvider } from '../usage-logs-provider'
 import { UsageLogsTable } from '../usage-logs-table'
 
 function LogsFixture() {
-  const { viewScope, setViewScope } = useUsageLogsContext()
-  return (
-    <>
-      <button
-        type='button'
-        onClick={() => setViewScope(viewScope === 'all' ? 'self' : 'all')}
-      >
-        Switch scope
-      </button>
-      <UsageLogsTable logCategory='common' />
-    </>
-  )
+  return <UsageLogsTable logCategory='common' />
 }
 
 async function renderLogs(props: {
   role: number
+  scope: DataScope
   enabledPlans: boolean[]
   activeSubscription: boolean
 }) {
@@ -94,24 +84,27 @@ async function renderLogs(props: {
     }
     return { data: { success: true, data } }
   })
+  const workspace = props.scope === 'site' ? 'admin' : 'user'
   const root = createRootRoute()
   const auth = createRoute({ getParentRoute: () => root, id: '_authenticated' })
   const logs = createRoute({
     getParentRoute: () => auth,
-    path: '/usage-logs/$section',
+    path: `/${workspace}/usage-logs/$section`,
     component: LogsFixture,
     validateSearch: (search: Record<string, unknown>) => search,
   })
   const router = createRouter({
     routeTree: root.addChildren([auth.addChildren([logs])]),
-    history: createMemoryHistory({ initialEntries: ['/usage-logs/common'] }),
+    history: createMemoryHistory({
+      initialEntries: [`/${workspace}/usage-logs/common`],
+    }),
   })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   render(
     <QueryClientProvider client={client}>
-      <UsageLogsProvider>
+      <UsageLogsProvider scope={props.scope}>
         <RouterProvider router={router} />
       </UsageLogsProvider>
     </QueryClientProvider>
@@ -133,6 +126,7 @@ test.each([{ enabledPlans: [] }, { enabledPlans: [false] }])(
   async ({ enabledPlans }) => {
     await renderLogs({
       role: ROLE.ADMIN,
+      scope: 'site',
       enabledPlans,
       activeSubscription: true,
     })
@@ -147,6 +141,7 @@ test.each([{ enabledPlans: [] }, { enabledPlans: [false] }])(
 test('shows both source icons in admin view when any system plan is enabled', async () => {
   await renderLogs({
     role: ROLE.ADMIN,
+    scope: 'site',
     enabledPlans: [false, true],
     activeSubscription: false,
   })
@@ -158,6 +153,7 @@ test('shows both source icons in admin view when any system plan is enabled', as
 test('keeps the subscription marker on a subscription-billed log for a user with only expired subscriptions', async () => {
   await renderLogs({
     role: ROLE.USER,
+    scope: 'self',
     enabledPlans: [true],
     activeSubscription: false,
   })
@@ -169,6 +165,7 @@ test('keeps the subscription marker on a subscription-billed log for a user with
 test('shows both source icons for a user with an active subscription', async () => {
   await renderLogs({
     role: ROLE.USER,
+    scope: 'self',
     enabledPlans: [],
     activeSubscription: true,
   })
@@ -177,20 +174,15 @@ test('shows both source icons for a user with an active subscription', async () 
   expect(screen.getByRole('img', { name: 'Subscription' })).toBeVisible()
 })
 
-test('uses personal subscriptions when an admin switches to only-self view', async () => {
-  const user = userEvent.setup()
-  const client = await renderLogs({
+test('uses personal subscriptions for an admin in the user workspace', async () => {
+  await renderLogs({
     role: ROLE.ADMIN,
+    scope: 'self',
     enabledPlans: [true],
     activeSubscription: false,
   })
-  expect(screen.getByRole('img', { name: 'Wallet' })).toBeVisible()
 
-  await user.click(screen.getByRole('button', { name: 'Switch scope' }))
-  await waitFor(() => expect(client.isFetching()).toBe(0))
   expect(screen.queryByRole('img', { name: 'Wallet' })).not.toBeInTheDocument()
   expect(screen.getByRole('img', { name: 'Subscription' })).toBeVisible()
-
-  await user.click(screen.getByRole('button', { name: 'Switch scope' }))
-  expect(await screen.findByRole('img', { name: 'Wallet' })).toBeVisible()
+  expect(api.get).not.toHaveBeenCalledWith('/api/subscription/admin/plans')
 })

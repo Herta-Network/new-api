@@ -26,7 +26,7 @@ import {
 export function RequestPolicies() {
   return (
     <SettingsPage
-      routePath='/_authenticated/system-settings/request-policies/$section'
+      routePath='/_authenticated/admin/system-settings/request-policies/$section'
       defaultSettings={defaultRequestPolicySettings}
       defaultSection='routing'
       getSectionContent={getPolicySectionContent}

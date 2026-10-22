@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
+import type { DataScope } from '@/lib/workspace'
 
 import type {
   FlowQuotaDataItem,
@@ -32,8 +33,8 @@ import type {
 // Quota & Usage Data
 // ----------------------------------------------------------------------------
 
-// Get user quota data within a time range
-// Admin users get all users' data by default.
+// Get quota data within a time range: the signed-in user's own (`self`) or
+// every user's (`site`, admin only).
 export async function getUserQuotaDates(
   params: {
     start_timestamp: number
@@ -41,9 +42,9 @@ export async function getUserQuotaDates(
     default_time?: string
     username?: string
   },
-  isAdmin = false
+  scope: DataScope = 'self'
 ) {
-  const endpoint = isAdmin ? '/api/data' : '/api/data/self'
+  const endpoint = scope === 'site' ? '/api/data' : '/api/data/self'
   const res = await api.get<{ success: boolean; data: QuotaDataItem[] }>(
     endpoint,
     { params }
@@ -73,9 +74,9 @@ export async function getFlowQuotaDates(
     default_time?: string
     username?: string
   },
-  isAdmin = false
+  scope: DataScope = 'self'
 ) {
-  const endpoint = isAdmin ? '/api/data/flow' : '/api/data/flow/self'
+  const endpoint = scope === 'site' ? '/api/data/flow' : '/api/data/flow/self'
   const res = await api.get<{
     success: boolean
     data?: FlowQuotaDataItem[]

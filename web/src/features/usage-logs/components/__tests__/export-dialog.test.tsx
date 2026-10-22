@@ -37,6 +37,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { ROLE } from '@/lib/roles'
 import { STATUS_QUERY_KEY } from '@/lib/status-query'
+import type { DataScope } from '@/lib/workspace'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { ExportLogsDialog } from '../dialogs/export-logs-dialog'
@@ -66,6 +67,7 @@ afterEach(() => {
 
 function renderExport(options: {
   role: number
+  scope?: DataScope
   status?: Record<string, unknown>
   search: Record<string, string | number>
 }) {
@@ -81,13 +83,15 @@ function renderExport(options: {
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   })
   queryClient.setQueryData(STATUS_QUERY_KEY, options.status ?? {})
+  const scope = options.scope ?? 'self'
+  const workspace = scope === 'site' ? 'admin' : 'user'
   const root = createRootRoute()
   const auth = createRoute({ getParentRoute: () => root, id: '_authenticated' })
   const logs = createRoute({
     getParentRoute: () => auth,
-    path: '/usage-logs/$section',
+    path: `/${workspace}/usage-logs/$section`,
     component: () => (
-      <UsageLogsProvider>
+      <UsageLogsProvider scope={scope}>
         <h1>Common Logs</h1>
         <ExportLogsDialog />
       </UsageLogsProvider>
@@ -100,7 +104,7 @@ function renderExport(options: {
   const router = createRouter({
     routeTree: root.addChildren([auth.addChildren([logs])]),
     history: createMemoryHistory({
-      initialEntries: [`/usage-logs/common?${query}`],
+      initialEntries: [`/${workspace}/usage-logs/common?${query}`],
     }),
   })
   render(
@@ -221,8 +225,8 @@ it('downloads the streamed logs of the current filters as CSV', async () => {
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
 })
 
-it('reports a server refusal and keeps the dialog open without a download', async () => {
-  mockExportResponse([
+it("exports every user's logs from the admin workspace and reports a server refusal", async () => {
+  const fetchSpy = mockExportResponse([
     {
       success: false,
       message: 'Another log export is running. Try again after it finishes.',
@@ -232,7 +236,7 @@ it('reports a server refusal and keeps the dialog open without a download', asyn
   ])
   const error = vi.spyOn(toast, 'error')
   const user = userEvent.setup()
-  renderExport({ role: ROLE.ADMIN, search: recentRange() })
+  renderExport({ role: ROLE.ADMIN, scope: 'site', search: recentRange() })
 
   await user.click(await screen.findByRole('button', { name: 'Export' }))
   await user.click(
@@ -244,6 +248,7 @@ it('reports a server refusal and keeps the dialog open without a download', asyn
       'Another log export is running. Try again after it finishes.'
     )
   )
+  expect(String(fetchSpy.mock.calls[0][0])).toMatch(/^\/api\/log\/export\?/)
   expect(createObjectURL).not.toHaveBeenCalled()
   expect(screen.getByRole('dialog')).toBeVisible()
 })

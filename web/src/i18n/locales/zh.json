@@ -4264,7 +4264,6 @@
     "Only configured combinations are overridden. All other calls keep the token group base ratio.": "只有已配置的组合会被覆盖，其他调用仍使用令牌分组的基础倍率。",
     "Only enabled parameters are sent with the request.": "只有启用的参数会随请求发送。",
     "Only exact model names are removed from enabled and disabled channels. Matching rules are not expanded, and channel records are retained.": "仅从所有启用及停用的渠道中移除名称完全相同的模型，不扩展匹配规则，渠道本身会保留。",
-    "Only Mine": "仅自己",
     "Only one catch-all route is allowed for the same incoming path": "同一入口路径只允许一个兜底路由",
     "OpenCode Go": "OpenCode Go",
     "OpenCode Go API key from the OpenCode Console": "在 OpenCode Console 中获取的 OpenCode Go API 密钥",
@@ -6993,7 +6992,6 @@
     "View Pricing": "查看定价",
     "View pricing for {{model}}": "查看 {{model}} 的定价",
     "View redemption codes.": "查看兑换码。",
-    "View scope": "查看范围",
     "View system settings, custom OAuth providers, and price sync sources.": "查看系统设置、自定义 OAuth 提供商和价格同步来源。",
     "View the complete details for this": "查看此条",
     "Waiting for payment": "等待付款",
@@ -7320,6 +7318,11 @@
     "Use at most 255 characters": "最多 255 个字符",
     "Webhook outdated": "Webhook 待同步",
     "Webhook synced": "Webhook 已同步",
-    "Unresolved": "未处理"
+    "Unresolved": "未处理",
+    "User Console": "用户控制台",
+    "Admin Console": "管理控制台",
+    "Your keys, usage and billing": "个人密钥、用量与账单",
+    "Site operations and settings": "站点运营与设置",
+    "Switch console": "切换控制台"
   }
 }

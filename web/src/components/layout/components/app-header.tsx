@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useLocation } from '@tanstack/react-router'
+
 import { ConfigDrawer } from '@/components/config-drawer'
 import { LanguageSwitcher } from '@/components/language-switcher'
 import { NotificationPopover } from '@/components/notification-popover'
@@ -24,6 +26,7 @@ import { Search } from '@/components/search'
 import { SystemUpdateAction } from '@/features/system-update/system-update-action'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useTopNavLinks } from '@/hooks/use-top-nav-links'
+import { getWorkspaceFromPathname } from '@/lib/workspace'
 
 import { defaultTopNavLinks } from '../config/top-nav.config'
 import type { TopNavLink } from '../types'
@@ -111,11 +114,15 @@ export function AppHeader({
   // Notifications hook
   const notifications = useNotifications()
 
+  // System updates belong to the admin workspace
+  const pathname = useLocation({ select: (location) => location.pathname })
+  const showSystemUpdate = getWorkspaceFromPathname(pathname) === 'admin'
+
   return (
     <Header>
       <div className='@container/system-brand flex min-w-0 flex-1 items-center gap-1'>
         <SystemBrand variant='inline' />
-        <SystemUpdateAction presentation='version' />
+        {showSystemUpdate && <SystemUpdateAction presentation='version' />}
       </div>
 
       {leftContent ? (

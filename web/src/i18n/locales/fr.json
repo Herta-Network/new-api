@@ -4264,7 +4264,6 @@
     "Only configured combinations are overridden. All other calls keep the token group base ratio.": "Seules les combinaisons configurées sont remplacées. Les autres appels conservent le ratio de base du groupe du jeton.",
     "Only enabled parameters are sent with the request.": "Seuls les paramètres activés sont envoyés avec la requête.",
     "Only exact model names are removed from enabled and disabled channels. Matching rules are not expanded, and channel records are retained.": "Seuls les noms de modèle identiques sont retirés des canaux actifs et désactivés. Les règles de correspondance ne sont pas étendues et les canaux sont conservés.",
-    "Only Mine": "Uniquement les miens",
     "Only one catch-all route is allowed for the same incoming path": "Un seul routage de secours est autorisé pour le même chemin d'entrée",
     "OpenCode Go": "OpenCode Go",
     "OpenCode Go API key from the OpenCode Console": "Clé API OpenCode Go obtenue dans la console OpenCode",
@@ -6993,7 +6992,6 @@
     "View Pricing": "Voir les tarifs",
     "View pricing for {{model}}": "Voir les tarifs de {{model}}",
     "View redemption codes.": "Afficher les codes d’échange.",
-    "View scope": "Portée de la vue",
     "View system settings, custom OAuth providers, and price sync sources.": "Afficher les paramètres système, les fournisseurs OAuth personnalisés et les sources de synchronisation des prix.",
     "View the complete details for this": "Voir les détails complets de ce",
     "Waiting for payment": "En attente du paiement",
@@ -7320,6 +7318,11 @@
     "Use at most 255 characters": "255 caractères maximum",
     "Webhook outdated": "Webhook à synchroniser",
     "Webhook synced": "Webhook synchronisé",
-    "Unresolved": "Non résolu"
+    "Unresolved": "Non résolu",
+    "User Console": "Console utilisateur",
+    "Admin Console": "Console d'administration",
+    "Your keys, usage and billing": "Vos clés, votre usage et votre facturation",
+    "Site operations and settings": "Exploitation et paramètres du site",
+    "Switch console": "Changer de console"
   }
 }

@@ -293,12 +293,12 @@ async function renderUsersList(emptyInvitation = false) {
   const auth = createRoute({ getParentRoute: () => root, id: '_authenticated' })
   const users = createRoute({
     getParentRoute: () => auth,
-    path: 'users/',
+    path: 'admin/users/',
     component: UsersPage,
   })
   const router = createRouter({
     routeTree: root.addChildren([auth.addChildren([users])]),
-    history: createMemoryHistory({ initialEntries: ['/users/'] }),
+    history: createMemoryHistory({ initialEntries: ['/admin/users/'] }),
   })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },

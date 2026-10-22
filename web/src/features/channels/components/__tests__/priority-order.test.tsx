@@ -189,7 +189,7 @@ async function mount(view: 'table' | 'card' = 'card', enabled = true) {
   })
   const channels = createRoute({
     getParentRoute: () => authenticated,
-    path: '/channels/',
+    path: '/admin/channels/',
     validateSearch: (search) => ({ page: 1, pageSize: 10, ...search }),
     component: () => (
       <ChannelsProvider>
@@ -202,7 +202,7 @@ async function mount(view: 'table' | 'card' = 'card', enabled = true) {
   })
   const router = createRouter({
     routeTree: root.addChildren([authenticated.addChildren([channels])]),
-    history: createMemoryHistory({ initialEntries: ['/channels/'] }),
+    history: createMemoryHistory({ initialEntries: ['/admin/channels/'] }),
   })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },

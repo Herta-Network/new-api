@@ -513,7 +513,7 @@ it('shows the Alipay QR code, offers to open it on this device and follows the o
   expect(stripe.confirmAlipayPayment).toHaveBeenCalledTimes(1)
   expect(stripe.confirmAlipayPayment).toHaveBeenCalledWith(
     'pi_7_secret_a',
-    { return_url: `${window.location.origin}/wallet?payment_order=P7` },
+    { return_url: `${window.location.origin}/user/wallet?payment_order=P7` },
     { handleActions: false }
   )
   expect(
