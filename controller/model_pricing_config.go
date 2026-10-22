@@ -35,6 +35,15 @@ func PreviewModelPricingConversion(c *gin.Context) {
 	common.ApiSuccess(c, preview)
 }
 
+func PreviewLegacyModelPricingConversions(c *gin.Context) {
+	entries, err := model.PreviewLegacyModelPricingConversions()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"entries": entries})
+}
+
 func PreviewModelPricing(c *gin.Context) {
 	var request struct {
 		ModelName string              `json:"model_name"`
