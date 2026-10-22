@@ -1008,4 +1008,13 @@ export const STATIC_I18N_KEYS = [
   'Current month',
   'All time',
   'Yesterday',
+  // Group pricing: who can use a group, and the JSON shape each option needs.
+  'User selectable',
+  'Admin assigned',
+  'Hidden from everyone',
+  'Expected a JSON object of group → ratio (0 or more)',
+  'Expected a JSON object of group → description',
+  'Expected a JSON object of user group → { billing group → ratio }',
+  'Expected a JSON object of user group → { group → description }',
+  'Expected a JSON object of group → ratio',
 ] as const

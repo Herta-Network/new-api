@@ -26,6 +26,7 @@ import { PaymentSettingsSection } from '../integrations/payment-settings-section
 import { RatioSettingsCard } from '../models/ratio-settings-card'
 import type { BillingSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { GroupPricingSection, type GroupPricingValues } from './group-pricing'
 
 const getModelDefaults = (settings: BillingSettings) => ({
   ModelPrice: settings.ModelPrice,
@@ -42,7 +43,7 @@ const getModelDefaults = (settings: BillingSettings) => ({
   PluginBillingExpr: settings['billing_setting.plugin_billing_expr'],
 })
 
-const getGroupDefaults = (settings: BillingSettings) => ({
+const getGroupDefaults = (settings: BillingSettings): GroupPricingValues => ({
   TopupGroupRatio: settings.TopupGroupRatio,
   GroupRatio: settings.GroupRatio,
   UserUsableGroups: settings.UserUsableGroups,
@@ -110,7 +111,6 @@ const BILLING_SECTIONS = [
       <RatioSettingsCard
         titleKey='Model Pricing'
         modelDefaults={getModelDefaults(settings)}
-        groupDefaults={getGroupDefaults(settings)}
         toolPricesDefault={settings['tool_price_setting.prices']}
         visibleTabs={['models', 'unset-models', 'tool-prices', 'upstream-sync']}
       />
@@ -120,12 +120,9 @@ const BILLING_SECTIONS = [
     id: 'group-pricing',
     titleKey: 'Group Pricing',
     build: (settings: BillingSettings) => (
-      <RatioSettingsCard
-        titleKey='Group Pricing'
-        modelDefaults={getModelDefaults(settings)}
-        groupDefaults={getGroupDefaults(settings)}
-        toolPricesDefault={settings['tool_price_setting.prices']}
-        visibleTabs={['groups']}
+      <GroupPricingSection
+        defaultValues={getGroupDefaults(settings)}
+        paymentCurrency={settings['payment_setting.currency']}
       />
     ),
   },
