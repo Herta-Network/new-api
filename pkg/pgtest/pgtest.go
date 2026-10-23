@@ -108,10 +108,12 @@ func Main(m *testing.M, setup func(dsn string) error) int {
 
 // Reset empties every table in db's schema and restarts its sequences at a
 // high value, giving the next test an empty database with migrations intact.
+// The migration version tables keep their rows, so a later startup in the
+// package still sees a migrated database.
 func Reset(tb testing.TB, db *gorm.DB) {
 	tb.Helper()
 	var tables []string
-	if err := db.Raw("SELECT tablename FROM pg_tables WHERE schemaname = current_schema() ORDER BY tablename").Scan(&tables).Error; err != nil {
+	if err := db.Raw("SELECT tablename FROM pg_tables WHERE schemaname = current_schema() AND tablename NOT LIKE '%schema\\_migrations' ORDER BY tablename").Scan(&tables).Error; err != nil {
 		tb.Fatalf("pgtest: list tables: %v", err)
 	}
 	if len(tables) > 0 {

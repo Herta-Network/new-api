@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/url"
 	"os"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -153,10 +152,10 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, common.DatabaseType, error)
 	common.SysLog(common.LogText("using PostgreSQL as database"))
 	// 同时关闭 pgx 隐式与 GORM 显式预处理语句:命名 prepared statement 与
 	// 事务池代理(PgBouncer/Neon/Supabase)不兼容,会触发 FATAL 08P01/42P05。
-	db, err := gorm.Open(postgresMigrationDialector{postgres.Dialector{Config: &postgres.Config{
+	db, err := gorm.Open(postgres.New(postgres.Config{
 		DSN:                  dsn,
 		PreferSimpleProtocol: true,
-	}}}, newGormConfig())
+	}), newGormConfig())
 	if err != nil {
 		return nil, "", err
 	}
@@ -276,74 +275,10 @@ func ensureUserQuotaColumns(db *gorm.DB) error {
 	return nil
 }
 
+// migrateDB runs the versioned migrations of the main schema, then the
+// idempotent data steps that fill in rows earlier versions left out.
 func migrateDB() error {
-	if err := migrateTokenKeyUniqueness(DB); err != nil {
-		return err
-	}
-	if err := migratePrefillGroupUniqueness(DB); err != nil {
-		return err
-	}
-	// Migrate price_amount column from float/double to decimal for existing tables
-	migrateSubscriptionPlanPriceAmount()
-	// Migrate model_limits column from varchar to text for existing tables
-	if err := migrateTokenModelLimitsToText(); err != nil {
-		return err
-	}
-	if err := migrateOptionPrimaryKey(DB); err != nil {
-		common.SysError(common.LogText("failed to migrate options primary key: %s", err.Error()))
-	}
-	if err := migrateQuotaDataKey(DB); err != nil {
-		return err
-	}
-	if err := migrateLogIndexes(DB); err != nil {
-		common.SysError(common.LogText("failed to migrate log indexes: %s", err.Error()))
-	}
-
-	err := DB.AutoMigrate(
-		&Channel{},
-		&Token{},
-		&User{},
-		&UserSession{},
-		&AuthFlow{},
-		&ExternalIdentityClaim{},
-		&PasskeyCredential{},
-		&Option{},
-		&LoginEncryptionKey{},
-		&Redemption{},
-		&Ability{},
-		&Log{},
-		&Midjourney{},
-		&QuotaData{},
-		&Task{},
-		&TaskPlugin{},
-		&Model{},
-		&Vendor{},
-		&PrefillGroup{},
-		&Setup{},
-		&TwoFA{},
-		&TwoFABackupCode{},
-		&Checkin{},
-		&UserSubscription{},
-		&SubscriptionPreConsumeRecord{},
-		&CustomOAuthProvider{},
-		&UserOAuthBinding{},
-		&PerfMetric{},
-		&SystemInstance{},
-		&SystemTask{},
-		&SystemTaskLock{},
-		&CasbinRule{},
-		&AuthzRole{},
-		&UserAccessToken{},
-		&SubscriptionPlan{},
-		&PaymentMethod{},
-		&PaymentOrder{},
-		&PaymentUnmatched{},
-		&PaymentExchangeRate{},
-	)
-	if err != nil {
-		return err
-	}
-	if err := dropRetiredPayments(DB); err != nil {
+	if err := runMigrations(DB, migrationFiles, mainMigrations); err != nil {
 		return err
 	}
 	if err := migrateRetiredCurrencyOptions(DB); err != nil {
@@ -370,70 +305,6 @@ func migrateLOGDB() error {
 	}
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		return migrateClickHouseLogDB()
-	}
-	if err := migrateLogIndexes(LOG_DB); err != nil {
-		common.SysError(common.LogText("failed to migrate log indexes: %s", err.Error()))
-	}
-	return LOG_DB.AutoMigrate(&Log{})
-}
-
-// Earlier versions indexed these log columns on their own. Nothing filters
-// logs by ip, and idx_user_id_id and index_username_model_name lead with
-// user_id and model_name.
-var retiredLogIndexes = []string{"idx_logs_ip", "idx_logs_user_id", "idx_logs_model_name"}
-
-const logUpstreamRequestIdIndex = "idx_logs_upstream_request_id"
-
-// migrateLogIndexes brings the indexes of an existing PostgreSQL logs table in
-// line with Log before AutoMigrate, which never drops or redefines an index
-// and would build a missing one while blocking log writes. Every log insert
-// maintains every index and logs can be very large, so indexes are dropped
-// and built CONCURRENTLY, outside a transaction. Callers only log a failure:
-// the gateway works without these changes, and the next startup tries again.
-func migrateLogIndexes(db *gorm.DB) error {
-	migrator := db.Migrator()
-	if !migrator.HasTable(&Log{}) {
-		return nil
-	}
-	var indexes []struct {
-		Name    string
-		Valid   bool
-		Partial bool
-	}
-	if err := db.Raw(`
-SELECT index_class.relname AS name,
-       index_meta.indisvalid AS valid,
-       index_meta.indpred IS NOT NULL AS partial
-FROM pg_catalog.pg_index AS index_meta
-JOIN pg_catalog.pg_class AS index_class
-  ON index_class.oid = index_meta.indexrelid
-WHERE index_meta.indrelid = to_regclass('logs')`).Scan(&indexes).Error; err != nil {
-		return fmt.Errorf("inspect log indexes: %w", err)
-	}
-	// Without the column, AutoMigrate adds it to a very old table along with
-	// its index.
-	buildUpstreamIndex := migrator.HasColumn(&Log{}, "upstream_request_id")
-	for _, index := range indexes {
-		if index.Name == logUpstreamRequestIdIndex && index.Valid && index.Partial {
-			buildUpstreamIndex = false
-			continue
-		}
-		// The upstream request id index is replaced when it is the full index
-		// of earlier versions or an INVALID one an interrupted build left.
-		if index.Name != logUpstreamRequestIdIndex && !slices.Contains(retiredLogIndexes, index.Name) {
-			continue
-		}
-		if err := db.Exec("DROP INDEX CONCURRENTLY IF EXISTS " + index.Name).Error; err != nil {
-			return fmt.Errorf("drop log index %s: %w", index.Name, err)
-		}
-	}
-	if !buildUpstreamIndex {
-		return nil
-	}
-	// Most logs store no upstream request id; leave them out of the index.
-	common.SysLog(common.LogText("building log index %s, which can take a while on a large logs table", logUpstreamRequestIdIndex))
-	if err := db.Exec("CREATE INDEX CONCURRENTLY " + logUpstreamRequestIdIndex + " ON logs (upstream_request_id) WHERE upstream_request_id <> ''").Error; err != nil {
-		return fmt.Errorf("create log index %s: %w", logUpstreamRequestIdIndex, err)
 	}
 	return nil
 }
@@ -525,68 +396,6 @@ func clickHouseLogTableHasTTL() (bool, error) {
 func clickHouseCreateTableHasTTL(createTableSQL string) bool {
 	upperSQL := strings.ToUpper(createTableSQL)
 	return strings.Contains(upperSQL, "\nTTL ") || strings.Contains(upperSQL, " TTL ")
-}
-
-// migrateTokenModelLimitsToText migrates model_limits column from varchar(1024) to text
-// This is safe to run multiple times - it checks the column type first
-func migrateTokenModelLimitsToText() error {
-	tableName := "tokens"
-	columnName := "model_limits"
-
-	if !DB.Migrator().HasTable(tableName) {
-		return nil
-	}
-
-	if !DB.Migrator().HasColumn(&Token{}, columnName) {
-		return nil
-	}
-
-	var dataType string
-	if err := DB.Raw(`SELECT data_type FROM information_schema.columns
-		WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
-		tableName, columnName).Scan(&dataType).Error; err != nil {
-		common.SysLog(common.LogText("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
-	} else if dataType == "text" {
-		return nil
-	}
-	if err := DB.Exec(fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s TYPE text`, tableName, columnName)).Error; err != nil {
-		return fmt.Errorf("failed to migrate %s.%s to text: %w", tableName, columnName, err)
-	}
-	common.SysLog(common.LogText("Successfully migrated %s.%s to text", tableName, columnName))
-	return nil
-}
-
-// migrateSubscriptionPlanPriceAmount migrates price_amount column from float/double to decimal(10,6)
-// This is safe to run multiple times - it checks the column type first
-func migrateSubscriptionPlanPriceAmount() {
-	tableName := "subscription_plans"
-	columnName := "price_amount"
-
-	// Check if table exists first
-	if !DB.Migrator().HasTable(tableName) {
-		return
-	}
-
-	// Check if column exists
-	if !DB.Migrator().HasColumn(&SubscriptionPlan{}, columnName) {
-		return
-	}
-
-	var dataType string
-	if err := DB.Raw(`SELECT data_type FROM information_schema.columns
-		WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
-		tableName, columnName).Scan(&dataType).Error; err != nil {
-		common.SysLog(common.LogText("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
-	} else if dataType == "numeric" {
-		return // Already decimal/numeric
-	}
-	alterSQL := fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s TYPE decimal(10,6) USING %s::decimal(10,6)`,
-		tableName, columnName, columnName)
-	if err := DB.Exec(alterSQL).Error; err != nil {
-		common.SysLog(common.LogText("Warning: failed to migrate %s.%s to decimal: %v", tableName, columnName, err))
-	} else {
-		common.SysLog(common.LogText("Successfully migrated %s.%s to decimal(10,6)", tableName, columnName))
-	}
 }
 
 func closeDB(db *gorm.DB) error {

@@ -9,7 +9,7 @@ DEV_POSTGRES_USER = root
 TEST_DB_CONTAINER = new-api-test-postgres
 TEST_DB_PORT ?= 55432
 
-.PHONY: all build-web build-all-web start-api dev dev-api dev-api-rebuild dev-web reset-setup test test-db
+.PHONY: all build-web build-all-web start-api dev dev-api dev-api-rebuild dev-web reset-setup test test-db migration
 
 all: build-all-web start-api
 
@@ -66,6 +66,21 @@ test-db:
 		until docker exec $(TEST_DB_CONTAINER) pg_isready -U postgres -d newapi_test >/dev/null 2>&1; do sleep 1; done; \
 	fi
 	@echo "export TEST_POSTGRES_DSN='postgres://postgres:postgres@127.0.0.1:$(TEST_DB_PORT)/newapi_test?sslmode=disable'"
+
+# Creates the next versioned migration of the main (default) or log schema:
+# make migration NAME=add_user_locale [SET=log]
+MIGRATION_SET ?= $(or $(SET),main)
+migration:
+	@if ! printf '%s' "$(NAME)" | grep -Eqx '[a-z0-9_]+'; then \
+		echo "Usage: make migration NAME=add_user_locale [SET=main|log]"; \
+		exit 1; \
+	fi
+	@dir=model/migrations/$(MIGRATION_SET); \
+		if [ ! -d "$$dir" ]; then echo "No migration set $$dir"; exit 1; fi; \
+		last=$$(ls "$$dir" | sed -n 's/^\([0-9]\{6\}\)_.*\.up\.sql$$/\1/p' | sort | tail -1); \
+		file=$$dir/$$(printf '%06d' $$(expr "$${last:-0}" + 1))_$(NAME).up.sql; \
+		printf -- '-- %s\n' "$(NAME)" > "$$file"; \
+		echo "Created $$file"
 
 reset-setup:
 	@echo "Resetting local setup wizard state..."
