@@ -167,7 +167,7 @@ Third-party source code copied into this repository instead of being used as a m
 
 | Area    | Path                       | Origin                                                                                                          | Version               | License    |
 |---------|----------------------------|-----------------------------------------------------------------------------------------------------------------|-----------------------|------------|
-| backend | `pkg/convo/`               | AstrLink `convo` module, https://github.com/Calcium-Ion/AstrLink                                                | commit `8461bf2`      | Apache-2.0 |
+| backend | `internal/module/conversation/internal/convo/` | AstrLink `convo` module, https://github.com/Calcium-Ion/AstrLink                                                | commit `8461bf2`      | Apache-2.0 |
 | backend | `internal/module/payment/internal/gateway/` | ppanel payment gateways (Go module `github.com/perfect-panel/server`), https://github.com/perfect-panel/backend | commit `944dc363cc6a` | GPL-3.0    |
 | backend | `internal/module/currency/internal/exchangerate/` | ppanel exchange rate client (Go module `github.com/perfect-panel/server`), https://github.com/perfect-panel/backend | commit `944dc363cc6a` | GPL-3.0    |
 

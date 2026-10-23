@@ -23,7 +23,7 @@ Each area below differs from upstream by design. Keep the fork's design when res
 | Group pricing | The group pricing UI is rebuilt around a group list, advanced rules, and a price simulator. Group semantics and backend logic are unchanged. | `web/src/features/system-settings/billing/group-pricing/` |
 | Desktop | Electron is removed. | — |
 | Modules | Fork-owned domains are modules under `internal/module/` with an arch-tested boundary; the rest keeps upstream's layout as the shared kernel. Modules write kernel tables only through `model/module_api.go`. | `internal/module/`, `internal/arch/`, `model/module_api.go` |
-| Fork features | OpenCode Go channel (type 64), thinking-signature repair, 429 cooldown, Coding Plan usage, conversation session recognition (`pkg/convo`), fast GPT token counting in `tokenkit/`, per-user payment rate limits, SMTP sender parsing, log and `quota_data` I/O tuning. | various |
+| Fork features | OpenCode Go channel (type 64), thinking-signature repair, 429 cooldown, Coding Plan usage, conversation session recognition (`internal/module/conversation`), fast GPT token counting in `tokenkit/`, per-user payment rate limits, SMTP sender parsing, log and `quota_data` I/O tuning. | various |
 
 ## Classify before merging
 
@@ -44,6 +44,7 @@ List the incoming commits (`git log --oneline $(git merge-base main upstream/mai
 - **Tests that assert removed UI:** drop only the assertion that targets the fork's intentional difference, and keep the rest of the test.
 - **Locale files:** upstream keeps keys sorted with `String.prototype.localeCompare`. Resolve conflicts at the key level, not line by line: a key deleted on either side stays deleted, a key added on either side is kept, and a one-sided value change wins. Write the files back in `localeCompare` order and keep the protected footer key in its escaped form (`footer.new\u0061pi.projectAttributionSuffix`). After resolving, `bun run i18n:sync` must report no missing or extra keys and leave the files unchanged. Insert new fork keys in sorted order too.
 - **Modules:** upstream never changes `internal/module/`, but an upstream commit can touch the kernel functions `model/module_api.go` wraps (`creditTopUpQuota`, `getSubscriptionPlanByIdTx`, the user quota cache, `lockForUpdate`) or the kernel tables a module reads. Keep the wrappers' signatures and behavior in step when resolving it, and keep new fork code out of the kernel: follow **Modules** in `AGENTS.md`.
+- **Conversation sessions:** `service/channel_affinity.go` (the `conversation_session` key source) and the OpenCode Go adaptor (`relay/channel/opencodego/`) read the recognized session through the kernel helper `service.ConversationSessionID`, which calls the resolver the conversation module's middleware stores under `constant.ContextKeyConversationSessionID`. An upstream change to those files must keep calling that helper; never import `internal/module/conversation` from them. Upstream routes that relay chat, responses, messages or Gemini requests keep `conversationhttp.ConversationSession()` before `Distribute()`.
 - **Third-party notices:** when upstream bumps a dependency listed in `THIRD-PARTY-LICENSES.md`, update its version there.
 - **Protected project information:** follow `AGENTS.md`; never alter it while resolving.
 
