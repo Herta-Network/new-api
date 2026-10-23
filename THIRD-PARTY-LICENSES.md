@@ -168,7 +168,7 @@ Third-party source code copied into this repository instead of being used as a m
 | Area    | Path                       | Origin                                                                                                          | Version               | License    |
 |---------|----------------------------|-----------------------------------------------------------------------------------------------------------------|-----------------------|------------|
 | backend | `pkg/convo/`               | AstrLink `convo` module, https://github.com/Calcium-Ion/AstrLink                                                | commit `8461bf2`      | Apache-2.0 |
-| backend | `service/payment/gateway/` | ppanel payment gateways (Go module `github.com/perfect-panel/server`), https://github.com/perfect-panel/backend | commit `944dc363cc6a` | GPL-3.0    |
+| backend | `internal/module/payment/internal/gateway/` | ppanel payment gateways (Go module `github.com/perfect-panel/server`), https://github.com/perfect-panel/backend | commit `944dc363cc6a` | GPL-3.0    |
 
 ## License Texts
 
@@ -286,11 +286,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### GPL-3.0
 
-The files under `service/payment/gateway/` that are ported from ppanel are
-licensed under the GNU General Public License version 3. new-api conveys them
-as part of a work under the GNU Affero General Public License version 3, as
-section 13 of both licenses permits; the GPL-3.0 terms continue to apply to
-those files. The full license text follows.
+The files under `internal/module/payment/internal/gateway/` that are ported
+from ppanel are licensed under the GNU General Public License version 3.
+new-api conveys them as part of a work under the GNU Affero General Public
+License version 3, as section 13 of both licenses permits; the GPL-3.0 terms
+continue to apply to those files. The full license text follows.
 
 ```text
                     GNU GENERAL PUBLIC LICENSE

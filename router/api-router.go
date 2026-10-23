@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/new-api/controller"
+	consolehttp "github.com/QuantumNous/new-api/internal/module/console/transport/http"
+	paymenthttp "github.com/QuantumNous/new-api/internal/module/payment/transport/http"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/service/authz"
 
@@ -182,47 +184,47 @@ func SetApiRouter(router *gin.Engine) {
 		// (orders) and the root (payment methods).
 		paymentRoute := apiRouter.Group("/payment")
 		{
-			paymentRoute.GET("/notify/:platform/:token", controller.PaymentNotify)
-			paymentRoute.POST("/notify/:platform/:token", anonymousRequestBodyLimit, controller.PaymentNotify)
+			paymentRoute.GET("/notify/:platform/:token", paymenthttp.PaymentNotify)
+			paymentRoute.POST("/notify/:platform/:token", anonymousRequestBodyLimit, paymenthttp.PaymentNotify)
 
 			buyerRoute := paymentRoute.Group("")
 			buyerRoute.Use(middleware.UserAuth())
 			{
-				buyerRoute.GET("/info", controller.GetPaymentInfo)
-				buyerRoute.GET("/methods", controller.GetBuyerPaymentMethods)
-				buyerRoute.POST("/quote", controller.QuotePayment)
-				buyerRoute.GET("/orders", controller.ListUserPaymentOrders)
-				buyerRoute.GET("/orders/:no", controller.GetUserPaymentOrder)
+				buyerRoute.GET("/info", paymenthttp.GetPaymentInfo)
+				buyerRoute.GET("/methods", paymenthttp.GetBuyerPaymentMethods)
+				buyerRoute.POST("/quote", middleware.PaymentCompliance(), paymenthttp.QuotePayment)
+				buyerRoute.GET("/orders", paymenthttp.ListUserPaymentOrders)
+				buyerRoute.GET("/orders/:no", paymenthttp.GetUserPaymentOrder)
 				// Per-user buckets, apart from the IP bucket that guards login.
-				buyerRoute.POST("/orders", middleware.UserCriticalRateLimit("payment-order"), controller.CreatePaymentOrder)
-				buyerRoute.POST("/orders/:no/checkout", middleware.PaymentRateLimit(), controller.CheckoutPaymentOrder)
-				buyerRoute.POST("/orders/:no/sync", middleware.PaymentRateLimit(), controller.SyncPaymentOrder)
-				buyerRoute.POST("/orders/:no/close", middleware.PaymentRateLimit(), controller.CloseUserPaymentOrder)
+				buyerRoute.POST("/orders", middleware.UserCriticalRateLimit("payment-order"), middleware.PaymentCompliance(), paymenthttp.CreatePaymentOrder)
+				buyerRoute.POST("/orders/:no/checkout", middleware.PaymentRateLimit(), middleware.PaymentCompliance(), paymenthttp.CheckoutPaymentOrder)
+				buyerRoute.POST("/orders/:no/sync", middleware.PaymentRateLimit(), paymenthttp.SyncPaymentOrder)
+				buyerRoute.POST("/orders/:no/close", middleware.PaymentRateLimit(), paymenthttp.CloseUserPaymentOrder)
 			}
 
 			paymentAdminRoute := paymentRoute.Group("/admin")
 			paymentAdminRoute.Use(middleware.AdminAuth())
 			{
-				paymentAdminRoute.GET("/orders", controller.AdminListPaymentOrders)
-				paymentAdminRoute.POST("/orders/:no/reconcile", controller.AdminReconcilePaymentOrder)
-				paymentAdminRoute.POST("/orders/:no/close", controller.AdminClosePaymentOrder)
-				paymentAdminRoute.POST("/orders/:no/fulfil", controller.AdminFulfilPaymentOrder)
-				paymentAdminRoute.POST("/orders/:no/complete", controller.AdminCompletePaymentOrder)
-				paymentAdminRoute.GET("/unmatched", controller.AdminListPaymentUnmatched)
-				paymentAdminRoute.POST("/unmatched/:id/resolve", controller.AdminResolvePaymentUnmatched)
+				paymentAdminRoute.GET("/orders", paymenthttp.AdminListPaymentOrders)
+				paymentAdminRoute.POST("/orders/:no/reconcile", paymenthttp.AdminReconcilePaymentOrder)
+				paymentAdminRoute.POST("/orders/:no/close", paymenthttp.AdminClosePaymentOrder)
+				paymentAdminRoute.POST("/orders/:no/fulfil", paymenthttp.AdminFulfilPaymentOrder)
+				paymentAdminRoute.POST("/orders/:no/complete", paymenthttp.AdminCompletePaymentOrder)
+				paymentAdminRoute.GET("/unmatched", paymenthttp.AdminListPaymentUnmatched)
+				paymentAdminRoute.POST("/unmatched/:id/resolve", paymenthttp.AdminResolvePaymentUnmatched)
 			}
 
 			paymentSettingsRoute := paymentRoute.Group("/settings")
 			paymentSettingsRoute.Use(middleware.RootAuth())
 			{
-				paymentSettingsRoute.GET("/platforms", controller.GetPaymentPlatforms)
-				paymentSettingsRoute.GET("/rates", controller.GetPaymentRates)
-				paymentSettingsRoute.POST("/rates/refresh", controller.RefreshPaymentRates)
-				paymentSettingsRoute.GET("/methods", controller.AdminListPaymentMethods)
-				paymentSettingsRoute.POST("/methods", controller.AdminCreatePaymentMethod)
-				paymentSettingsRoute.PUT("/methods/:id", controller.AdminUpdatePaymentMethod)
-				paymentSettingsRoute.DELETE("/methods/:id", controller.AdminDeletePaymentMethod)
-				paymentSettingsRoute.POST("/methods/:id/webhook/sync", controller.AdminSyncPaymentWebhook)
+				paymentSettingsRoute.GET("/platforms", paymenthttp.GetPaymentPlatforms)
+				paymentSettingsRoute.GET("/rates", paymenthttp.GetPaymentRates)
+				paymentSettingsRoute.POST("/rates/refresh", paymenthttp.RefreshPaymentRates)
+				paymentSettingsRoute.GET("/methods", paymenthttp.AdminListPaymentMethods)
+				paymentSettingsRoute.POST("/methods", paymenthttp.AdminCreatePaymentMethod)
+				paymentSettingsRoute.PUT("/methods/:id", paymenthttp.AdminUpdatePaymentMethod)
+				paymentSettingsRoute.DELETE("/methods/:id", paymenthttp.AdminDeletePaymentMethod)
+				paymentSettingsRoute.POST("/methods/:id/webhook/sync", paymenthttp.AdminSyncPaymentWebhook)
 			}
 		}
 
@@ -364,10 +366,10 @@ func SetApiRouter(router *gin.Engine) {
 		consoleRoute := apiRouter.Group("/admin/console")
 		consoleRoute.Use(middleware.AdminAuth())
 		{
-			consoleRoute.GET("/overview", controller.GetConsoleOverview)
-			consoleRoute.GET("/revenue", controller.GetConsoleRevenue)
-			consoleRoute.GET("/users", controller.GetConsoleUsers)
-			consoleRoute.GET("/rankings", controller.GetConsoleRankings)
+			consoleRoute.GET("/overview", consolehttp.GetConsoleOverview)
+			consoleRoute.GET("/revenue", consolehttp.GetConsoleRevenue)
+			consoleRoute.GET("/users", consolehttp.GetConsoleUsers)
+			consoleRoute.GET("/rankings", consolehttp.GetConsoleRankings)
 		}
 
 		dataRoute := apiRouter.Group("/data")
