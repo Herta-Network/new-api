@@ -524,7 +524,7 @@ func AdminBindSubscription(userId int, planId int, sourceNote string) (*common.M
 	}
 	groupChanged := false
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		// 与 SettlePaymentOrder 一致：先锁用户行，再做购买次数检查。
+		// 与支付结算（payment 模块的 store.SettleOrder）一致：先锁用户行，再做购买次数检查。
 		var userRow User
 		if err := lockForUpdate(tx).Select("id").Where("id = ?", userId).First(&userRow).Error; err != nil {
 			return err

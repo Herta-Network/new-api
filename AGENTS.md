@@ -21,9 +21,18 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 - The Go gateway handles management APIs, upstream relay, billing, and background tasks across `router/`, `middleware/`, `controller/`, `service/`, `model/`, and `relay/`.
 - `relaykit/` is an independent Go module for protocol DTOs and conversions; transport, authentication, database access, and billing stay in the host.
 - `tokenkit/` is an independent Go module for text and image token counting and estimation; request parsing, file loading, and billing stay in the host.
-- Payments (EPay, Stripe, Cryptomus, and wallet balance) follow ppanel's gateway design: `service/payment/gateway/` is the protocol layer and never touches the database, `service/payment/` runs pricing, checkout, callbacks, and reconciliation, and `model/payment_*.go` holds payment methods, orders, and their state transitions.
+- Payments (EPay, Stripe, Cryptomus, and wallet balance) are the `internal/module/payment` module and follow ppanel's gateway design: `internal/gateway/` is the protocol layer and never touches the database, `internal/store/` keeps payment methods, orders, and their state transitions, and the facade runs pricing, checkout, callbacks, and reconciliation. `internal/module/console` is the admin operations overview.
 - JavaScript task plugins live in `plugins/tasks/`, run through `pkg/jsplugin/`, and integrate with host task polling and settlement.
 - `web/` is the React frontend (see `web/AGENTS.md`).
+
+### Modules
+
+The code shared with upstream keeps upstream's layered layout and is the shared kernel: every root package except `controller/`, `router/`, and `main`. Domains this fork owns are modules under `internal/module/<name>/`, in the style of ppanel's modular monolith. Build new fork-owned features as modules. `internal/arch` tests enforce these rules:
+
+- A module has a facade (its root package, whose exported functions and types are its API), `entity/` (its GORM tables and constants), `transport/http/` (its gin handlers, package `handler`), and `internal/` for everything else. `contract/` and `events/` are reserved for module types and integration events once another module needs them.
+- The shared kernel never imports a module; tests may import a module's `entity` package. `controller/` and `main` call module facades; only `router/` imports a module's `transport/http`. Modules never import `controller/` or `router/`, and reach another module only through its facade and `entity`. A module's handlers call its facade, not its `internal/` packages.
+- Each table belongs to one owner. A module's tables are queried only by that module. A module writes kernel tables (wallets, subscriptions, logs) only through the functions `model/module_api.go` exports, and a read-only module such as `console` may read kernel tables directly. Migrations for every table stay in `model/migrations/`.
+- Unlike ppanel, a facade is a set of package functions rather than an injected interface, because the kernel is built on package-level state; and payment settlement credits the wallet or subscription in the same transaction through the kernel's `…Tx` functions instead of an event, because money must not be eventually consistent.
 
 ## Internationalization (i18n)
 
@@ -108,17 +117,17 @@ Inside `relaykit/`, use `kitutil.*` from `relaykit/relayconvert/kitutil/json.go`
 - Database tests use `pkg/pgtest` against the PostgreSQL server named by `TEST_POSTGRES_DSN` (`make test-db` starts a local PostgreSQL 18 and prints the DSN). Tests fail when it is unset; do not add a skip or an in-memory fallback. Each package with database tests calls `pgtest.Main` from its `TestMain`, tests restore a clean state with `pgtest.Reset`, and migration or separate log-database tests use a fresh schema from `pgtest.NewSchema`.
 - Prefer GORM methods (`Create`, `Find`, `Where`, `Updates`, etc.) over raw SQL.
 - Declare auto-increment primary keys in GORM tags as the existing models do, and create them in migrations as `bigserial`, the type `AutoMigrate` gives them; do not use identity columns.
-- Standard `SELECT ... FOR UPDATE` row locks built with GORM query methods in `model/` MUST use `lockForUpdate(tx)`. Do not use the legacy GORM v1 pattern `tx.Set("gorm:query_option", "FOR UPDATE")`, because GORM v2 silently ignores it and no lock is acquired. Do not duplicate `clause.Locking{Strength: "UPDATE"}` at call sites.
+- Standard `SELECT ... FOR UPDATE` row locks built with GORM query methods in `model/` MUST use `lockForUpdate(tx)`, and in modules `model.LockForUpdate(tx)`. Do not use the legacy GORM v1 pattern `tx.Set("gorm:query_option", "FOR UPDATE")`, because GORM v2 silently ignores it and no lock is acquired. Do not duplicate `clause.Locking{Strength: "UPDATE"}` at call sites.
 - Queries on the log database must also work on ClickHouse: use `logGroupCol` / `logKeyCol` for reserved-word columns and branch with `common.UsingLogDatabase(...)` where the engines differ.
 - Avoid GORM boolean default tags such as `gorm:"default:true"` when the default is a business rule already enforced by code; set these defaults in request/model normalization, hooks, constructors, or service logic. A column default a migration creates must match the tag, which `TestMigrationsMatchModels` checks.
 
 **Payments:**
 
 - Amounts are `int64` minor units (hundredths) of a named currency. Convert currencies with `gateway.ConvertAmount` and a decimal-string rate; never use floating point for money.
-- An order's payment expectation (amount, currency, rate) and its trade number are written once with compare-and-set updates (`SetPaymentExpectation`, `ClaimPaymentTrade`). Settlement locks the order with `lockForUpdate` and credits the wallet or subscription in the same transaction.
-- Settle a callback only after its signature verifies, its amount and currency equal the order's payment expectation, and the gateway confirms the payment. A verified payment that cannot be settled is recorded with `RecordPaymentUnmatched` and still acknowledged, so the gateway stops retrying; temporary failures return an error so it retries.
+- An order's payment expectation (amount, currency, rate) and its trade number are written once with compare-and-set updates (`SetPaymentExpectation`, `ClaimPaymentTrade`). Settlement locks the order with `model.LockForUpdate` and credits the wallet or subscription in the same transaction.
+- Settle a callback only after its signature verifies, its amount and currency equal the order's payment expectation, and the gateway confirms the payment. A verified payment that cannot be settled is recorded with `store.RecordUnmatched` and still acknowledged, so the gateway stops retrying; temporary failures return an error so it retries.
 - Build callback URLs with `gateway.NotifyURL` from the payment method's domain or the configured server address, never from the request Host header.
-- Files in `service/payment/gateway/` ported from ppanel keep their GPL-3.0 header listing what new-api changed; record further changes there too (see `THIRD-PARTY-LICENSES.md`).
+- Files in `internal/module/payment/internal/gateway/` ported from ppanel keep their GPL-3.0 header listing what new-api changed; record further changes there too (see `THIRD-PARTY-LICENSES.md`).
 
 **Relay and provider behavior:**
 

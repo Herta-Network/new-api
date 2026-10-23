@@ -10,9 +10,10 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/internal/module/payment"
+	"github.com/QuantumNous/new-api/internal/module/payment/entity"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/pgtest"
-	"github.com/QuantumNous/new-api/service/payment"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -118,9 +119,9 @@ func TestCNYBalanceToUSDUsesTheResolvedRate(t *testing.T) {
 	_, err := cnyBalanceToUSD(ctx, 73)
 	assert.ErrorIs(t, err, payment.ErrRateUnavailable)
 
-	require.NoError(t, model.SavePaymentExchangeRate(&model.PaymentExchangeRate{
+	require.NoError(t, model.DB.Create(&entity.PaymentExchangeRate{
 		FromCurrency: "CNY", ToCurrency: "USD", Rate: "0.14", Source: payment.RateSourceLive, FetchedAt: time.Now().Unix(),
-	}))
+	}).Error)
 	balance, err := cnyBalanceToUSD(ctx, 73)
 	require.NoError(t, err)
 	assert.InDelta(t, 10.22, balance, 1e-12)
