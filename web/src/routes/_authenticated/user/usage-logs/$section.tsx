@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { createFileRoute, redirect } from '@tanstack/react-router'
 
 import { UsageLogs } from '@/features/usage-logs'
+import { prefetchUsageLogs } from '@/features/usage-logs/lib/usage-logs-query'
 import {
   getCanonicalUsageLogsLocation,
   usageLogsSearchSchema,
@@ -39,6 +40,9 @@ export const Route = createFileRoute(
     }
   },
   validateSearch: usageLogsSearchSchema,
+  loaderDeps: ({ search }) => search,
+  loader: ({ context, params, deps }) =>
+    prefetchUsageLogs(context.queryClient, 'self', params.section, deps),
   component: UserUsageLogsPage,
 })
 

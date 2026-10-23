@@ -20,6 +20,16 @@ import { createFileRoute } from '@tanstack/react-router'
 import { z } from 'zod'
 
 import { Wallet } from '@/features/wallet'
+import {
+  affiliateCodeQueryOptions,
+  paymentInfoQueryOptions,
+  paymentMethodsQueryOptions,
+  redemptionInfoQueryOptions,
+  selfSubscriptionQueryOptions,
+  subscriptionPlansQueryOptions,
+  walletUserQueryOptions,
+} from '@/features/wallet/lib/wallet-queries'
+import { prefetchRouteData } from '@/lib/route-prefetch'
 
 const walletSearchSchema = z.object({
   show_history: z.boolean().optional(),
@@ -34,6 +44,16 @@ const walletSearchSchema = z.object({
 export const Route = createFileRoute('/_authenticated/user/wallet/')({
   component: RouteComponent,
   validateSearch: walletSearchSchema,
+  loader: ({ context }) => {
+    const queryClient = context.queryClient
+    prefetchRouteData(queryClient, walletUserQueryOptions)
+    prefetchRouteData(queryClient, affiliateCodeQueryOptions)
+    prefetchRouteData(queryClient, redemptionInfoQueryOptions)
+    prefetchRouteData(queryClient, paymentInfoQueryOptions)
+    prefetchRouteData(queryClient, paymentMethodsQueryOptions('topup'))
+    prefetchRouteData(queryClient, subscriptionPlansQueryOptions)
+    prefetchRouteData(queryClient, selfSubscriptionQueryOptions)
+  },
 })
 
 function RouteComponent() {

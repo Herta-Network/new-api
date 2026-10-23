@@ -30,10 +30,10 @@ import type {
   BillingUsageExample,
 } from '@/features/pricing/types'
 import { api } from '@/lib/api'
-import { ROLE } from '@/lib/roles'
 import { createServerError } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { canEditModelPricing } from './permission'
 import {
   PRICING_KEYS,
   pricingValuesByModel,
@@ -144,7 +144,7 @@ export async function previewModelPricing(request: {
 }
 
 export function useCanEditModelPricing() {
-  return useAuthStore((state) => state.auth.user?.role === ROLE.SUPER_ADMIN)
+  return useAuthStore((state) => canEditModelPricing(state.auth.user?.role))
 }
 
 export async function getModelPricing(
@@ -166,6 +166,10 @@ export function useModelPricing(names: string[] = [], enabled = true) {
     queryFn: () => getModelPricing(names),
     enabled: enabled && canEdit,
     refetchOnWindowFocus: false,
+    // Pricing changes only through the pricing editors, the legacy
+    // conversion, model deletion and upstream ratio sync, which all call
+    // `invalidateModelPricing`.
+    staleTime: 5 * 60 * 1000,
   })
 }
 

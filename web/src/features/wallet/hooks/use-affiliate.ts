@@ -16,49 +16,33 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import i18next from 'i18next'
-import { useState, useEffect, useCallback } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { getSelf } from '@/lib/api'
 import { handleServerError } from '@/lib/handle-server-error'
-import {
-  getServerMessage,
-  requireServerSuccess,
-} from '@/lib/server-error-message'
+import { getServerMessage } from '@/lib/server-error-message'
 
-import { getAffiliateCode, transferAffiliateQuota } from '../api'
-import { generateAffiliateLink } from '../lib'
+import { transferAffiliateQuota } from '../api'
+import { generateAffiliateLink } from '../lib/affiliate'
+import { affiliateCodeQueryOptions } from '../lib/wallet-queries'
 
 // ============================================================================
 // Affiliate Hook
 // ============================================================================
 
 export function useAffiliate() {
-  const [affiliateCode, setAffiliateCode] = useState<string>('')
-  const [affiliateLink, setAffiliateLink] = useState<string>('')
-  const [loading, setLoading] = useState(true)
   const [transferring, setTransferring] = useState(false)
   const { copyToClipboard } = useCopyToClipboard()
-
-  // Fetch affiliate code
-  const fetchAffiliateCode = useCallback(async () => {
-    try {
-      setLoading(true)
-      const response = requireServerSuccess(await getAffiliateCode())
-
-      if (response.success && response.data) {
-        setAffiliateCode(response.data)
-        const link = generateAffiliateLink(response.data)
-        setAffiliateLink(link)
-      }
-    } catch (error) {
-      handleServerError(error)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+  const affiliateQuery = useQuery(affiliateCodeQueryOptions)
+  const affiliateCode = affiliateQuery.data ?? ''
+  const affiliateLink = useMemo(
+    () => (affiliateCode ? generateAffiliateLink(affiliateCode) : ''),
+    [affiliateCode]
+  )
 
   // Copy affiliate link
   const copyAffiliateLink = useCallback(() => {
@@ -89,17 +73,13 @@ export function useAffiliate() {
     }
   }, [])
 
-  useEffect(() => {
-    fetchAffiliateCode()
-  }, [fetchAffiliateCode])
-
   return {
     affiliateCode,
     affiliateLink,
-    loading,
+    loading: affiliateQuery.isLoading,
     transferring,
     copyAffiliateLink,
     transferQuota,
-    refetch: fetchAffiliateCode,
+    refetch: affiliateQuery.refetch,
   }
 }

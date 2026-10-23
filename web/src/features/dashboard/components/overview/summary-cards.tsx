@@ -24,17 +24,15 @@ import { useTranslation } from 'react-i18next'
 
 import { StaggerContainer, StaggerItem } from '@/components/page-transition'
 import { Button } from '@/components/ui/button'
-import { getUserQuotaDates } from '@/features/dashboard/api'
 import { useSummaryCardsConfig } from '@/features/dashboard/hooks/use-dashboard-config'
 import type { QuotaDataItem } from '@/features/dashboard/types'
 import { useStatus } from '@/hooks/use-status'
 import { getCurrencyLabel, isCurrencyDisplayEnabled } from '@/lib/currency'
 import { formatNumber, formatQuota } from '@/lib/format'
-import { requireServerSuccess } from '@/lib/server-error-message'
-import { computeTimeRange } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { overviewUsageTrendQueryOptions } from '../../lib/overview-queries'
 import { StatCard } from '../ui/stat-card'
 
 const SUMMARY_SPARKLINE_BUCKETS = 12
@@ -142,29 +140,11 @@ export function SummaryCards() {
   const user = useAuthStore((state) => state.auth.user)
   const { loading } = useStatus()
 
-  const summaryTimeRange = useMemo(() => computeTimeRange(1), [])
   const remainQuota = Number(user?.quota ?? 0)
   const usedQuota = Number(user?.used_quota ?? 0)
   const requestCount = Number(user?.request_count ?? 0)
 
-  const usageTrendQuery = useQuery({
-    queryKey: [
-      'dashboard',
-      'overview',
-      'summary-sparklines',
-      summaryTimeRange.start_timestamp,
-      summaryTimeRange.end_timestamp,
-    ],
-    queryFn: async () =>
-      requireServerSuccess(
-        await getUserQuotaDates({
-          start_timestamp: summaryTimeRange.start_timestamp,
-          end_timestamp: summaryTimeRange.end_timestamp,
-          default_time: 'hour',
-        })
-      ),
-    staleTime: 60 * 1000,
-  })
+  const usageTrend = useQuery(overviewUsageTrendQueryOptions).data
 
   const summaryValues = useMemo(() => {
     return {
@@ -179,26 +159,21 @@ export function SummaryCards() {
   const sparklineData = useMemo(
     () =>
       buildSummarySparklines(
-        usageTrendQuery.data?.data ?? [],
+        usageTrend?.items ?? [],
         remainQuota,
-        summaryTimeRange.start_timestamp,
-        summaryTimeRange.end_timestamp
+        usageTrend?.start_timestamp ?? 0,
+        usageTrend?.end_timestamp ?? 0
       ),
-    [
-      remainQuota,
-      summaryTimeRange.end_timestamp,
-      summaryTimeRange.start_timestamp,
-      usageTrendQuery.data?.data,
-    ]
+    [remainQuota, usageTrend]
   )
 
   const recentUsage = useMemo(
     () =>
-      (usageTrendQuery.data?.data ?? []).reduce(
+      (usageTrend?.items ?? []).reduce(
         (total, item) => total + (Number(item.quota) || 0),
         0
       ),
-    [usageTrendQuery.data?.data]
+    [usageTrend]
   )
 
   const healthLevel = getHealthLevel(remainQuota, recentUsage)

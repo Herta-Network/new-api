@@ -29,26 +29,20 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { ROLE } from '@/lib/roles'
-import { requireServerSuccess } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { getChannelOps } from './api'
 import { ChannelsDialogs } from './components/channels-dialogs'
 import { ChannelsPrimaryButtons } from './components/channels-primary-buttons'
 import { ChannelsProvider } from './components/channels-provider'
 import { ChannelsTable } from './components/channels-table'
+import { channelOpsQueryOptions } from './lib/channels-query'
 
 export function Channels() {
   const { t } = useTranslation()
   const isRoot = useAuthStore(
     (state) => state.auth.user?.role === ROLE.SUPER_ADMIN
   )
-  const channelOpsQuery = useQuery({
-    queryKey: ['channel-ops'],
-    queryFn: async () => requireServerSuccess(await getChannelOps()),
-    retry: false,
-    staleTime: 5 * 60 * 1000,
-  })
+  const channelOpsQuery = useQuery(channelOpsQueryOptions)
   const retryTimes = channelOpsQuery.data?.data?.retry_times
   const retryLabel =
     typeof retryTimes === 'number' ? `${t('Max Retries')}: ${retryTimes}` : null

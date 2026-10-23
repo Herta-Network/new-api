@@ -29,17 +29,16 @@ import {
   type ServerPricingMode,
 } from '@/features/model-pricing/api'
 import { SERVER_PRICING_MODE_LABELS } from '@/features/model-pricing/pricing-mode'
-import { useMediaQuery } from '@/hooks'
+import { MOBILE_MEDIA_QUERY, useMediaQuery } from '@/hooks/use-media-query'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
-import {
-  getServerMessage,
-  requireServerSuccess,
-} from '@/lib/server-error-message'
+import { getServerMessage } from '@/lib/server-error-message'
 
-import { getModels, searchModels, getVendors } from '../api'
-import { DEFAULT_PAGE_SIZE } from '../constants'
-import { modelsQueryKeys, vendorsQueryKeys } from '../lib'
-import type { ModelSquareState } from '../types'
+import {
+  getModelsListFilters,
+  getModelsTableUrlConfig,
+  modelsListQueryOptions,
+  vendorsListQueryOptions,
+} from '../lib/models-query'
 import { DataTableBulkActions } from './data-table-bulk-actions'
 import { useModelsColumns } from './models-columns'
 import { useModels } from './models-provider'
@@ -50,7 +49,7 @@ export function ModelsTable() {
   const { t } = useTranslation()
   const { selectedVendor } = useModels()
   const canPrice = useCanEditModelPricing()
-  const isMobile = useMediaQuery('(max-width: 640px)')
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY)
 
   // URL state management
   const {
@@ -64,53 +63,12 @@ export function ModelsTable() {
   } = useTableUrlState({
     search: route.useSearch(),
     navigate: route.useNavigate(),
-    pagination: {
-      defaultPage: 1,
-      defaultPageSize: isMobile ? 10 : DEFAULT_PAGE_SIZE,
-    },
-    globalFilter: { enabled: true, key: 'filter' },
-    columnFilters: [
-      { columnId: 'status', searchKey: 'status', type: 'array' },
-      { columnId: 'square_state', searchKey: 'square_state', type: 'array' },
-      { columnId: 'vendor_id', searchKey: 'vendor', type: 'array' },
-      { columnId: 'sync_official', searchKey: 'sync', type: 'array' },
-      ...(canPrice
-        ? [
-            {
-              columnId: 'billing_mode',
-              searchKey: 'pricing',
-              type: 'array' as const,
-            },
-          ]
-        : []),
-    ],
+    ...getModelsTableUrlConfig(isMobile, canPrice),
   })
-
-  // Extract filters from column filters
-  const statusFilter =
-    (columnFilters.find((f) => f.id === 'status')?.value as string[]) || []
-  const squareState = (
-    columnFilters.find((f) => f.id === 'square_state')?.value as
-      | ModelSquareState[]
-      | undefined
-  )?.[0]
-  const vendorFilter =
-    (columnFilters.find((f) => f.id === 'vendor_id')?.value as string[]) || []
-  const syncFilter =
-    (columnFilters.find((f) => f.id === 'sync_official')?.value as string[]) ||
-    []
-  const pricingMode = (
-    columnFilters.find((f) => f.id === 'billing_mode')?.value as
-      | ServerPricingMode[]
-      | undefined
-  )?.[0]
+  const tableState = { globalFilter, columnFilters, pagination }
 
   // Fetch vendors for filter
-  const { data: vendorsData } = useQuery({
-    queryKey: vendorsQueryKeys.list(),
-    queryFn: async () =>
-      requireServerSuccess(await getVendors({ page_size: 1000 })),
-  })
+  const { data: vendorsData } = useQuery(vendorsListQueryOptions)
 
   const vendors = useMemo(
     () => vendorsData?.data?.items || [],
@@ -124,71 +82,15 @@ export function ModelsTable() {
     }))
   }, [vendors])
 
-  // Apply selected vendor from context or filter
-  const activeVendorFilter =
-    selectedVendor ||
-    (vendorFilter.length > 0 && !vendorFilter.includes('all')
-      ? vendorFilter[0]
-      : undefined)
-
-  const statusFilterValue =
-    statusFilter.length > 0 && !statusFilter.includes('all')
-      ? statusFilter[0]
-      : undefined
-  const syncFilterValue =
-    syncFilter.length > 0 && !syncFilter.includes('all')
-      ? syncFilter[0]
-      : undefined
-
-  // Use search API whenever any filter is active so status/sync are applied server-side
-  const shouldSearch = Boolean(
-    globalFilter?.trim() ||
-    activeVendorFilter ||
-    statusFilterValue ||
-    squareState ||
-    pricingMode ||
-    syncFilterValue
-  )
+  const shouldSearch = getModelsListFilters(
+    tableState,
+    selectedVendor
+  ).searching
 
   // Fetch models data
-  // eslint-disable-next-line @tanstack/query/exhaustive-deps
-  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
-    queryKey: modelsQueryKeys.list({
-      include_channel_models: true,
-      keyword: globalFilter,
-      vendor: activeVendorFilter,
-      status: statusFilterValue,
-      square_state: squareState,
-      pricing_mode: pricingMode,
-      sync_official: syncFilterValue,
-      p: pagination.pageIndex + 1,
-      page_size: pagination.pageSize,
-    }),
-    queryFn: async () => {
-      if (shouldSearch) {
-        return requireServerSuccess(
-          await searchModels({
-            include_channel_models: true,
-            keyword: globalFilter,
-            vendor: activeVendorFilter,
-            status: statusFilterValue,
-            square_state: squareState,
-            pricing_mode: pricingMode,
-            sync_official: syncFilterValue,
-            p: pagination.pageIndex + 1,
-            page_size: pagination.pageSize,
-          })
-        )
-      }
-      return requireServerSuccess(
-        await getModels({
-          include_channel_models: true,
-          p: pagination.pageIndex + 1,
-          page_size: pagination.pageSize,
-        })
-      )
-    },
-  })
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery(
+    modelsListQueryOptions(tableState, selectedVendor)
+  )
 
   const models = data?.data?.items || []
   const totalCount = data?.data?.total || 0

@@ -22,7 +22,7 @@ import { describe, test } from 'vitest'
 
 import { ROLE } from '@/lib/roles'
 
-import { resolveLogsViewAccess } from '../components/usage-logs-provider'
+import { resolveLogsViewAccess } from '../lib/usage-logs-query'
 
 describe('usage log access tier', () => {
   test('keeps users and the user workspace on the self tier', () => {

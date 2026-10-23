@@ -41,16 +41,17 @@ import {
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
-import { createServerError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
-import { getApiKeys, searchApiKeys } from '../api'
 import {
   API_KEY_STATUS,
   API_KEY_STATUS_OPTIONS,
   API_KEY_STATUSES,
-  ERROR_MESSAGES,
 } from '../constants'
+import {
+  API_KEYS_TABLE_URL_CONFIG,
+  apiKeysListQueryOptions,
+} from '../lib/api-keys-query'
 import type { ApiKey } from '../types'
 import { ApiKeyQuotaCell } from './api-key-quota-cell'
 import { ApiKeyActivityCell } from './api-key-timestamp-cell'
@@ -240,65 +241,21 @@ export function ApiKeysTable() {
   } = useTableUrlState({
     search: route.useSearch(),
     navigate: route.useNavigate(),
-    pagination: { defaultPage: 1, defaultPageSize: 20 },
-    globalFilter: { enabled: true, key: 'filter' },
-    columnFilters: [
-      { columnId: 'status', searchKey: 'status', type: 'array' },
-      { columnId: '_tokenSearch', searchKey: 'token', type: 'string' },
-    ],
+    ...API_KEYS_TABLE_URL_CONFIG,
   })
 
-  const {
-    value: tokenFilter,
-    inputValue: tokenFilterInput,
-    setInputValue: setTokenFilterInput,
-  } = useDebouncedColumnFilter({
-    columnFilters,
-    columnId: '_tokenSearch',
-    onColumnFiltersChange,
-  })
-  const shouldSearch = Boolean(globalFilter?.trim() || tokenFilter.trim())
+  const { inputValue: tokenFilterInput, setInputValue: setTokenFilterInput } =
+    useDebouncedColumnFilter({
+      columnFilters,
+      columnId: '_tokenSearch',
+      onColumnFiltersChange,
+    })
 
-  // Fetch data with React Query
-  // eslint-disable-next-line @tanstack/query/exhaustive-deps
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: [
-      'keys',
-      pagination.pageIndex + 1,
-      pagination.pageSize,
-      globalFilter,
-      tokenFilter,
-      refreshTrigger,
-    ],
-    queryFn: async () => {
-      const result = shouldSearch
-        ? await searchApiKeys({
-            keyword: globalFilter,
-            token: tokenFilter,
-            p: pagination.pageIndex + 1,
-            size: pagination.pageSize,
-          })
-        : await getApiKeys({
-            p: pagination.pageIndex + 1,
-            size: pagination.pageSize,
-          })
-
-      if (!result.success) {
-        throw createServerError(
-          result,
-          t(
-            shouldSearch
-              ? ERROR_MESSAGES.SEARCH_FAILED
-              : ERROR_MESSAGES.LOAD_FAILED
-          )
-        )
-      }
-
-      return {
-        items: result.data?.items || [],
-        total: result.data?.total || 0,
-      }
-    },
+    ...apiKeysListQueryOptions(
+      { globalFilter, columnFilters, pagination },
+      refreshTrigger
+    ),
     placeholderData: (previousData) => previousData,
   })
 

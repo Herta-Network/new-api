@@ -46,11 +46,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import {
-  getPublicPlans,
-  getSelfSubscriptionFull,
-  updateBillingPreference,
-} from '@/features/subscriptions/api'
+import { updateBillingPreference } from '@/features/subscriptions/api'
 import { SubscriptionPurchaseDialog } from '@/features/subscriptions/components/dialogs/subscription-purchase-dialog'
 import { formatDuration, formatResetPeriod } from '@/features/subscriptions/lib'
 import type {
@@ -61,10 +57,13 @@ import { toIntlLocale } from '@/i18n/languages'
 import { formatMinorAmount } from '@/lib/currency'
 import { formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
-import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
-import { subscriptionQueryKeys } from '../hooks/use-payment-queries'
+import {
+  selfSubscriptionQueryOptions,
+  subscriptionPlansQueryOptions,
+  subscriptionQueryKeys,
+} from '../lib/wallet-queries'
 import type { PurchaseRequest } from '../types'
 
 interface SubscriptionPlansCardProps {
@@ -99,16 +98,8 @@ export function SubscriptionPlansCard(props: SubscriptionPlansCardProps) {
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const queryClient = useQueryClient()
 
-  const plansQuery = useQuery({
-    queryKey: subscriptionQueryKeys.publicPlans,
-    queryFn: async () =>
-      requireServerSuccess(await getPublicPlans()).data ?? [],
-  })
-  const selfQuery = useQuery({
-    queryKey: subscriptionQueryKeys.self,
-    queryFn: async () =>
-      requireServerSuccess(await getSelfSubscriptionFull()).data ?? null,
-  })
+  const plansQuery = useQuery(subscriptionPlansQueryOptions)
+  const selfQuery = useQuery(selfSubscriptionQueryOptions)
   const plans = useMemo<PlanRecord[]>(
     () => plansQuery.data ?? [],
     [plansQuery.data]

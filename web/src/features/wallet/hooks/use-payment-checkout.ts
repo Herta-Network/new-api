@@ -24,12 +24,12 @@ import { toast } from 'sonner'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { checkoutPaymentOrder, createPaymentOrder } from '../api'
+import { paymentQueryKeys } from '../lib/wallet-queries'
 import type {
   CheckoutAction,
   PurchaseRequest,
   StripePaymentMethodType,
 } from '../types'
-import { paymentQueryKeys } from './use-payment-queries'
 
 // ============================================================================
 // Payment Checkout Hook
