@@ -1003,6 +1003,21 @@ export const STATIC_I18N_KEYS = [
   'Waiting for payment',
   'This page updates by itself once the payment provider confirms the payment.',
   'This payment method is unavailable',
+  // Payment method icon labels (PAYMENT_ICONS labelKey) not listed above.
+  'Visa',
+  'Mastercard',
+  'Bank',
+  'WeChat',
+  'Stripe card',
+  'PayPal',
+  'Apple Pay',
+  'Google Pay',
+  'Bitcoin',
+  'Ethereum',
+  'Tether (USDT)',
+  'Coins',
+  'Cash',
+  'QR code',
   // Email settings messages returned by the server.
   'SMTP sender address is not configured or invalid',
   // Admin operations overview period switches (labelKey constants).
