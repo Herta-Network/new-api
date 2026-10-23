@@ -36,12 +36,14 @@ export type LocaleLoaders = Record<
 type LanguageChangeResult = 'changed' | 'failed' | 'superseded'
 
 // One dynamic import per language: Rsbuild emits each locale file as its own
-// chunk, so a page downloads only the languages it actually shows.
+// chunk, so a page downloads only the languages it actually shows. Each chunk
+// is named `locale-<code>`; the production build looks them up by that name to
+// preload the visitor's language from index.html (see `locale-preload.ts`).
 const localeLoaders: LocaleLoaders = {
   en: () => import(/* webpackChunkName: "locale-en" */ './locales/en.json'),
-  zhCN: () => import(/* webpackChunkName: "locale-zh" */ './locales/zh.json'),
+  zhCN: () => import(/* webpackChunkName: "locale-zhCN" */ './locales/zh.json'),
   zhTW: () =>
-    import(/* webpackChunkName: "locale-zh-TW" */ './locales/zh-TW.json'),
+    import(/* webpackChunkName: "locale-zhTW" */ './locales/zh-TW.json'),
   fr: () => import(/* webpackChunkName: "locale-fr" */ './locales/fr.json'),
   ru: () => import(/* webpackChunkName: "locale-ru" */ './locales/ru.json'),
   ja: () => import(/* webpackChunkName: "locale-ja" */ './locales/ja.json'),
