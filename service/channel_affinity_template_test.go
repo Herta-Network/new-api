@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -194,6 +195,32 @@ func TestExtractChannelAffinityValue_RequestHeader(t *testing.T) {
 	})
 
 	require.Equal(t, "tenant-123", value)
+}
+
+// The conversation module is not imported here: its middleware hands the
+// session over through constant.ContextKeyConversationSessionID, stubbed below.
+func TestExtractChannelAffinityValue_ConversationSession(t *testing.T) {
+	tests := []struct {
+		name    string
+		session func(*gin.Context) string
+		want    string
+	}{
+		{name: "the session the conversation module recognized", session: func(*gin.Context) string { return "cs_1" }, want: "cs_1"},
+		{name: "a request the conversation middleware did not run for", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			if tt.session != nil {
+				common.SetContextKey(ctx, constant.ContextKeyConversationSessionID, tt.session)
+			}
+
+			value := extractChannelAffinityValue(ctx, operation_setting.ChannelAffinityKeySource{Type: "conversation_session"})
+
+			assert.Equal(t, tt.want, value)
+		})
+	}
 }
 
 func TestGetPreferredChannelByAffinity_RequestHeaderKeySource(t *testing.T) {

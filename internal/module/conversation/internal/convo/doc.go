@@ -1,0 +1,30 @@
+// Copyright 2026 The AstrLink Authors.
+// SPDX-License-Identifier: Apache-2.0
+//
+// Ported from AstrLink convo (https://github.com/Calcium-Ion/AstrLink, convo/
+// at commit 8461bf2). Changed in new-api: moved into the root module as
+// internal/module/conversation/internal/convo, and JSON is decoded through
+// the host's common JSON wrappers.
+
+// Package convo identifies conversation sessions and user turns from stateless
+// LLM API traffic.
+//
+// Chat-style APIs (OpenAI Chat Completions, OpenAI Responses, Anthropic
+// Messages, Gemini GenerateContent) are stateless: every request replays the
+// whole history. A gateway that only sees one HTTP call at a time therefore has
+// no session identifier to group by. This package extracts the signals that a
+// replayed history does carry and turns them into typed session cursors:
+//
+//   - explicit cursors the protocol or client already sends
+//     (previous_response_id, conversation ids, prompt_cache_key, ...);
+//   - echo ids the model produced and the client must send back verbatim
+//     (tool call ids, output item ids, Gemini thought signatures);
+//   - a keyed fingerprint of the last assistant text, which survives when a
+//     conversation contains no tool calls at all.
+//
+// The package has no storage, logging, or network dependencies. Callers persist
+// the cursors a response produced and answer Lookup queries; Policy.Resolve
+// decides which stored session a new request continues. Policy.NextTurn
+// places the request relative to the record it continues, so an agent tool
+// loop of many calls is reported as one user turn.
+package convo

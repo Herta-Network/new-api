@@ -36,7 +36,8 @@ and frontend bundles distributed to users.
 
 ==== Apache-2.0 Notices ====
 
-convo (pkg/convo), conversation session identification from AstrLink
+convo (internal/module/conversation/internal/convo), conversation session
+identification from AstrLink
 Copyright 2026 The AstrLink Authors
 https://github.com/Calcium-Ion/AstrLink
 Licensed under the Apache License, Version 2.0. Modified for new-api: moved
