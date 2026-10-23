@@ -19,6 +19,8 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/internal/module/currency"
+	"github.com/QuantumNous/new-api/internal/module/payment"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
@@ -31,7 +33,6 @@ import (
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
-	"github.com/QuantumNous/new-api/service/payment"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
@@ -136,11 +137,12 @@ func main() {
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
 
-	// Payments: close expired orders through their gateway, refresh exchange
-	// rates, and show amounts at the site currency's rate
+	// Payments: close expired orders through their gateway
 	payment.StartPaymentReconcileTask()
-	payment.StartExchangeRateRefreshTask()
-	payment.StartSiteCurrencyRateTask()
+	// Currency: refresh exchange rates, and show amounts at the site
+	// currency's rate
+	currency.StartExchangeRateRefreshTask()
+	currency.StartSiteCurrencyRateTask()
 
 	// Report this process as a system instance so the System Info page can show
 	// all currently alive nodes in multi-instance deployments.
@@ -320,6 +322,12 @@ func InitResources() error {
 	if err != nil {
 		common.FatalLog(common.LogText("failed to initialize database: %s", err.Error()))
 		return err
+	}
+	if common.IsMasterNode {
+		if err = payment.Init(); err != nil {
+			common.FatalLog(common.LogText("failed to initialize payments: %s", err.Error()))
+			return err
+		}
 	}
 	if err = authz.Init(model.DB); err != nil {
 		common.FatalLog(common.LogText("failed to initialize authorization: %s", err.Error()))

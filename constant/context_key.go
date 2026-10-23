@@ -47,6 +47,11 @@ const (
 	// ContextKeyUpstreamRateLimit carries the cooldown an upstream 429 asked
 	// for until the failed attempt is processed.
 	ContextKeyUpstreamRateLimit ContextKey = "upstream_rate_limit"
+	// ContextKeyConversationSessionID holds a func(*gin.Context) string that
+	// returns the request's conversation session, recognizing it on the first
+	// call. The conversation module's middleware sets it; kernel code reads it
+	// through service.ConversationSessionID.
+	ContextKeyConversationSessionID ContextKey = "conversation_session_id"
 
 	ContextKeyAutoGroup           ContextKey = "auto_group"
 	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"

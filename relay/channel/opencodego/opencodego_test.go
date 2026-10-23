@@ -13,7 +13,6 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,6 +23,10 @@ type sessionRequest struct {
 	format  types.RelayFormat
 	headers map[string]string
 	body    string
+	// conversation is the session the conversation module recognized, handed
+	// over through constant.ContextKeyConversationSessionID; "" leaves the
+	// request without the module's middleware.
+	conversation string
 }
 
 func sessionIDFor(t *testing.T, request sessionRequest) string {
@@ -37,6 +40,9 @@ func sessionIDFor(t *testing.T, request sessionRequest) string {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = storage.Close() })
 	c.Set(common.KeyBodyStorage, storage)
+	if request.conversation != "" {
+		common.SetContextKey(c, constant.ContextKeyConversationSessionID, func(*gin.Context) string { return request.conversation })
+	}
 	info := &relaycommon.RelayInfo{UserId: 1, TokenId: request.tokenID, RelayFormat: request.format}
 	return SessionID(c, info)
 }
@@ -44,6 +50,9 @@ func sessionIDFor(t *testing.T, request sessionRequest) string {
 func TestSessionIDIsStablePerConversation(t *testing.T) {
 	const chatTurn1 = `{"messages":[{"role":"system","content":"be brief"},{"role":"user","content":"fix the bug"}]}`
 	const chatTurn2 = `{"messages":[{"role":"system","content":"be brief"},{"role":"user","content":"fix the bug"},{"role":"assistant","content":"done"},{"role":"user","content":"now add a test"}]}`
+	// chatTrimmed is chatTurn2 from a client that keeps only the newest
+	// messages, so the opening the fallback hashes is gone.
+	const chatTrimmed = `{"messages":[{"role":"assistant","content":"done"},{"role":"user","content":"now add a test"}]}`
 	tests := []struct {
 		name  string
 		a     sessionRequest
@@ -104,6 +113,30 @@ func TestSessionIDIsStablePerConversation(t *testing.T) {
 			b:     sessionRequest{tokenID: 7, format: types.RelayFormatOpenAIResponses, headers: map[string]string{"session_id": "codex-2"}, body: `{"input":"fix the bug"}`},
 			equal: false,
 		},
+		{
+			name:  "a recognized conversation names the session after the history was trimmed",
+			a:     sessionRequest{tokenID: 7, format: types.RelayFormatOpenAI, conversation: "cs_1", body: chatTurn1},
+			b:     sessionRequest{tokenID: 7, format: types.RelayFormatOpenAI, conversation: "cs_1", body: chatTrimmed},
+			equal: true,
+		},
+		{
+			name:  "two recognized conversations with the same opening are two sessions",
+			a:     sessionRequest{tokenID: 7, format: types.RelayFormatOpenAI, conversation: "cs_1", body: chatTurn1},
+			b:     sessionRequest{tokenID: 7, format: types.RelayFormatOpenAI, conversation: "cs_2", body: chatTurn1},
+			equal: false,
+		},
+		{
+			name:  "without the conversation middleware a trimmed turn falls back to its opening",
+			a:     sessionRequest{tokenID: 7, format: types.RelayFormatOpenAI, conversation: "cs_1", body: chatTrimmed},
+			b:     sessionRequest{tokenID: 7, format: types.RelayFormatOpenAI, body: chatTrimmed},
+			equal: false,
+		},
+		{
+			name:  "a client session header wins over the recognized conversation",
+			a:     sessionRequest{tokenID: 7, format: types.RelayFormatOpenAI, headers: map[string]string{"X-Claude-Code-Session-Id": "cc-7"}, conversation: "cs_1", body: chatTrimmed},
+			b:     sessionRequest{tokenID: 7, format: types.RelayFormatOpenAI, headers: map[string]string{"X-Claude-Code-Session-Id": "cc-7"}, body: chatTrimmed},
+			equal: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -117,48 +150,6 @@ func TestSessionIDIsStablePerConversation(t *testing.T) {
 			}
 		})
 	}
-}
-
-// conversationTurn relays one chat call with conversation recognition on, the
-// way middleware.ConversationSession runs it, and returns the session header
-// OpenCode Go would receive.
-func conversationTurn(t *testing.T, headers map[string]string, body string, response string) string {
-	t.Helper()
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
-	for name, value := range headers {
-		c.Request.Header.Set(name, value)
-	}
-	common.SetContextKey(c, constant.ContextKeyUserId, 1)
-	common.SetContextKey(c, constant.ContextKeyTokenId, 31)
-	require.True(t, service.BeginConversationSession(c))
-	session := SessionID(c, &relaycommon.RelayInfo{UserId: 1, TokenId: 31, RelayFormat: types.RelayFormatOpenAI})
-	c.Header("Content-Type", "application/json")
-	_, err := c.Writer.WriteString(response)
-	require.NoError(t, err)
-	service.FinishConversationSession(c)
-	return session
-}
-
-func TestSessionIDFollowsRecognizedConversation(t *testing.T) {
-	const toolCall = `{"id":"call_3c4d5e6f7a8b9c0d1e2f","type":"function","function":{"name":"grep","arguments":"{}"}}`
-	// The client keeps only the newest messages, so the opening the fallback
-	// hashes is gone; the echoed tool call id still names the conversation.
-	const trimmed = `{"messages":[{"role":"assistant","tool_calls":[` + toolCall + `]},{"role":"tool","tool_call_id":"call_3c4d5e6f7a8b9c0d1e2f","content":"a.go:1 TODO"}]}`
-
-	first := conversationTurn(t, nil, `{"messages":[{"role":"system","content":"be brief"},{"role":"user","content":"list the TODOs"}]}`,
-		`{"id":"chatcmpl-o1","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[`+toolCall+`]}}]}`)
-	next := conversationTurn(t, nil, trimmed, `{"id":"chatcmpl-o2","choices":[{"index":0,"message":{"role":"assistant","content":"done"}}]}`)
-	assert.Regexp(t, `^newapi_[0-9a-f]{32}$`, first)
-	assert.Equal(t, first, next)
-	assert.NotEqual(t, first, sessionIDFor(t, sessionRequest{tokenID: 31, format: types.RelayFormatOpenAI, body: trimmed}),
-		"without recognition the trimmed turn falls back to another session")
-
-	headerSession := map[string]string{"X-Claude-Code-Session-Id": "cc-7"}
-	assert.Equal(t,
-		sessionIDFor(t, sessionRequest{tokenID: 31, format: types.RelayFormatOpenAI, headers: headerSession, body: trimmed}),
-		conversationTurn(t, headerSession, trimmed, `{"id":"chatcmpl-o3","choices":[]}`),
-		"a client session header still wins over the recognized conversation")
 }
 
 func TestFetchUsage(t *testing.T) {

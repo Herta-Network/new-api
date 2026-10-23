@@ -281,15 +281,6 @@ func migrateDB() error {
 	if err := runMigrations(DB, migrationFiles, mainMigrations); err != nil {
 		return err
 	}
-	if err := migrateRetiredCurrencyOptions(DB); err != nil {
-		return err
-	}
-	if err := ensureBalancePaymentMethod(DB); err != nil {
-		return err
-	}
-	if err := ensureStripePaymentMethodTypes(DB); err != nil {
-		return err
-	}
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err
 	}

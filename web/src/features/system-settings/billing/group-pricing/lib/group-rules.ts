@@ -314,7 +314,7 @@ export function overrideRuleCount(rules: GroupRules) {
   )
 }
 
-// service/payment quoteTopup: the amount × the user group's top-up ratio,
+// internal/module/payment quoteTopup: the amount × the user group's top-up ratio,
 // where a missing or non-positive ratio counts as 1.
 export function topupDue(amountMinor: number, ratio: number | undefined) {
   const effective = ratio !== undefined && ratio > 0 ? ratio : 1
