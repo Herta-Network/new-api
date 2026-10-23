@@ -1,8 +1,8 @@
 // Package payment is the facade of the payment module: pricing and quotes,
 // order creation and checkout, gateway callbacks, closing and reconciling
-// pending orders, the administrator's payment methods and the exchange
-// rates the prices are converted with. Its exported functions and types are
-// the module's API; internal/gateway is the protocol layer and
+// pending orders, and the administrator's payment methods. Prices convert at
+// the rates of the currency module's facade. Its exported functions and
+// types are the module's API; internal/gateway is the protocol layer and
 // internal/store keeps the payment tables, the orders and their settlement.
 package payment
 
@@ -25,7 +25,7 @@ const (
 	paymentWindow = 15 * time.Minute
 	// maxPendingOrders is how many unexpired pending orders a user may hold.
 	maxPendingOrders = 5
-	// gatewayTimeout bounds every gateway and rate API request.
+	// gatewayTimeout bounds every gateway request.
 	gatewayTimeout = 15 * time.Second
 )
 

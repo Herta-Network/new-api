@@ -57,7 +57,8 @@ Paul Querna (http://paul.querna.org/).
 
 ==== GPL-3.0 Ported Source ====
 
-ppanel payment gateways (internal/module/payment/internal/gateway), from
+ppanel payment gateways (internal/module/payment/internal/gateway) and
+exchange rate client (internal/module/currency/internal/exchangerate), from
 https://github.com/perfect-panel/backend at commit 944dc363cc6a
 Licensed under the GNU General Public License version 3 and conveyed here as
 part of a work under the GNU Affero General Public License version 3, as

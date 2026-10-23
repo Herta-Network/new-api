@@ -1,7 +1,7 @@
 // Package store keeps the payment module's tables: payment methods,
-// orders and their settlement, unmatched payments and exchange rates. It
-// writes the shared kernel's tables (wallets, subscriptions, logs) only
-// through the exported functions of package model.
+// orders and their settlement, and unmatched payments. It writes the shared
+// kernel's tables (wallets, subscriptions, logs) only through the exported
+// functions of package model.
 package store
 
 import (

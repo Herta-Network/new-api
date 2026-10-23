@@ -22,6 +22,7 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 - `relaykit/` is an independent Go module for protocol DTOs and conversions; transport, authentication, database access, and billing stay in the host.
 - `tokenkit/` is an independent Go module for text and image token counting and estimation; request parsing, file loading, and billing stay in the host.
 - Payments (EPay, Stripe, Cryptomus, and wallet balance) are the `internal/module/payment` module and follow ppanel's gateway design: `internal/gateway/` is the protocol layer and never touches the database, `internal/store/` keeps payment methods, orders, and their state transitions, and the facade runs pricing, checkout, callbacks, and reconciliation. `internal/module/console` is the admin operations overview.
+- Exchange rates are the `internal/module/currency` module: `internal/exchangerate/` is the apilayer client, `internal/store/` keeps the stored live rates, and the facade resolves a pair's rate (an administrator's override, then a fresh live rate) for prices, displayed amounts, and channel balances, refreshes the rates the site needs, and publishes the rate amounts are shown at. The settings it reads (`payment_setting.currency`, the rate API key, the overrides) stay in `setting/operation_setting`.
 - JavaScript task plugins live in `plugins/tasks/`, run through `pkg/jsplugin/`, and integrate with host task polling and settlement.
 - `web/` is the React frontend (see `web/AGENTS.md`).
 
@@ -30,7 +31,7 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 The code shared with upstream keeps upstream's layered layout and is the shared kernel: every root package except `controller/`, `router/`, and `main`. Domains this fork owns are modules under `internal/module/<name>/`, in the style of ppanel's modular monolith. Build new fork-owned features as modules. `internal/arch` tests enforce these rules:
 
 - A module has a facade (its root package, whose exported functions and types are its API), `entity/` (its GORM tables and constants), `transport/http/` (its gin handlers, package `handler`), and `internal/` for everything else. `contract/` and `events/` are reserved for module types and integration events once another module needs them.
-- The shared kernel never imports a module; tests may import a module's `entity` package. `controller/` and `main` call module facades; only `router/` imports a module's `transport/http`. Modules never import `controller/` or `router/`, and reach another module only through its facade and `entity`. A module's handlers call its facade, not its `internal/` packages.
+- The shared kernel never imports a module; tests may import a module's `entity` package. `controller/` and `main` call module facades; only `router/` imports a module's `transport/http`. Modules never import `controller/` or `router/`, and reach another module only through its facade and `entity`. A module's handlers call its facade, not its `internal/` packages. Module imports never form a cycle: when a module needs to ask one that imports it, the imported module's facade takes a registration that the other makes from its `init` function, as payment registers the currency pairs its gateways convert with through `currency.RegisterPairSource`.
 - Each table belongs to one owner. A module's tables are queried only by that module. A module writes kernel tables (wallets, subscriptions, logs) only through the functions `model/module_api.go` exports, and a read-only module such as `console` may read kernel tables directly. Migrations for every table stay in `model/migrations/`.
 - Unlike ppanel, a facade is a set of package functions rather than an injected interface, because the kernel is built on package-level state; and payment settlement credits the wallet or subscription in the same transaction through the kernel's `…Tx` functions instead of an event, because money must not be eventually consistent.
 
@@ -123,11 +124,11 @@ Inside `relaykit/`, use `kitutil.*` from `relaykit/relayconvert/kitutil/json.go`
 
 **Payments:**
 
-- Amounts are `int64` minor units (hundredths) of a named currency. Convert currencies with `gateway.ConvertAmount` and a decimal-string rate; never use floating point for money.
+- Amounts are `int64` minor units (hundredths) of a named currency. Convert currencies with `gateway.ConvertAmount` and the decimal-string rate `currency.ResolveRate` returns; never use floating point for money.
 - An order's payment expectation (amount, currency, rate) and its trade number are written once with compare-and-set updates (`SetPaymentExpectation`, `ClaimPaymentTrade`). Settlement locks the order with `model.LockForUpdate` and credits the wallet or subscription in the same transaction.
 - Settle a callback only after its signature verifies, its amount and currency equal the order's payment expectation, and the gateway confirms the payment. A verified payment that cannot be settled is recorded with `store.RecordUnmatched` and still acknowledged, so the gateway stops retrying; temporary failures return an error so it retries.
 - Build callback URLs with `gateway.NotifyURL` from the payment method's domain or the configured server address, never from the request Host header.
-- Files in `internal/module/payment/internal/gateway/` ported from ppanel keep their GPL-3.0 header listing what new-api changed; record further changes there too (see `THIRD-PARTY-LICENSES.md`).
+- Files in `internal/module/payment/internal/gateway/` and `internal/module/currency/internal/exchangerate/` ported from ppanel keep their GPL-3.0 header listing what new-api changed; record further changes there too (see `THIRD-PARTY-LICENSES.md`).
 
 **Relay and provider behavior:**
 

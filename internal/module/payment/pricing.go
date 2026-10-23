@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/internal/module/currency"
 	"github.com/QuantumNous/new-api/internal/module/payment/internal/gateway"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -152,7 +153,7 @@ func quoteTopup(ctx context.Context, userId int, req PurchaseRequest, quote *Quo
 	if due.GreaterThan(decimal.NewFromInt(maxOrderAmount)) {
 		return errAmountOutOfRange
 	}
-	quotaRate, err := ResolveRate(ctx, quote.Currency, "USD")
+	quotaRate, err := currency.ResolveRate(ctx, quote.Currency, "USD")
 	if err != nil {
 		return err
 	}
@@ -222,7 +223,7 @@ func quoteSubscription(ctx context.Context, req PurchaseRequest, quote *Quote) e
 	if plan.AllowBalancePay != nil && !*plan.AllowBalancePay {
 		return errBalanceNotAllowed
 	}
-	quotaRate, err := ResolveRate(ctx, quote.Currency, "USD")
+	quotaRate, err := currency.ResolveRate(ctx, quote.Currency, "USD")
 	if err != nil {
 		return err
 	}
@@ -298,6 +299,29 @@ func chargeRate(ctx context.Context, gw gateway.Gateway, site string) (string, e
 	if target == "" || target == site {
 		return "", nil
 	}
-	rate, err := ResolveRate(ctx, site, target)
+	rate, err := currency.ResolveRate(ctx, site, target)
 	return rate.Rate, err
+}
+
+func init() {
+	currency.RegisterPairSource(chargeRatePairs)
+}
+
+// chargeRatePairs are the pairs a site in currency site converts prices
+// with for gateways that collect another currency: to CNY when an enabled
+// EPay method collects CNY.
+func chargeRatePairs(site string) ([]currency.Pair, error) {
+	if site == "CNY" {
+		return nil, nil
+	}
+	methods, err := store.ListMethods()
+	if err != nil {
+		return nil, err
+	}
+	for _, method := range methods {
+		if method.Enabled && method.Platform == gateway.PlatformEPay {
+			return []currency.Pair{{From: site, To: "CNY", Use: currency.RateUseEPay}}, nil
+		}
+	}
+	return nil, nil
 }

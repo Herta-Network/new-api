@@ -1,4 +1,4 @@
-package payment
+package currency
 
 import (
 	"context"
@@ -11,12 +11,12 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/internal/module/payment/internal/gateway"
+	"github.com/QuantumNous/new-api/internal/module/currency/entity"
+	"github.com/QuantumNous/new-api/internal/module/currency/internal/exchangerate"
+	"github.com/QuantumNous/new-api/internal/module/currency/internal/store"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
-	"github.com/QuantumNous/new-api/internal/module/payment/entity"
-	"github.com/QuantumNous/new-api/internal/module/payment/internal/store"
 	"github.com/shopspring/decimal"
 )
 
@@ -187,21 +187,21 @@ func cacheRate(key, rate string, fetched time.Time) {
 
 // refreshRate fetches the pair from the rate API and stores it. A previous
 // rate that is still fresh bounds how far the new one may move.
-func refreshRate(ctx context.Context, from, to string, previous *entity.PaymentExchangeRate) (string, time.Time, error) {
+func refreshRate(ctx context.Context, from, to string, previous *entity.ExchangeRate) (string, time.Time, error) {
 	apiKey := strings.TrimSpace(operation_setting.GetPaymentSetting().ExchangeRateAPIKey)
 	if apiKey == "" {
 		return "", time.Time{}, errors.New("the exchange rate API key is not configured")
 	}
-	query := gateway.RateQuery{From: from, To: to}
+	query := exchangerate.RateQuery{From: from, To: to}
 	if previous != nil && time.Since(time.Unix(previous.FetchedAt, 0)) < rateMaxAge {
 		query.Previous, query.MaxChangeBP = previous.Rate, rateMaxChangeBP
 	}
-	rate, err := gatewayRegistry().ExchangeRates(apiKey).Fetch(ctx, query)
+	rate, err := exchangerate.NewClient(rateHTTPClient(), rateAPIURL, apiKey).Fetch(ctx, query)
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	fetched := time.Now()
-	if err := store.SaveExchangeRate(&entity.PaymentExchangeRate{
+	if err := store.SaveExchangeRate(&entity.ExchangeRate{
 		FromCurrency: from, ToCurrency: to, Rate: rate, Source: RateSourceLive, FetchedAt: fetched.Unix(),
 	}); err != nil {
 		return "", time.Time{}, err
@@ -235,31 +235,39 @@ func PublishSiteCurrencyRate() {
 	}
 }
 
-// ratePair is a pair the site converts with and what for.
-type ratePair struct {
-	from, to, use string
+// Pair is a currency pair the site converts with: From into To, for Use.
+type Pair struct {
+	From, To, Use string
+}
+
+// pairSources list the pairs other modules convert with; see
+// RegisterPairSource.
+var pairSources []func(site string) ([]Pair, error)
+
+// RegisterPairSource adds the pairs another module converts with in a site
+// of currency site to the pairs the rate task refreshes and the rate
+// settings list. A module that converts with these rates calls it from its
+// init function, because this module cannot import it.
+func RegisterPairSource(source func(site string) ([]Pair, error)) {
+	pairSources = append(pairSources, source)
 }
 
 // requiredRatePairs are the pairs a site in currency site converts with:
-// the site currency to USD for quota and displayed amounts, to CNY when an
-// enabled EPay method collects CNY, and CNY to USD for the balances of
-// Moonshot and DeepSeek channels.
-func requiredRatePairs(site string) ([]ratePair, error) {
-	var pairs []ratePair
+// the site currency to USD for quota and displayed amounts, the pairs other
+// modules registered (the site currency to CNY when an enabled EPay method
+// collects CNY), and CNY to USD for the balances of Moonshot and DeepSeek
+// channels.
+func requiredRatePairs(site string) ([]Pair, error) {
+	var pairs []Pair
 	if site != "USD" {
-		pairs = append(pairs, ratePair{site, "USD", RateUseQuota})
+		pairs = append(pairs, Pair{site, "USD", RateUseQuota})
 	}
-	if site != "CNY" {
-		methods, err := store.ListMethods()
+	for _, source := range pairSources {
+		registered, err := source(site)
 		if err != nil {
 			return nil, err
 		}
-		for _, method := range methods {
-			if method.Enabled && method.Platform == gateway.PlatformEPay {
-				pairs = append(pairs, ratePair{site, "CNY", RateUseEPay})
-				break
-			}
-		}
+		pairs = append(pairs, registered...)
 	}
 	for _, channelType := range []int{constant.ChannelTypeMoonshot, constant.ChannelTypeDeepSeek} {
 		count, err := model.CountChannelsByType(channelType)
@@ -267,7 +275,7 @@ func requiredRatePairs(site string) ([]ratePair, error) {
 			return nil, err
 		}
 		if count > 0 {
-			pairs = append(pairs, ratePair{"CNY", "USD", RateUseChannelBalance})
+			pairs = append(pairs, Pair{"CNY", "USD", RateUseChannelBalance})
 			break
 		}
 	}
@@ -284,14 +292,14 @@ func RefreshRates(ctx context.Context) error {
 	var errs []error
 	refreshed := map[string]bool{}
 	for _, pair := range pairs {
-		key := pair.from + "/" + pair.to
-		if _, _, pinned := operation_setting.ExchangeRateOverride(pair.from, pair.to); pinned || refreshed[key] {
+		key := pair.From + "/" + pair.To
+		if _, _, pinned := operation_setting.ExchangeRateOverride(pair.From, pair.To); pinned || refreshed[key] {
 			continue
 		}
 		refreshed[key] = true
-		previous, err := store.GetExchangeRate(pair.from, pair.to)
+		previous, err := store.GetExchangeRate(pair.From, pair.To)
 		if err == nil {
-			_, _, err = refreshRate(ctx, pair.from, pair.to, previous)
+			_, _, err = refreshRate(ctx, pair.From, pair.To, previous)
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", key, err))
@@ -343,12 +351,12 @@ func RateOverview(site string) ([]RatePair, error) {
 	}
 	for pair := range operation_setting.GetPaymentSetting().ExchangeRateOverrides {
 		from, to, _ := strings.Cut(pair, "/")
-		needed = append(needed, ratePair{from, to, ""})
+		needed = append(needed, Pair{From: from, To: to})
 	}
 	var rows []RatePair
 	index := map[string]int{}
 	for _, need := range needed {
-		base, quote := need.from, need.to
+		base, quote := need.From, need.To
 		if quote == "USD" || (quote == site && base != "USD") {
 			base, quote = quote, base
 		}
@@ -360,13 +368,13 @@ func RateOverview(site string) ([]RatePair, error) {
 			rows = append(rows, RatePair{Base: base, Quote: quote, Uses: []string{}, Status: RateStatusLive})
 		}
 		row := &rows[position]
-		if need.use == "" {
+		if need.Use == "" {
 			continue
 		}
-		if !slices.Contains(row.Uses, need.use) {
-			row.Uses = append(row.Uses, need.use)
+		if !slices.Contains(row.Uses, need.Use) {
+			row.Uses = append(row.Uses, need.Use)
 		}
-		stored, err := store.GetExchangeRate(need.from, need.to)
+		stored, err := store.GetExchangeRate(need.From, need.To)
 		if err != nil {
 			return nil, err
 		}
@@ -378,7 +386,7 @@ func RateOverview(site string) ([]RatePair, error) {
 		}
 		if row.Live == nil && stored != nil {
 			row.Live = &LiveRate{Rate: stored.Rate, FetchedAt: stored.FetchedAt}
-			if need.from != base {
+			if need.From != base {
 				row.Live.Rate = ResolvedRate{Rate: stored.Rate}.Inverse()
 			}
 		}

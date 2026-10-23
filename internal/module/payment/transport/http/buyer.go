@@ -1,6 +1,6 @@
 // Package handler serves the payment module's HTTP API under /api/payment:
 // gateway callbacks, the buyer's orders, and the administrator's orders,
-// unmatched payments, payment methods and exchange rates.
+// unmatched payments and payment methods.
 package handler
 
 import (

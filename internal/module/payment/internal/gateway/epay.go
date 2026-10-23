@@ -44,7 +44,7 @@ const epayCurrency = "CNY"
 // opened the gateway page near expiry.
 const EPayUnpaidCloseAge = 30 * time.Minute
 
-// maxQueryResponseSize caps the gateway and rate API answers read.
+// maxQueryResponseSize caps the gateway answers read.
 const maxQueryResponseSize = 1 << 20
 
 // errEPayQueryNotSupported is returned when the gateway implements neither

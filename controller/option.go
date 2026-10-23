@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/internal/module/currency"
 	"github.com/QuantumNous/new-api/internal/module/payment"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
@@ -452,7 +453,7 @@ func UpdateOption(c *gin.Context) {
 	if option.Key == "payment_setting.currency" || option.Key == "payment_setting.exchange_rate_overrides" {
 		// Amounts show at the new rate on this node now and on the others
 		// within a minute.
-		payment.PublishSiteCurrencyRate()
+		currency.PublishSiteCurrencyRate()
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
