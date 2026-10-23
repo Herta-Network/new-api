@@ -37,6 +37,7 @@ Transitive dependencies should be audited before a final external release.
 | backend  | production  | Go        | `github.com/go-redis/redis/v8`                          | `v8.11.5`                            | BSD-2-Clause            |
 | backend  | production  | Go        | `github.com/go-webauthn/webauthn`                       | `v0.14.0`                            | BSD-3-Clause            |
 | backend  | production  | Go        | `github.com/golang-jwt/jwt/v5`                          | `v5.3.0`                             | MIT                     |
+| backend  | production  | Go        | `github.com/golang-migrate/migrate/v4`                  | `v4.20.1`                            | MIT                     |
 | backend  | production  | Go        | `github.com/google/uuid`                                | `v1.6.0`                             | BSD-3-Clause            |
 | backend  | production  | Go        | `github.com/gorilla/websocket`                          | `v1.5.3`                             | BSD-2-Clause            |
 | backend  | production  | Go        | `github.com/grafana/pyroscope-go`                       | `v1.2.7`                             | Apache-2.0              |
@@ -63,13 +64,13 @@ Transitive dependencies should be audited before a final external release.
 | backend  | production  | Go        | `github.com/tidwall/sjson`                              | `v1.2.5`                             | MIT                     |
 | backend  | production  | Go        | `github.com/tiktoken-go/tokenizer`                      | `v0.8.1`                             | MIT                     |
 | backend  | production  | Go        | `github.com/yapingcat/gomedia`                          | `v0.0.0-20240906162731-17feea57090c` | MIT                     |
-| backend  | production  | Go        | `golang.org/x/crypto`                                   | `v0.52.0`                            | BSD-3-Clause            |
+| backend  | production  | Go        | `golang.org/x/crypto`                                   | `v0.53.0`                            | BSD-3-Clause            |
 | backend  | production  | Go        | `golang.org/x/image`                                    | `v0.41.0`                            | BSD-3-Clause            |
-| backend  | production  | Go        | `golang.org/x/net`                                      | `v0.55.0`                            | BSD-3-Clause            |
+| backend  | production  | Go        | `golang.org/x/net`                                      | `v0.56.0`                            | BSD-3-Clause            |
 | backend  | production  | Go        | `golang.org/x/oauth2`                                   | `v0.36.0`                            | BSD-3-Clause            |
-| backend  | production  | Go        | `golang.org/x/sync`                                     | `v0.20.0`                            | BSD-3-Clause            |
-| backend  | production  | Go        | `golang.org/x/sys`                                      | `v0.45.0`                            | BSD-3-Clause            |
-| backend  | production  | Go        | `golang.org/x/text`                                     | `v0.37.0`                            | BSD-3-Clause            |
+| backend  | production  | Go        | `golang.org/x/sync`                                     | `v0.21.0`                            | BSD-3-Clause            |
+| backend  | production  | Go        | `golang.org/x/sys`                                      | `v0.46.0`                            | BSD-3-Clause            |
+| backend  | production  | Go        | `golang.org/x/text`                                     | `v0.38.0`                            | BSD-3-Clause            |
 | backend  | production  | Go        | `gopkg.in/yaml.v3`                                      | `v3.0.1`                             | Apache-2.0 OR MIT       |
 | backend  | production  | Go        | `gorm.io/driver/clickhouse`                             | `v0.6.0`                             | MIT                     |
 | backend  | production  | Go        | `gorm.io/driver/postgres`                               | `v1.5.9`                             | MIT                     |

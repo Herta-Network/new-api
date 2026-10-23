@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func insertPaymentTestUser(t *testing.T, id int, quota int) {
@@ -407,16 +409,40 @@ func TestCompletePaymentOrderManually(t *testing.T) {
 	assert.Equal(t, PaymentOrderPending, reloadPaymentOrder(t, claimed.OrderNo).Status)
 }
 
-// The payment tables migrate on a fresh database, a second startup changes
-// nothing, one gateway payment can bind one order of its platform, and the
-// Stripe methods of an upgraded database collect card payments.
+// sqlRecorder keeps the statements a GORM session runs.
+type sqlRecorder struct {
+	mu         sync.Mutex
+	statements []string
+}
+
+func (recorder *sqlRecorder) LogMode(logger.LogLevel) logger.Interface { return recorder }
+func (recorder *sqlRecorder) Info(context.Context, string, ...any)     {}
+func (recorder *sqlRecorder) Warn(context.Context, string, ...any)     {}
+func (recorder *sqlRecorder) Error(context.Context, string, ...any)    {}
+
+func (recorder *sqlRecorder) Trace(_ context.Context, _ time.Time, sql func() (string, int64), _ error) {
+	statement, _ := sql()
+	recorder.mu.Lock()
+	recorder.statements = append(recorder.statements, statement)
+	recorder.mu.Unlock()
+}
+
+func (recorder *sqlRecorder) reset() {
+	recorder.mu.Lock()
+	recorder.statements = nil
+	recorder.mu.Unlock()
+}
+
+// The payment startup steps seed the balance method once, a second startup
+// rewrites nothing, one gateway payment can bind one order of its platform,
+// and the Stripe methods of an upgraded database collect card payments.
 func TestPaymentSchemaMigration(t *testing.T) {
-	recorder := &migrationSQLRecorder{}
-	db := pgtest.NewSchemaDB(t).Session(&gorm.Session{Logger: recorder})
+	pgtest.Reset(t, DB)
+	recorder := &sqlRecorder{}
+	db := DB.Session(&gorm.Session{Logger: recorder})
 	const untypedStripe = `{"public_key":"pk_live_a","secret_key":"sk_live_a","webhook_endpoint_id":"we_1","webhook_url":"https://pay.example/n","webhook_secret":"whsec_1"}`
 	for pass := range 2 {
 		recorder.reset()
-		require.NoError(t, db.AutoMigrate(&PaymentMethod{}, &PaymentOrder{}, &PaymentUnmatched{}, &PaymentExchangeRate{}))
 		require.NoError(t, ensureBalancePaymentMethod(db))
 		if pass == 0 {
 			// Methods saved before each Stripe method had one payment method
@@ -433,7 +459,6 @@ func TestPaymentSchemaMigration(t *testing.T) {
 		}
 		require.NoError(t, ensureStripePaymentMethodTypes(db))
 		if pass == 1 {
-			assert.Empty(t, recorder.schemaMutations(), "repeated startup must not change the schema")
 			for _, statement := range recorder.statements {
 				assert.NotContains(t, statement, `SET "config"`, "repeated startup must not rewrite a configuration")
 			}
@@ -473,57 +498,4 @@ func TestPaymentSchemaMigration(t *testing.T) {
 	require.NoError(t, order("P-3", "stripe", "pi_1"))
 	require.NoError(t, order("P-4", "cryptomus", "pi_1"), "trade numbers are unique per platform")
 	assert.Error(t, order("P-5", "stripe", "pi_1"), "a trade binds one order of its platform")
-}
-
-// An upgraded database loses the tables, provider columns and options of the
-// payment system service/payment replaced, keeps everything else, and a
-// second startup changes nothing.
-func TestDropRetiredPayments(t *testing.T) {
-	recorder := &migrationSQLRecorder{}
-	db := pgtest.NewSchemaDB(t).Session(&gorm.Session{Logger: recorder})
-	require.NoError(t, db.AutoMigrate(&User{}, &SubscriptionPlan{}, &Option{}))
-	for _, statement := range []string{
-		`CREATE TABLE top_ups (id bigint PRIMARY KEY, trade_no varchar(255) UNIQUE)`,
-		`CREATE TABLE subscription_orders (id bigint PRIMARY KEY, trade_no varchar(255) UNIQUE)`,
-		`INSERT INTO top_ups VALUES (1, 'USR1NO1')`,
-		`ALTER TABLE subscription_plans ADD COLUMN currency varchar(8) NOT NULL DEFAULT 'USD',
-			ADD COLUMN stripe_price_id varchar(128) DEFAULT '', ADD COLUMN creem_product_id varchar(128) DEFAULT '',
-			ADD COLUMN waffo_pancake_product_id varchar(128) DEFAULT ''`,
-		`ALTER TABLE users ADD COLUMN stripe_customer varchar(64)`,
-		`CREATE INDEX idx_users_stripe_customer ON users (stripe_customer)`,
-	} {
-		require.NoError(t, db.Exec(statement).Error)
-	}
-	require.NoError(t, db.Create(&SubscriptionPlan{Id: 1, Title: "Pro", PriceAmount: 9.99, DurationUnit: SubscriptionDurationMonth, DurationValue: 1}).Error)
-	require.NoError(t, db.Exec(`UPDATE subscription_plans SET stripe_price_id = 'price_1' WHERE id = 1`).Error)
-	for _, key := range []string{
-		"Price", "MinTopUp", "PayMethods", "PayAddress", "CustomCallbackAddress", "EpayId", "EpayKey",
-		"StripeApiSecret", "StripeWebhookSecret", "CreemProducts", "WaffoPrivateKey", "WaffoPancakePrivateKey",
-		"WaffoPancakeWebhookTestKey", "USDExchangeRate", "TopUpLink", "QuotaPerUnit", "payment_setting.min_topup",
-	} {
-		require.NoError(t, db.Create(&Option{Key: key, Value: "1"}).Error)
-	}
-
-	for pass := range 2 {
-		recorder.reset()
-		require.NoError(t, dropRetiredPayments(db))
-		if pass == 1 {
-			assert.Empty(t, recorder.schemaMutations(), "repeated startup must not change the schema")
-		}
-	}
-
-	migrator := db.Migrator()
-	assert.False(t, migrator.HasTable("top_ups"))
-	assert.False(t, migrator.HasTable("subscription_orders"))
-	for _, column := range []string{"currency", "stripe_price_id", "creem_product_id", "waffo_pancake_product_id"} {
-		assert.False(t, migrator.HasColumn("subscription_plans", column), column)
-	}
-	assert.False(t, migrator.HasColumn("users", "stripe_customer"))
-	assert.False(t, migrator.HasIndex("users", "idx_users_stripe_customer"))
-	var plan SubscriptionPlan
-	require.NoError(t, db.First(&plan, 1).Error)
-	assert.Equal(t, "Pro", plan.Title)
-	var keys []string
-	require.NoError(t, db.Model(&Option{}).Pluck("key", &keys).Error)
-	assert.ElementsMatch(t, []string{"USDExchangeRate", "TopUpLink", "QuotaPerUnit", "payment_setting.min_topup"}, keys)
 }

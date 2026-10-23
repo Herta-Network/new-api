@@ -247,10 +247,11 @@ func GetUserAccessTokenStatus(userId int) (*UserAccessTokenStatus, error) {
 }
 
 // MigrateAuditLogs also supports independently configured ClickHouse log stores.
-// No TTL clause or usage-log cleanup integration is intentional.
+// No TTL clause or usage-log cleanup integration is intentional. On
+// PostgreSQL the log migrations create audit_logs together with logs.
 func MigrateAuditLogs() error {
 	if !common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		return LOG_DB.AutoMigrate(&AuditLog{})
+		return runMigrations(LOG_DB, migrationFiles, logMigrations)
 	}
 	return LOG_DB.Exec(`CREATE TABLE IF NOT EXISTS audit_logs (
 		id Int64 DEFAULT 0, event_id String, user_id Int64, username String, actor_role Int32,

@@ -30,12 +30,9 @@ type QuotaData struct {
 	CacheCreationTokens int64  `json:"cache_creation_tokens" gorm:"default:0"`
 }
 
-// quotaDataKeyIndex makes one row per hour for each user, model, group,
-// token, channel and node, the key SaveQuotaDataCache adds counters to.
-const quotaDataKeyIndex = "uk_quota_data_key"
-
 // quotaDataUpsert adds a flushed row's counters to the stored row with the
-// same key.
+// same key. uk_quota_data_key makes one row per hour for each user, model,
+// group, token, channel and node, the key SaveQuotaDataCache adds counters to.
 var quotaDataUpsert = clause.OnConflict{
 	Columns: []clause.Column{
 		{Name: "user_id"}, {Name: "username"}, {Name: "model_name"}, {Name: "created_at"},
@@ -51,73 +48,6 @@ var quotaDataUpsert = clause.OnConflict{
 }
 
 const quotaDataFlushBatchSize = 1000
-
-// migrateQuotaDataKey adds quotaDataKeyIndex to an existing table before
-// AutoMigrate would. Earlier versions looked a row up before inserting it, so
-// two flushes could store one key twice; rows that share a key are merged into
-// the oldest first. The table lock holds off flushes from other nodes until
-// the index exists.
-func migrateQuotaDataKey(db *gorm.DB) error {
-	migrator := db.Migrator()
-	if !migrator.HasTable(&QuotaData{}) || migrator.HasIndex(&QuotaData{}, quotaDataKeyIndex) {
-		return nil
-	}
-	return db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("LOCK TABLE quota_data IN SHARE ROW EXCLUSIVE MODE").Error; err != nil {
-			return fmt.Errorf("lock quota_data: %w", err)
-		}
-		// An older table can lack a column the merge reads.
-		migrator := tx.Migrator()
-		statement := &gorm.Statement{DB: tx}
-		if err := statement.Parse(&QuotaData{}); err != nil {
-			return fmt.Errorf("parse quota_data schema: %w", err)
-		}
-		for _, column := range statement.Schema.DBNames {
-			if migrator.HasColumn(&QuotaData{}, column) {
-				continue
-			}
-			if err := migrator.AddColumn(&QuotaData{}, column); err != nil {
-				return fmt.Errorf("add quota_data column %s: %w", column, err)
-			}
-		}
-		merge := tx.Exec(`
-WITH duplicates AS (
-	SELECT min(id) AS keep_id,
-	       array_agg(id) AS ids,
-	       sum(count) AS count,
-	       sum(quota) AS quota,
-	       sum(token_used) AS token_used,
-	       sum(cache_read_tokens) AS cache_read_tokens,
-	       sum(cache_creation_tokens) AS cache_creation_tokens
-	FROM quota_data
-	GROUP BY user_id, username, model_name, created_at, use_group, token_id, channel_id, node_name
-	HAVING count(*) > 1
-), merged AS (
-	UPDATE quota_data
-	SET count = duplicates.count,
-	    quota = duplicates.quota,
-	    token_used = duplicates.token_used,
-	    cache_read_tokens = duplicates.cache_read_tokens,
-	    cache_creation_tokens = duplicates.cache_creation_tokens
-	FROM duplicates
-	WHERE quota_data.id = duplicates.keep_id
-)
-DELETE FROM quota_data
-USING duplicates
-WHERE quota_data.id = ANY (duplicates.ids)
-  AND quota_data.id <> duplicates.keep_id`)
-		if merge.Error != nil {
-			return fmt.Errorf("merge duplicate quota_data rows: %w", merge.Error)
-		}
-		if merge.RowsAffected > 0 {
-			common.SysLog(common.LogText("merged %d duplicate dashboard records", merge.RowsAffected))
-		}
-		if err := migrator.CreateIndex(&QuotaData{}, quotaDataKeyIndex); err != nil {
-			return fmt.Errorf("create quota_data index %s: %w", quotaDataKeyIndex, err)
-		}
-		return nil
-	})
-}
 
 type QuotaDataLogParams struct {
 	UserID              int

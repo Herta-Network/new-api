@@ -2,6 +2,7 @@ package controller
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -68,6 +69,16 @@ func newIsolatedDatabase(t *testing.T) (*gorm.DB, string) {
 	t.Setenv("SQL_DSN", dsn)
 	t.Setenv("LOG_SQL_DSN", "")
 	return db, dsn
+}
+
+// createLegacySchema builds in db the schema of the last release before
+// versioned migrations, from the baseline of the main or log migrations, so a
+// test can start against a database that release created.
+func createLegacySchema(t *testing.T, db *gorm.DB, set string) {
+	t.Helper()
+	baseline, err := os.ReadFile(filepath.Join("..", "model", "migrations", set, "000001_baseline.up.sql"))
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(string(baseline)).Error)
 }
 
 // useSeparateLogDatabase moves LOG_DB to its own migrated schema, as when
