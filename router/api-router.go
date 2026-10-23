@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/controller"
 	consolehttp "github.com/QuantumNous/new-api/internal/module/console/transport/http"
+	currencyhttp "github.com/QuantumNous/new-api/internal/module/currency/transport/http"
 	paymenthttp "github.com/QuantumNous/new-api/internal/module/payment/transport/http"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/service/authz"
@@ -218,8 +219,8 @@ func SetApiRouter(router *gin.Engine) {
 			paymentSettingsRoute.Use(middleware.RootAuth())
 			{
 				paymentSettingsRoute.GET("/platforms", paymenthttp.GetPaymentPlatforms)
-				paymentSettingsRoute.GET("/rates", paymenthttp.GetPaymentRates)
-				paymentSettingsRoute.POST("/rates/refresh", paymenthttp.RefreshPaymentRates)
+				paymentSettingsRoute.GET("/rates", currencyhttp.GetPaymentRates)
+				paymentSettingsRoute.POST("/rates/refresh", currencyhttp.RefreshPaymentRates)
 				paymentSettingsRoute.GET("/methods", paymenthttp.AdminListPaymentMethods)
 				paymentSettingsRoute.POST("/methods", paymenthttp.AdminCreatePaymentMethod)
 				paymentSettingsRoute.PUT("/methods/:id", paymenthttp.AdminUpdatePaymentMethod)

@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/internal/module/currency"
 	"github.com/QuantumNous/new-api/internal/module/payment"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
@@ -136,11 +137,12 @@ func main() {
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
 
-	// Payments: close expired orders through their gateway, refresh exchange
-	// rates, and show amounts at the site currency's rate
+	// Payments: close expired orders through their gateway
 	payment.StartPaymentReconcileTask()
-	payment.StartExchangeRateRefreshTask()
-	payment.StartSiteCurrencyRateTask()
+	// Currency: refresh exchange rates, and show amounts at the site
+	// currency's rate
+	currency.StartExchangeRateRefreshTask()
+	currency.StartSiteCurrencyRateTask()
 
 	// Report this process as a system instance so the System Info page can show
 	// all currently alive nodes in multi-instance deployments.

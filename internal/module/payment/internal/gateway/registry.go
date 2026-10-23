@@ -11,8 +11,7 @@
 // and mode, Cryptomus credentials) instead of only re-encoding it; the
 // field descriptions mark secret and server-managed fields and can offer a
 // fixed set of choices (the Stripe payment method type); an injected HTTP
-// client also carries Stripe traffic; the registry builds the exchange-rate
-// client.
+// client also carries Stripe traffic.
 
 package gateway
 
@@ -51,25 +50,24 @@ type Method struct {
 // the wallet balance or an unsupported platform.
 var ErrNotGateway = errors.New("payment method is not served by a gateway")
 
-// defaultTimeout bounds the gateway and rate API requests of a registry that
-// was not given an HTTP client.
+// defaultTimeout bounds the gateway requests of a registry that was not
+// given an HTTP client.
 const defaultTimeout = 10 * time.Second
 
 // Registry opens the gateway of a payment method from its configuration. It
 // is the only place that knows which platform maps to which protocol.
 type Registry struct {
-	httpClient          *http.Client
-	stripeBackends      *stripe.Backends
-	cryptomusBaseURL    string
-	exchangeRateBaseURL string
+	httpClient       *http.Client
+	stripeBackends   *stripe.Backends
+	cryptomusBaseURL string
 }
 
 // Option configures a Registry.
 type Option func(*Registry)
 
-// WithHTTPClient sends every gateway and rate API request through client,
-// Stripe's included unless WithStripeBackends overrides them; nil keeps a
-// default client with a ten-second timeout and the Stripe SDK's own.
+// WithHTTPClient sends every gateway request through client, Stripe's
+// included unless WithStripeBackends overrides them; nil keeps a default
+// client with a ten-second timeout and the Stripe SDK's own.
 func WithHTTPClient(client *http.Client) Option {
 	return func(r *Registry) { r.httpClient = client }
 }
@@ -88,15 +86,9 @@ func WithCryptomusBaseURL(baseURL string) Option {
 	return func(r *Registry) { r.cryptomusBaseURL = baseURL }
 }
 
-// WithExchangeRateBaseURL points the exchange-rate client at another API
-// host; tests use it.
-func WithExchangeRateBaseURL(baseURL string) Option {
-	return func(r *Registry) { r.exchangeRateBaseURL = baseURL }
-}
-
 // NewRegistry builds a registry of the supported gateways.
 func NewRegistry(opts ...Option) *Registry {
-	r := &Registry{cryptomusBaseURL: cryptomusAPI, exchangeRateBaseURL: apilayerAPI}
+	r := &Registry{cryptomusBaseURL: cryptomusAPI}
 	for _, opt := range opts {
 		opt(r)
 	}

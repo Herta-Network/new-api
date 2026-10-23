@@ -14,7 +14,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/internal/module/payment"
+	"github.com/QuantumNous/new-api/internal/module/currency"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/advancedcustom"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -331,12 +331,12 @@ func getDeepSeekBalanceUSD(ctx context.Context, response DeepSeekUsageResponse) 
 }
 
 // cnyBalanceToUSD converts an upstream balance in CNY into USD at the rate
-// payments resolve for the pair.
+// the currency module resolves for the pair.
 func cnyBalanceToUSD(ctx context.Context, balanceCNY float64) (float64, error) {
 	if math.IsNaN(balanceCNY) || math.IsInf(balanceCNY, 0) {
 		return 0, errors.New("CNY balance must be finite")
 	}
-	rate, err := payment.ResolveRate(ctx, "CNY", "USD")
+	rate, err := currency.ResolveRate(ctx, "CNY", "USD")
 	if err != nil {
 		return 0, err
 	}

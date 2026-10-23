@@ -10,8 +10,8 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/internal/module/payment"
-	"github.com/QuantumNous/new-api/internal/module/payment/entity"
+	"github.com/QuantumNous/new-api/internal/module/currency"
+	"github.com/QuantumNous/new-api/internal/module/currency/entity"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/pgtest"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -107,9 +107,9 @@ func TestGetDeepSeekBalanceUSD(t *testing.T) {
 	}
 }
 
-// Moonshot and DeepSeek balances in CNY convert at the rate payments
-// resolve: an override first, then a fresh live rate; with neither the
-// balance update fails instead of guessing.
+// Moonshot and DeepSeek balances in CNY convert at the rate the currency
+// module resolves: an override first, then a fresh live rate; with neither
+// the balance update fails instead of guessing.
 func TestCNYBalanceToUSDUsesTheResolvedRate(t *testing.T) {
 	pgtest.Reset(t, model.DB)
 	t.Cleanup(func() { pgtest.Reset(t, model.DB) })
@@ -117,10 +117,10 @@ func TestCNYBalanceToUSDUsesTheResolvedRate(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := cnyBalanceToUSD(ctx, 73)
-	assert.ErrorIs(t, err, payment.ErrRateUnavailable)
+	assert.ErrorIs(t, err, currency.ErrRateUnavailable)
 
-	require.NoError(t, model.DB.Create(&entity.PaymentExchangeRate{
-		FromCurrency: "CNY", ToCurrency: "USD", Rate: "0.14", Source: payment.RateSourceLive, FetchedAt: time.Now().Unix(),
+	require.NoError(t, model.DB.Create(&entity.ExchangeRate{
+		FromCurrency: "CNY", ToCurrency: "USD", Rate: "0.14", Source: currency.RateSourceLive, FetchedAt: time.Now().Unix(),
 	}).Error)
 	balance, err := cnyBalanceToUSD(ctx, 73)
 	require.NoError(t, err)

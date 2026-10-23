@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/internal/module/currency"
 	"github.com/QuantumNous/new-api/internal/module/payment/entity"
 	"github.com/QuantumNous/new-api/internal/module/payment/internal/gateway"
 	"github.com/QuantumNous/new-api/internal/module/payment/internal/store"
@@ -218,7 +219,7 @@ func BuyerMethods(ctx context.Context, purpose string) ([]MethodOption, error) {
 	site := operation_setting.PaymentCurrency()
 	// Top-ups and balance purchases convert the site currency to USD for
 	// the quota.
-	_, quotaRateErr := ResolveRate(ctx, site, "USD")
+	_, quotaRateErr := currency.ResolveRate(ctx, site, "USD")
 	options := make([]MethodOption, 0, len(methods))
 	for _, method := range methods {
 		if !method.Enabled || (method.Platform == entity.PaymentPlatformBalance && purpose != entity.PaymentPurposeSubscription) {

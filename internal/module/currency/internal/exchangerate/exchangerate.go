@@ -6,11 +6,13 @@
 //
 // Changed in new-api: the rate is returned as the decimal string the
 // provider published instead of a float64; it is checked for plausibility
-// (positive, and within a bound of the previous rate); the client uses the
-// registry's HTTP client instead of resty and has no cache, since rates are
-// stored by the payment service; JSON goes through the common wrappers.
+// (positive, and within a bound of the previous rate); the client is given
+// its HTTP client instead of using resty and has no cache, since the
+// currency module stores rates; JSON goes through the common wrappers.
 
-package gateway
+// Package exchangerate is the currency module's rate provider: apilayer's
+// currency_data/convert API. It never touches the database.
+package exchangerate
 
 import (
 	"context"
@@ -26,23 +28,27 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
-// apilayerAPI is the production apilayer API.
-const apilayerAPI = "https://api.apilayer.com"
+// APILayerURL is the production apilayer API.
+const APILayerURL = "https://api.apilayer.com"
+
+// maxResponseSize caps the rate API answers read.
+const maxResponseSize = 1 << 20
 
 // ErrImplausibleRate reports a rate the provider answered with that is not
 // plausible: zero, negative, or too far from the previous rate.
 var ErrImplausibleRate = errors.New("implausible exchange rate")
 
-// ExchangeRateClient asks apilayer's currency_data/convert API for rates.
-type ExchangeRateClient struct {
+// Client asks apilayer's currency_data/convert API for rates.
+type Client struct {
 	apiKey     string
 	baseURL    string
 	httpClient *http.Client
 }
 
-// ExchangeRates returns the rate client that authenticates with apiKey.
-func (r *Registry) ExchangeRates(apiKey string) *ExchangeRateClient {
-	return &ExchangeRateClient{apiKey: apiKey, baseURL: r.exchangeRateBaseURL, httpClient: r.httpClient}
+// NewClient returns the rate client that authenticates with apiKey and
+// sends its requests through httpClient to the API at baseURL.
+func NewClient(httpClient *http.Client, baseURL, apiKey string) *Client {
+	return &Client{apiKey: apiKey, baseURL: baseURL, httpClient: httpClient}
 }
 
 // RateQuery asks for the price of one unit of From in units of To.
@@ -61,7 +67,7 @@ type RateQuery struct {
 // ("7.2419"). A rate that is zero or negative, or that moved more than
 // MaxChangeBP away from Previous, is rejected with ErrImplausibleRate so
 // the caller keeps its previous rate.
-func (c *ExchangeRateClient) Fetch(ctx context.Context, q RateQuery) (string, error) {
+func (c *Client) Fetch(ctx context.Context, q RateQuery) (string, error) {
 	if c.apiKey == "" {
 		return "", errors.New("the exchange rate API key is not configured")
 	}
@@ -81,11 +87,11 @@ func (c *ExchangeRateClient) Fetch(ctx context.Context, q RateQuery) (string, er
 		return "", fmt.Errorf("exchange rate request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxQueryResponseSize+1))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
 	if err != nil {
 		return "", fmt.Errorf("read exchange rate response: %w", err)
 	}
-	if len(body) > maxQueryResponseSize {
+	if len(body) > maxResponseSize {
 		return "", errors.New("exchange rate response is too large")
 	}
 	var response struct {
@@ -133,4 +139,22 @@ func (c *ExchangeRateClient) Fetch(ctx context.Context, q RateQuery) (string, er
 		}
 	}
 	return formatted, nil
+}
+
+// parseRate reads an exchange rate: a positive plain decimal such as "7.2"
+// or "0.000139". Fractions, exponents and signs are rejected, so a rate is
+// always stored and compared in the one form the rate provider published,
+// the form payment amounts are converted with.
+func parseRate(rate string) (*big.Rat, error) {
+	const digits = "0123456789"
+	whole, fraction, hasFraction := strings.Cut(rate, ".")
+	if len(rate) > 64 || whole == "" || strings.Trim(whole, digits) != "" ||
+		(hasFraction && (fraction == "" || strings.Trim(fraction, digits) != "")) {
+		return nil, errors.New("invalid exchange rate")
+	}
+	exact, ok := new(big.Rat).SetString(rate)
+	if !ok || exact.Sign() <= 0 {
+		return nil, errors.New("invalid exchange rate")
+	}
+	return exact, nil
 }
