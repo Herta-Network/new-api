@@ -20,6 +20,14 @@ import { createFileRoute } from '@tanstack/react-router'
 import z from 'zod'
 
 import { Users } from '@/features/users'
+import {
+  getUsersTableUrlConfig,
+  usersListQueryOptions,
+} from '@/features/users/lib/users-query'
+import { MOBILE_MEDIA_QUERY, matchesMediaQuery } from '@/hooks/use-media-query'
+import { readTableUrlState } from '@/hooks/use-table-url-state'
+import { siteGroupsQueryOptions } from '@/lib/group-queries'
+import { prefetchRouteData } from '@/lib/route-prefetch'
 
 const usersSearchSchema = z.object({
   page: z.number().optional().catch(1),
@@ -38,5 +46,15 @@ const usersSearchSchema = z.object({
 
 export const Route = createFileRoute('/_authenticated/admin/users/')({
   validateSearch: usersSearchSchema,
+  loaderDeps: ({ search }) => search,
+  loader: ({ context, deps }) => {
+    const table = readTableUrlState(
+      deps,
+      getUsersTableUrlConfig(matchesMediaQuery(MOBILE_MEDIA_QUERY))
+    )
+    // A visit starts unsorted, with the table's refresh counter at 0.
+    prefetchRouteData(context.queryClient, usersListQueryOptions(table, [], 0))
+    prefetchRouteData(context.queryClient, siteGroupsQueryOptions)
+  },
   component: Users,
 })

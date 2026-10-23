@@ -30,15 +30,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
+import { siteGroupsQueryOptions } from '@/lib/group-queries'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import {
-  getTagModels,
-  editTagChannels,
-  getAllModels,
-  getGroups,
-} from '../../api'
+import { getTagModels, editTagChannels, getAllModels } from '../../api'
 import { channelsQueryKeys } from '../../lib'
 import type { TagOperationParams } from '../../types'
 import { useChannels } from '../channels-provider'
@@ -66,10 +62,9 @@ export function TagBatchEditDialog({
   const [groups, setGroups] = useState<string[]>([])
 
   // Fetch available groups
-  const { data: groupsData, isLoading: isLoadingGroups } = useQuery({
-    queryKey: ['groups'],
-    queryFn: async () => requireServerSuccess(await getGroups()),
-  })
+  const { data: groupsData, isLoading: isLoadingGroups } = useQuery(
+    siteGroupsQueryOptions
+  )
 
   // Transform groups to multi-select options
   const groupOptions = useMemo(() => {

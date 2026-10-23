@@ -25,8 +25,8 @@ import {
   ORDER_POLL_WINDOW_MS,
   ORDER_SYNC_SCHEDULE_SECONDS,
 } from '../constants'
+import { paymentQueryKeys } from '../lib/wallet-queries'
 import { PAYMENT_ORDER_STATUS, type PaymentOrder } from '../types'
-import { paymentQueryKeys } from './use-payment-queries'
 
 // ============================================================================
 // Payment Order Result Hook

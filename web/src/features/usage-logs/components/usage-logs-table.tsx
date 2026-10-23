@@ -26,34 +26,25 @@ import {
   DataTableRow,
   useDataTable,
 } from '@/components/data-table'
-import {
-  getAdminPlans,
-  getSelfSubscriptionFull,
-} from '@/features/subscriptions/api'
-import { useMediaQuery } from '@/hooks'
+import { MOBILE_MEDIA_QUERY, useMediaQuery } from '@/hooks/use-media-query'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
-import { createServerError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
-import {
-  DEFAULT_LOGS_DATA,
-  LOG_TYPE_ALL_VALUE,
-  LOG_TYPE_ENUM,
-} from '../constants'
-import { shouldShowBillingSource } from '../lib/billing-source'
+import { LOG_TYPE_ENUM } from '../constants'
 import { useColumnsByCategory } from '../lib/columns'
 import { parseLogOther } from '../lib/format'
-import { fetchLogsByCategory } from '../lib/utils'
+import {
+  getUsageLogsTableUrlConfig,
+  type LogsViewAccess,
+  usageLogBillingSourceQueryOptions,
+  usageLogsQueryOptions,
+} from '../lib/usage-logs-query'
 import type { LogCategory } from '../types'
 import { CommonLogsFilterBar } from './common-logs-filter-bar'
 import { TaskLogsFilterBar } from './task-logs-filter-bar'
 import { UsageLogsMobileList } from './usage-logs-mobile-card'
-import {
-  useLogsViewScope,
-  useUsageLogsRoute,
-  type LogsViewAccess,
-} from './usage-logs-provider'
+import { useLogsViewScope, useUsageLogsRoute } from './usage-logs-provider'
 
 const logTypeRowTint: Record<number, string> = {
   [LOG_TYPE_ENUM.ERROR]: 'bg-rose-50/40 dark:bg-rose-950/20',
@@ -71,16 +62,6 @@ function getColumnVisibilityStorageKey(
   return `usage-logs:${logCategory}:${viewAccess}:column-visibility`
 }
 
-function deserializeLogTypeFilter(value: unknown): unknown[] {
-  let values: unknown[] = []
-  if (Array.isArray(value)) {
-    values = value
-  } else if (value) {
-    values = [value]
-  }
-  return values.filter((item) => String(item) !== LOG_TYPE_ALL_VALUE)
-}
-
 interface UsageLogsTableProps {
   logCategory: LogCategory
 }
@@ -96,32 +77,13 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     isRootView: isRoot,
     viewAccess,
   } = useLogsViewScope()
-  const isMobile = useMediaQuery('(max-width: 640px)')
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY)
   const route = useUsageLogsRoute()
   const searchParams = route.useSearch()
   const userId = useAuthStore((state) => state.auth.user?.id)
   const { data: showBillingSource = false } = useQuery({
-    queryKey: ['usage-log-billing-source', isAdmin, userId],
+    ...usageLogBillingSourceQueryOptions(isAdmin, userId),
     enabled: logCategory === 'common' && userId != null,
-    queryFn: async () => {
-      if (isAdmin) {
-        const plansResult = await getAdminPlans()
-        return shouldShowBillingSource({
-          isAdmin,
-          plans: plansResult.success ? plansResult.data : undefined,
-          subscriptions: undefined,
-        })
-      }
-
-      const selfResult = await getSelfSubscriptionFull()
-      return shouldShowBillingSource({
-        isAdmin,
-        plans: undefined,
-        subscriptions: selfResult.success
-          ? selfResult.data?.subscriptions
-          : undefined,
-      })
-    },
   })
 
   const {
@@ -131,64 +93,18 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     onPaginationChange,
     ensurePageInRange,
   } = useTableUrlState({
-    search: route.useSearch(),
+    search: searchParams,
     navigate: route.useNavigate(),
-    pagination: { defaultPage: 1, defaultPageSize: isMobile ? 20 : 100 },
-    globalFilter: { enabled: false },
-    columnFilters: [
-      {
-        columnId: 'created_at',
-        searchKey: 'type',
-        type: 'array' as const,
-        deserialize: deserializeLogTypeFilter,
-      },
-      { columnId: 'model_name', searchKey: 'model', type: 'string' as const },
-      { columnId: 'token_name', searchKey: 'token', type: 'string' as const },
-      { columnId: 'group', searchKey: 'group', type: 'string' as const },
-      ...(isAdmin
-        ? [
-            {
-              columnId: 'channel',
-              searchKey: 'channel',
-              type: 'string' as const,
-            },
-            {
-              columnId: 'username',
-              searchKey: 'username',
-              type: 'string' as const,
-            },
-          ]
-        : []),
-    ],
+    ...getUsageLogsTableUrlConfig(isMobile, isAdmin),
   })
 
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: [
-      'logs',
+    ...usageLogsQueryOptions({
       logCategory,
       viewAccess,
-      pagination.pageIndex + 1,
-      pagination.pageSize,
-      columnFilters,
+      table: { columnFilters, pagination },
       searchParams,
-      t,
-    ],
-    queryFn: async () => {
-      const result = await fetchLogsByCategory({
-        logCategory,
-        isAdmin,
-        page: pagination.pageIndex + 1,
-        pageSize: pagination.pageSize,
-        searchParams,
-        columnFilters,
-      })
-
-      if (!result?.success) {
-        throw createServerError(result, t('Failed to load logs'))
-      }
-
-      return result.data || DEFAULT_LOGS_DATA
-    },
+    }),
     placeholderData: (previousData, previousQuery) => {
       if (
         previousQuery?.queryKey[1] === logCategory &&

@@ -22,8 +22,8 @@ import { useState } from 'react'
 import { useDebounce } from '@/hooks/use-debounce'
 
 import { getPaymentOrder, listPaymentOrders } from '../api'
+import { paymentQueryKeys } from '../lib/wallet-queries'
 import type { PaymentOrder } from '../types'
-import { paymentQueryKeys } from './use-payment-queries'
 
 // ============================================================================
 // Billing History Hook

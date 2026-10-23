@@ -20,6 +20,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 
+import { paymentQueryKeys } from '@/features/wallet/lib/wallet-queries'
 import { api } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
@@ -192,6 +193,9 @@ export function useSavePaymentMethod() {
     onSuccess: () => {
       toast.success(i18next.t('Payment method saved'))
       void queryClient.invalidateQueries({ queryKey: paymentMethodsQueryKey })
+      void queryClient.invalidateQueries({
+        queryKey: paymentQueryKeys.allMethods,
+      })
     },
   })
 }
@@ -208,6 +212,9 @@ export function useDeletePaymentMethod() {
     onSuccess: () => {
       toast.success(i18next.t('Payment method deleted'))
       void queryClient.invalidateQueries({ queryKey: paymentMethodsQueryKey })
+      void queryClient.invalidateQueries({
+        queryKey: paymentQueryKeys.allMethods,
+      })
     },
   })
 }
@@ -224,6 +231,9 @@ export function useSyncPaymentWebhook() {
     onSuccess: () => {
       toast.success(i18next.t('Webhook synced'))
       void queryClient.invalidateQueries({ queryKey: paymentMethodsQueryKey })
+      void queryClient.invalidateQueries({
+        queryKey: paymentQueryKeys.allMethods,
+      })
     },
   })
 }

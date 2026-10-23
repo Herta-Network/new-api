@@ -24,6 +24,14 @@ import {
   PAYMENT_ORDERS_DEFAULT_SECTION,
   PAYMENT_ORDERS_SECTION_IDS,
 } from '@/features/payment-orders/constants'
+import {
+  PAYMENT_ORDERS_TABLE_URL_CONFIG,
+  PAYMENT_UNMATCHED_TABLE_URL_CONFIG,
+  paymentOrdersListQueryOptions,
+  paymentUnmatchedListQueryOptions,
+} from '@/features/payment-orders/lib/payment-orders-query'
+import { readTableUrlState } from '@/hooks/use-table-url-state'
+import { prefetchRouteData } from '@/lib/route-prefetch'
 
 const paymentOrdersSearchSchema = z.object({
   page: z.number().optional().catch(1),
@@ -51,5 +59,18 @@ export const Route = createFileRoute(
     }
   },
   validateSearch: paymentOrdersSearchSchema,
+  loaderDeps: ({ search }) => search,
+  loader: ({ context, params, deps }) => {
+    if (params.section === 'unmatched') {
+      const table = readTableUrlState(deps, PAYMENT_UNMATCHED_TABLE_URL_CONFIG)
+      prefetchRouteData(
+        context.queryClient,
+        paymentUnmatchedListQueryOptions(table)
+      )
+      return
+    }
+    const table = readTableUrlState(deps, PAYMENT_ORDERS_TABLE_URL_CONFIG)
+    prefetchRouteData(context.queryClient, paymentOrdersListQueryOptions(table))
+  },
   component: PaymentOrders,
 })

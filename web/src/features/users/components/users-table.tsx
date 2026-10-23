@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import type { OnChangeFn, SortingState } from '@tanstack/react-table'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -28,35 +28,26 @@ import {
   DataTablePage,
   useDataTable,
 } from '@/components/data-table'
-import { useMediaQuery } from '@/hooks'
+import { MOBILE_MEDIA_QUERY, useMediaQuery } from '@/hooks/use-media-query'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
-import {
-  createServerError,
-  requireServerSuccess,
-} from '@/lib/server-error-message'
+import { siteGroupsQueryOptions } from '@/lib/group-queries'
 
-import { getGroups, getUsers, searchUsers } from '../api'
 import {
   USER_STATUS,
   getUserStatusOptions,
   getUserRoleOptions,
   isUserDeleted,
 } from '../constants'
-import type { User, UserSortBy } from '../types'
+import {
+  getUsersTableUrlConfig,
+  usersListQueryOptions,
+} from '../lib/users-query'
+import type { User } from '../types'
 import { DataTableBulkActions } from './data-table-bulk-actions'
 import { useUsersColumns } from './users-columns'
 import { useUsers } from './users-provider'
 
 const route = getRouteApi('/_authenticated/admin/users/')
-
-const USER_SORTABLE_COLUMNS = new Set<UserSortBy>([
-  'id',
-  'username',
-  'quota',
-  'group',
-  'created_at',
-  'last_login_at',
-])
 
 function isDisabledUserRow(user: User) {
   return isUserDeleted(user) || user.status === USER_STATUS.DISABLED
@@ -66,7 +57,7 @@ export function UsersTable() {
   const { t } = useTranslation()
   const columns = useUsersColumns()
   const { refreshTrigger } = useUsers()
-  const isMobile = useMediaQuery('(max-width: 640px)')
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY)
   const [sorting, setSorting] = useState<SortingState>([])
 
   const {
@@ -80,47 +71,10 @@ export function UsersTable() {
   } = useTableUrlState({
     search: route.useSearch(),
     navigate: route.useNavigate(),
-    pagination: { defaultPage: 1, defaultPageSize: isMobile ? 10 : 20 },
-    globalFilter: { enabled: true, key: 'filter' },
-    columnFilters: [
-      { columnId: 'status', searchKey: 'status', type: 'array' },
-      { columnId: 'role', searchKey: 'role', type: 'array' },
-      { columnId: 'group', searchKey: 'group', type: 'array' },
-    ],
-  })
-  const statusFilter =
-    (columnFilters.find((filter) => filter.id === 'status')?.value as
-      | string[]
-      | undefined) ?? []
-  const roleFilter =
-    (columnFilters.find((filter) => filter.id === 'role')?.value as
-      | string[]
-      | undefined) ?? []
-  const groupFilter =
-    (columnFilters.find((filter) => filter.id === 'group')?.value as
-      | string[]
-      | undefined) ?? []
-
-  const { data: groupsData } = useQuery({
-    queryKey: ['groups'],
-    queryFn: async () => requireServerSuccess(await getGroups()),
-    staleTime: 5 * 60 * 1000,
+    ...getUsersTableUrlConfig(isMobile),
   })
 
-  const sortParams = useMemo(() => {
-    const activeSort = sorting[0]
-    if (
-      !activeSort ||
-      !USER_SORTABLE_COLUMNS.has(activeSort.id as UserSortBy)
-    ) {
-      return {}
-    }
-
-    return {
-      sort_by: activeSort.id as UserSortBy,
-      sort_order: activeSort.desc ? 'desc' : 'asc',
-    } as const
-  }, [sorting])
+  const { data: groupsData } = useQuery(siteGroupsQueryOptions)
 
   const handleSortingChange: OnChangeFn<SortingState> = (updater) => {
     setSorting(updater)
@@ -129,54 +83,12 @@ export function UsersTable() {
     }
   }
 
-  // Fetch data with React Query
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: [
-      'users',
-      pagination.pageIndex + 1,
-      pagination.pageSize,
-      globalFilter,
-      statusFilter,
-      roleFilter,
-      groupFilter,
-      sortParams,
-      refreshTrigger,
-    ],
-    queryFn: async () => {
-      const hasFilter = globalFilter?.trim()
-      const hasColumnFilter =
-        statusFilter.length > 0 ||
-        roleFilter.length > 0 ||
-        groupFilter.length > 0
-      const params = {
-        p: pagination.pageIndex + 1,
-        page_size: pagination.pageSize,
-        ...sortParams,
-      }
-
-      const result =
-        hasFilter || hasColumnFilter
-          ? await searchUsers({
-              ...params,
-              keyword: globalFilter,
-              status: statusFilter[0] ?? '',
-              role: roleFilter[0] ?? '',
-              group: groupFilter[0] ?? '',
-            })
-          : await getUsers(params)
-
-      if (!result.success) {
-        throw createServerError(
-          result,
-          t(hasFilter ? 'Failed to search users' : 'Failed to load users')
-        )
-      }
-
-      return {
-        items: result.data?.items || [],
-        total: result.data?.total || 0,
-      }
-    },
+    ...usersListQueryOptions(
+      { globalFilter, columnFilters, pagination },
+      sorting,
+      refreshTrigger
+    ),
     placeholderData: (previousData) => previousData,
   })
 

@@ -19,11 +19,21 @@ For commercial licensing, please contact support@quantumnous.com
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import z from 'zod'
 
+import { canEditModelPricing } from '@/features/model-pricing/permission'
 import { Models } from '@/features/models'
+import {
+  getModelsTableUrlConfig,
+  modelsListQueryOptions,
+  vendorsListQueryOptions,
+} from '@/features/models/lib/models-query'
 import {
   MODELS_SECTION_IDS,
   MODELS_DEFAULT_SECTION,
 } from '@/features/models/section-registry'
+import { MOBILE_MEDIA_QUERY, matchesMediaQuery } from '@/hooks/use-media-query'
+import { readTableUrlState } from '@/hooks/use-table-url-state'
+import { prefetchRouteData } from '@/lib/route-prefetch'
+import { useAuthStore } from '@/stores/auth-store'
 
 const modelsSearchSchema = z.object({
   vPage: z.number().optional().catch(1),
@@ -61,5 +71,20 @@ export const Route = createFileRoute('/_authenticated/admin/models/$section')({
     }
   },
   validateSearch: modelsSearchSchema,
+  loaderDeps: ({ search }) => search,
+  loader: ({ context, params, deps }) => {
+    if (params.section !== 'metadata') return
+    const role = useAuthStore.getState().auth.user?.role
+    const table = readTableUrlState(
+      deps,
+      getModelsTableUrlConfig(
+        matchesMediaQuery(MOBILE_MEDIA_QUERY),
+        canEditModelPricing(role)
+      )
+    )
+    // A visit starts with no vendor picked from the vendors section.
+    prefetchRouteData(context.queryClient, modelsListQueryOptions(table, null))
+    prefetchRouteData(context.queryClient, vendorsListQueryOptions)
+  },
   component: Models,
 })

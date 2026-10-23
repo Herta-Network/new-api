@@ -16,12 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
-import { getSelf } from '@/lib/api'
 
 import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
@@ -32,8 +31,6 @@ import { RechargeFormCard } from './components/recharge-form-card'
 import { SubscriptionPlansCard } from './components/subscription-plans-card'
 import { WalletStatsCard } from './components/wallet-stats-card'
 import {
-  paymentQueryKeys,
-  subscriptionQueryKeys,
   useAffiliate,
   usePaymentCheckout,
   usePaymentInfo,
@@ -41,7 +38,11 @@ import {
   useRedemption,
   useRedemptionInfo,
 } from './hooks'
-import type { UserWalletData } from './types'
+import {
+  paymentQueryKeys,
+  subscriptionQueryKeys,
+  walletUserQueryOptions,
+} from './lib/wallet-queries'
 
 interface WalletProps {
   initialShowHistory?: boolean
@@ -53,8 +54,6 @@ interface WalletProps {
 export function Wallet(props: WalletProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const [user, setUser] = useState<UserWalletData | null>(null)
-  const [userLoading, setUserLoading] = useState(true)
   const [transferDialogOpen, setTransferDialogOpen] = useState(false)
   const [billingDialogOpen, setBillingDialogOpen] = useState(false)
   const [redemptionCode, setRedemptionCode] = useState('')
@@ -72,25 +71,9 @@ export function Wallet(props: WalletProps) {
   const { redeeming, redeemCode } = useRedemption()
   const redemptionInfo = useRedemptionInfo()
 
-  // Fetch and refresh user data
-  const fetchUser = useCallback(async () => {
-    try {
-      setUserLoading(true)
-      const response = await getSelf()
-      if (response.success && response.data) {
-        setUser(response.data as UserWalletData)
-      }
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Failed to fetch user data:', error)
-    } finally {
-      setUserLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    fetchUser()
-  }, [fetchUser])
+  const userQuery = useQuery(walletUserQueryOptions)
+  const user = userQuery.data ?? null
+  const fetchUser = userQuery.refetch
 
   useEffect(() => {
     if (props.initialShowHistory) {
@@ -145,7 +128,7 @@ export function Wallet(props: WalletProps) {
         <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
         <SectionPageLayout.Content>
           <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
-            <WalletStatsCard user={user} loading={userLoading} />
+            <WalletStatsCard user={user} loading={userQuery.isLoading} />
 
             <div
               className={

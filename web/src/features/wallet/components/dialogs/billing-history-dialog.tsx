@@ -44,12 +44,12 @@ import { handleServerError } from '@/lib/handle-server-error'
 
 import { closePaymentOrder } from '../../api'
 import { useBillingHistory } from '../../hooks/use-billing-history'
-import { paymentQueryKeys } from '../../hooks/use-payment-queries'
 import {
   getOrderStatusConfig,
   getPlatformLabel,
   isOrderPayable,
 } from '../../lib/billing'
+import { paymentQueryKeys } from '../../lib/wallet-queries'
 
 interface BillingHistoryDialogProps {
   open: boolean

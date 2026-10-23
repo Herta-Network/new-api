@@ -45,23 +45,20 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { useMediaQuery } from '@/hooks'
+import { MOBILE_MEDIA_QUERY, useMediaQuery } from '@/hooks/use-media-query'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { hasPermission } from '@/lib/admin-permissions'
-import { requireServerSuccess } from '@/lib/server-error-message'
+import { siteGroupsQueryOptions } from '@/lib/group-queries'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { getChannels, searchChannels, getGroups } from '../api'
-import {
-  DEFAULT_PAGE_SIZE,
-  CHANNEL_STATUS,
-  CHANNEL_STATUS_OPTIONS,
-} from '../constants'
+import { CHANNEL_STATUS, CHANNEL_STATUS_OPTIONS } from '../constants'
 import { useChannelPriorityDrag } from '../hooks/use-channel-priority-drag'
 import { useChannelPriorityOrder } from '../hooks/use-channel-priority-order'
 import {
-  channelsQueryKeys,
+  CHANNELS_STATUS_FILTER_STORAGE_KEY,
+  channelsListQueryOptions,
+  getChannelsTableUrlConfig,
   aggregateChannelsByTag,
   getChannelTableRowId,
   isTagAggregateRow,
@@ -85,16 +82,6 @@ const route = getRouteApi('/_authenticated/admin/channels/')
 const CHANNELS_COLUMN_VISIBILITY_STORAGE_KEY = 'channels:column-visibility'
 const CHANNELS_COLUMN_SIZING_STORAGE_KEY = 'channels:column-sizing'
 const CHANNELS_VIEW_MODE_STORAGE_KEY = 'channels:view-mode'
-const CHANNELS_STATUS_FILTER_STORAGE_KEY = 'channel-status-filter'
-
-const CHANNEL_SORTABLE_COLUMNS = new Set<ChannelSortBy>([
-  'id',
-  'name',
-  'priority',
-  'balance',
-  'response_time',
-  'test_time',
-])
 
 function isDisabledChannelRow(channel: Channel) {
   return (
@@ -113,7 +100,7 @@ export function ChannelsTable() {
     setSensitiveVisible,
     priorityActionContainer,
   } = useChannels()
-  const isMobile = useMediaQuery('(max-width: 640px)')
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY)
 
   const idSort = sorting[0]?.id === 'id'
 
@@ -129,28 +116,7 @@ export function ChannelsTable() {
   } = useTableUrlState({
     search: route.useSearch(),
     navigate: route.useNavigate(),
-    pagination: {
-      defaultPage: 1,
-      defaultPageSize: isMobile ? 10 : DEFAULT_PAGE_SIZE,
-    },
-    globalFilter: { enabled: true, key: 'filter' },
-    columnFilters: [
-      {
-        columnId: 'status',
-        searchKey: 'status',
-        type: 'array',
-        deserialize: (value) => {
-          if (value !== undefined) return value
-          const stored = localStorage.getItem(
-            CHANNELS_STATUS_FILTER_STORAGE_KEY
-          )
-          return stored === 'enabled' || stored === 'disabled' ? [stored] : []
-        },
-      },
-      { columnId: 'type', searchKey: 'type', type: 'array' },
-      { columnId: 'group', searchKey: 'group', type: 'array' },
-      { columnId: 'model', searchKey: 'model', type: 'string' },
-    ],
+    ...getChannelsTableUrlConfig(isMobile),
   })
 
   const handleColumnFiltersChange: OnChangeFn<ColumnFiltersState> = (
@@ -170,16 +136,11 @@ export function ChannelsTable() {
   }
 
   // Extract filters from column filters
-  const statusFilter =
-    (columnFilters.find((f) => f.id === 'status')?.value as string[]) || []
   const typeFilter = useMemo(
     () => (columnFilters.find((f) => f.id === 'type')?.value as string[]) || [],
     [columnFilters]
   )
-  const groupFilter =
-    (columnFilters.find((f) => f.id === 'group')?.value as string[]) || []
   const {
-    value: modelFilter,
     inputValue: modelFilterInput,
     onChange: onModelFilterInputChange,
     onCompositionStart: onModelFilterCompositionStart,
@@ -191,24 +152,6 @@ export function ChannelsTable() {
     onColumnFiltersChange,
   })
 
-  // Determine whether to use search or regular list API
-  const shouldSearch = Boolean(globalFilter?.trim() || modelFilter.trim())
-
-  const sortParams = useMemo(() => {
-    const activeSort = sorting[0]
-    if (
-      !activeSort ||
-      !CHANNEL_SORTABLE_COLUMNS.has(activeSort.id as ChannelSortBy)
-    ) {
-      return {}
-    }
-
-    return {
-      sort_by: activeSort.id as ChannelSortBy,
-      sort_order: activeSort.desc ? 'desc' : 'asc',
-    } as const
-  }, [sorting])
-
   const handleSortingChange: OnChangeFn<SortingState> = (updater) => {
     setSorting(updater)
     if (pagination.pageIndex > 0) {
@@ -217,10 +160,7 @@ export function ChannelsTable() {
   }
 
   // Fetch groups for filter
-  const { data: groupsData } = useQuery({
-    queryKey: ['groups'],
-    queryFn: async () => requireServerSuccess(await getGroups()),
-  })
+  const { data: groupsData } = useQuery(siteGroupsQueryOptions)
 
   const groupOptions = useMemo(
     () =>
@@ -232,78 +172,11 @@ export function ChannelsTable() {
   )
 
   // Fetch channels data
-  // eslint-disable-next-line @tanstack/query/exhaustive-deps
   const { data, isLoading, isFetching, refetch } = useQuery({
-    queryKey: channelsQueryKeys.list({
-      keyword: globalFilter,
-      model: modelFilter,
-      group:
-        groupFilter.length > 0 && !groupFilter.includes('all')
-          ? groupFilter[0]
-          : undefined,
-      status:
-        statusFilter.length > 0 && !statusFilter.includes('all')
-          ? statusFilter[0]
-          : undefined,
-      type:
-        typeFilter.length > 0 && !typeFilter.includes('all')
-          ? Number(typeFilter[0])
-          : undefined,
-      tag_mode: enableTagMode,
-      id_sort: idSort,
-      ...sortParams,
-      p: pagination.pageIndex + 1,
-      page_size: pagination.pageSize,
-    }),
-    queryFn: async () => {
-      if (shouldSearch) {
-        return requireServerSuccess(
-          await searchChannels({
-            keyword: globalFilter,
-            model: modelFilter,
-            group:
-              groupFilter.length > 0 && !groupFilter.includes('all')
-                ? groupFilter[0]
-                : undefined,
-            status:
-              statusFilter.length > 0 && !statusFilter.includes('all')
-                ? statusFilter[0]
-                : undefined,
-            type:
-              typeFilter.length > 0 && !typeFilter.includes('all')
-                ? Number(typeFilter[0])
-                : undefined,
-            tag_mode: enableTagMode,
-            id_sort: idSort,
-            ...sortParams,
-            p: pagination.pageIndex + 1,
-            page_size: pagination.pageSize,
-          })
-        )
-      } else {
-        return requireServerSuccess(
-          await getChannels({
-            group:
-              groupFilter.length > 0 && !groupFilter.includes('all')
-                ? groupFilter[0]
-                : undefined,
-            status:
-              statusFilter.length > 0 && !statusFilter.includes('all')
-                ? statusFilter[0]
-                : undefined,
-            type:
-              typeFilter.length > 0 && !typeFilter.includes('all')
-                ? Number(typeFilter[0])
-                : undefined,
-            tag_mode: enableTagMode,
-            id_sort: idSort,
-            ...sortParams,
-            p: pagination.pageIndex + 1,
-            page_size: pagination.pageSize,
-          })
-        )
-      }
-    },
+    ...channelsListQueryOptions(
+      { globalFilter, columnFilters, pagination },
+      { enableTagMode, sorting }
+    ),
     placeholderData: (previousData) => previousData,
   })
 
