@@ -29,7 +29,12 @@ import React, {
 } from 'react'
 
 import { useChannelUpstreamUpdates } from '../hooks/use-channel-upstream-updates'
-import { channelsQueryKeys } from '../lib'
+import {
+  CHANNELS_ID_SORT_STORAGE_KEY,
+  channelsQueryKeys,
+  readStoredSorting,
+  readStoredTagMode,
+} from '../lib/channels-query'
 import type { Channel } from '../types'
 
 // ============================================================================
@@ -88,20 +93,12 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState<DialogType>(null)
   const [currentRow, setCurrentRow] = useState<Channel | null>(null)
   const [currentTag, setCurrentTag] = useState<string | null>(null)
-  const [enableTagMode, setEnableTagMode] = useState(() => {
-    return localStorage.getItem('enable-tag-mode') === 'true'
-  })
-  const [sorting, setSorting] = useState<SortingState>(() => [
-    {
-      id:
-        localStorage.getItem('channels-id-sort') === 'true' ? 'id' : 'priority',
-      desc: true,
-    },
-  ])
+  const [enableTagMode, setEnableTagMode] = useState(readStoredTagMode)
+  const [sorting, setSorting] = useState<SortingState>(readStoredSorting)
   const idSort = sorting[0]?.id === 'id'
   useEffect(() => {
     // Retain the existing ID-sort preference for returning users.
-    localStorage.setItem('channels-id-sort', String(idSort))
+    localStorage.setItem(CHANNELS_ID_SORT_STORAGE_KEY, String(idSort))
   }, [idSort])
   const [batchMode, setBatchMode] = useState(false)
   const [sensitiveVisible, setSensitiveVisible] = useState(true)

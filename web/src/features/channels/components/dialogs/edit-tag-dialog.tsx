@@ -32,15 +32,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
+import { siteGroupsQueryOptions } from '@/lib/group-queries'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import {
-  editTagChannels,
-  getTagModels,
-  getAllModels,
-  getGroups,
-} from '../../api'
+import { editTagChannels, getTagModels, getAllModels } from '../../api'
 import { channelsQueryKeys } from '../../lib'
 import type { TagOperationParams } from '../../types'
 import { useChannels } from '../channels-provider'
@@ -82,8 +78,7 @@ export function EditTagDialog({ open, onOpenChange }: EditTagDialogProps) {
 
   // Fetch groups
   const { data: groupsData } = useQuery({
-    queryKey: ['groups'],
-    queryFn: async () => requireServerSuccess(await getGroups()),
+    ...siteGroupsQueryOptions,
     enabled: open,
   })
 

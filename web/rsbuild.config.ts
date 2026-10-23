@@ -1,12 +1,56 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { defineConfig, loadEnv } from '@rsbuild/core'
+import {
+  defineConfig,
+  ensureAssetPrefix,
+  loadEnv,
+  type RsbuildPlugin,
+} from '@rsbuild/core'
 import { pluginReact } from '@rsbuild/plugin-react'
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss'
 import { tanstackRouter } from '@tanstack/router-plugin/rspack'
 
+import { INTERFACE_LANGUAGE_OPTIONS } from './src/i18n/languages.ts'
+import { localePreloadScript } from './src/i18n/locale-preload.ts'
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+// Puts the inline script from `src/i18n/locale-preload.ts` in index.html, with
+// the hashed URL of every `locale-<code>` chunk, so the visitor's locale
+// downloads alongside the main bundle instead of after it.
+const pluginLocalePreload: RsbuildPlugin = {
+  name: 'newapi:locale-preload',
+  setup(api) {
+    api.modifyHTMLTags((tags, context) => {
+      const chunkUrls = Object.fromEntries(
+        INTERFACE_LANGUAGE_OPTIONS.map(({ code }) => {
+          const chunk = context.compilation.namedChunks.get(`locale-${code}`)
+          const file =
+            chunk && [...chunk.files].find((name) => name.endsWith('.js'))
+          if (!file) {
+            throw new Error(
+              `No "locale-${code}" chunk to preload: keep its webpackChunkName in src/i18n/locale-loader.ts`
+            )
+          }
+          return [code, ensureAssetPrefix(file, context.assetPrefix)]
+        })
+      )
+      // After the bundle's scripts, so they are requested first, and before
+      // the stylesheet: a parser-inserted inline script after a pending
+      // stylesheet waits for it to load.
+      const stylesheet = tags.headTags.findIndex(
+        (tag) => tag.attrs?.rel === 'stylesheet'
+      )
+      tags.headTags.splice(
+        stylesheet === -1 ? tags.headTags.length : stylesheet,
+        0,
+        { tag: 'script', children: localePreloadScript(chunkUrls) }
+      )
+      return tags
+    })
+  },
+}
 
 export default defineConfig(({ envMode }) => {
   const env = loadEnv({ mode: envMode, prefixes: ['VITE_'] })
@@ -24,7 +68,13 @@ export default defineConfig(({ envMode }) => {
   ) as Record<string, { target: string; changeOrigin: boolean }>
 
   return {
-    plugins: [pluginReact(), pluginTailwindcss({ optimize: false })],
+    plugins: [
+      pluginReact(),
+      pluginTailwindcss({ optimize: false }),
+      // Dev compiles dynamic imports lazily, so the locale chunks do not exist
+      // yet when the dev server writes index.html.
+      isProd && pluginLocalePreload,
+    ],
     // Rsbuild 2: replaces deprecated `performance.chunkSplit` (RSPack 2 aligned)
     splitChunks: {
       preset: 'default',

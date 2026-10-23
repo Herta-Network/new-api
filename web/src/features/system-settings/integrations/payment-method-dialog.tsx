@@ -18,16 +18,16 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { ShieldAlert } from 'lucide-react'
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useForm, useWatch, type Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
 import { PasswordInput } from '@/components/password-input'
-import { ReactIconByName } from '@/components/react-icon-by-name'
 import { StatusBadge } from '@/components/status-badge'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Combobox } from '@/components/ui/combobox'
 import {
   Form,
   FormControl,
@@ -48,6 +48,7 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { PAYMENT_ICONS } from '@/features/wallet/lib/payment-icons'
 
 import {
   SettingsForm,
@@ -105,6 +106,18 @@ export function PaymentMethodDialog(props: PaymentMethodDialogProps) {
     name: ['platform', 'fee_mode'],
   })
   const fields = editablePaymentFields(fieldsOf(platform))
+  // An empty icon shows the platform's own icon to buyers.
+  const iconOptions = useMemo(
+    () => [
+      { value: '', label: t('Platform icon') },
+      ...PAYMENT_ICONS.map((icon) => ({
+        value: icon.name,
+        label: t(icon.labelKey),
+        icon: <icon.Icon className='size-4' />,
+      })),
+    ],
+    [t]
+  )
   const isBalance = platform === BALANCE_PAYMENT_PLATFORM
   const isEditing = props.method !== null
 
@@ -254,24 +267,21 @@ export function PaymentMethodDialog(props: PaymentMethodDialogProps) {
               <FormItem>
                 <FormLabel>{t('Icon')}</FormLabel>
                 <FormControl>
-                  <div className='flex items-center gap-2'>
-                    <Input
-                      placeholder={t('e.g., SiAlipay')}
-                      {...field}
-                      className='flex-1'
-                    />
-                    {field.value && (
-                      <ReactIconByName
-                        name={field.value}
-                        className='text-muted-foreground size-5 shrink-0'
-                        title={field.value}
-                      />
-                    )}
-                  </div>
+                  <Combobox
+                    ref={field.ref}
+                    options={iconOptions}
+                    value={field.value}
+                    onValueChange={(value) => field.onChange(value ?? '')}
+                    onBlur={field.onBlur}
+                    showSelectedIcon
+                    searchPlaceholder={t('Search icons')}
+                    emptyText={t('No matching icons')}
+                    className='w-full'
+                  />
                 </FormControl>
                 <FormDescription>
                   {t(
-                    'Enter a react-icons component name. Invalid names show no icon.'
+                    'Shown to buyers next to the method name. An icon that is not in the list shows the platform icon.'
                   )}
                 </FormDescription>
                 <FormMessage />

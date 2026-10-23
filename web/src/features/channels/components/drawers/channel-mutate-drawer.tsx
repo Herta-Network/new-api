@@ -117,6 +117,7 @@ import {
   parseChannelConnectionInfo,
   type ChannelConnectionInfo,
 } from '@/lib/channel-connection-info'
+import { siteGroupsQueryOptions } from '@/lib/group-queries'
 import { handleServerError } from '@/lib/handle-server-error'
 import { ROLE } from '@/lib/roles'
 import {
@@ -131,7 +132,6 @@ import {
   getAllModels,
   getChannel,
   getChannelDefaultBaseURLs,
-  getGroups,
   getPrefillGroups,
   getTaskPluginOptions,
   refreshCodexCredential,
@@ -542,8 +542,7 @@ export function ChannelMutateDrawer({
 
   // Fetch available groups
   const { data: groupsData, isLoading: isLoadingGroups } = useQuery({
-    queryKey: ['groups'],
-    queryFn: async () => requireServerSuccess(await getGroups()),
+    ...siteGroupsQueryOptions,
     enabled: open && !showProviderPicker,
   })
 

@@ -20,6 +20,17 @@ import { createFileRoute } from '@tanstack/react-router'
 import z from 'zod'
 
 import { Channels } from '@/features/channels'
+import {
+  channelOpsQueryOptions,
+  channelsListQueryOptions,
+  getChannelsTableUrlConfig,
+  readStoredSorting,
+  readStoredTagMode,
+} from '@/features/channels/lib/channels-query'
+import { MOBILE_MEDIA_QUERY, matchesMediaQuery } from '@/hooks/use-media-query'
+import { readTableUrlState } from '@/hooks/use-table-url-state'
+import { siteGroupsQueryOptions } from '@/lib/group-queries'
+import { prefetchRouteData } from '@/lib/route-prefetch'
 
 const channelsSearchSchema = z.object({
   page: z.number().optional().catch(1),
@@ -33,5 +44,22 @@ const channelsSearchSchema = z.object({
 
 export const Route = createFileRoute('/_authenticated/admin/channels/')({
   validateSearch: channelsSearchSchema,
+  loaderDeps: ({ search }) => search,
+  loader: ({ context, deps }) => {
+    const table = readTableUrlState(
+      deps,
+      getChannelsTableUrlConfig(matchesMediaQuery(MOBILE_MEDIA_QUERY))
+    )
+    const view = {
+      enableTagMode: readStoredTagMode(),
+      sorting: readStoredSorting(),
+    }
+    prefetchRouteData(
+      context.queryClient,
+      channelsListQueryOptions(table, view)
+    )
+    prefetchRouteData(context.queryClient, channelOpsQueryOptions)
+    prefetchRouteData(context.queryClient, siteGroupsQueryOptions)
+  },
   component: Channels,
 })

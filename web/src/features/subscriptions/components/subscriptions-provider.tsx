@@ -16,12 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQueryClient } from '@tanstack/react-query'
 import React, { useState } from 'react'
 
 import {
   getOptionValue,
   useSystemOptions,
 } from '@/features/system-settings/hooks/use-system-options'
+import { subscriptionQueryKeys } from '@/features/wallet/lib/wallet-queries'
 import useDialogState from '@/hooks/use-dialog'
 
 import type { PlanRecord, SubscriptionsDialogType } from '../types'
@@ -59,7 +61,14 @@ export function SubscriptionsProvider({
     complianceOptions['payment_setting.compliance_terms_version'] ===
       CURRENT_COMPLIANCE_TERMS_VERSION
 
-  const triggerRefresh = () => setRefreshTrigger((prev) => prev + 1)
+  const queryClient = useQueryClient()
+  // Every plan change refreshes this table and the plans users can buy.
+  const triggerRefresh = () => {
+    setRefreshTrigger((prev) => prev + 1)
+    void queryClient.invalidateQueries({
+      queryKey: subscriptionQueryKeys.publicPlans,
+    })
+  }
 
   return (
     <SubscriptionsContext

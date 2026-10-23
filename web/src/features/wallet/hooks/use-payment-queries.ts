@@ -18,39 +18,26 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 
-import { getPaymentInfo, getPaymentMethods, quotePurchase } from '../api'
+import { quotePurchase } from '../api'
+import {
+  paymentInfoQueryOptions,
+  paymentMethodsQueryOptions,
+  paymentQueryKeys,
+} from '../lib/wallet-queries'
 import type { PaymentPurpose, PurchaseRequest } from '../types'
 
 // ============================================================================
 // Payment Queries
 // ============================================================================
 
-export const paymentQueryKeys = {
-  info: ['payment', 'info'] as const,
-  methods: (purpose: PaymentPurpose) =>
-    ['payment', 'methods', purpose] as const,
-  quote: (request: PurchaseRequest | null) =>
-    ['payment', 'quote', request] as const,
-  orders: ['payment', 'orders'] as const,
-  order: (orderNo: string) => ['payment', 'order', orderNo] as const,
-}
-
 /** Site currency, top-up presets and the compliance state. */
 export function usePaymentInfo() {
-  return useQuery({
-    queryKey: paymentQueryKeys.info,
-    queryFn: getPaymentInfo,
-    staleTime: 60 * 1000,
-  })
+  return useQuery(paymentInfoQueryOptions)
 }
 
 /** The methods a purpose can be paid with, unavailable ones included. */
 export function usePaymentMethods(purpose: PaymentPurpose, enabled = true) {
-  return useQuery({
-    queryKey: paymentQueryKeys.methods(purpose),
-    queryFn: () => getPaymentMethods(purpose),
-    enabled,
-  })
+  return useQuery({ ...paymentMethodsQueryOptions(purpose), enabled })
 }
 
 /**
@@ -65,9 +52,4 @@ export function usePaymentQuote(request: PurchaseRequest | null) {
     retry: false,
     meta: { errorToast: false },
   })
-}
-
-export const subscriptionQueryKeys = {
-  publicPlans: ['subscription', 'plans', 'public'] as const,
-  self: ['subscription', 'self'] as const,
 }

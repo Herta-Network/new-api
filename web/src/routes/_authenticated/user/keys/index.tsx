@@ -21,6 +21,13 @@ import z from 'zod'
 
 import { ApiKeys } from '@/features/keys'
 import { API_KEY_STATUS_OPTIONS } from '@/features/keys/constants'
+import {
+  API_KEYS_TABLE_URL_CONFIG,
+  apiKeysListQueryOptions,
+} from '@/features/keys/lib/api-keys-query'
+import { readTableUrlState } from '@/hooks/use-table-url-state'
+import { userGroupsQueryOptions } from '@/lib/group-queries'
+import { prefetchRouteData } from '@/lib/route-prefetch'
 
 const apiKeySearchSchema = z.object({
   page: z.number().optional().catch(1),
@@ -35,5 +42,12 @@ const apiKeySearchSchema = z.object({
 
 export const Route = createFileRoute('/_authenticated/user/keys/')({
   validateSearch: apiKeySearchSchema,
+  loaderDeps: ({ search }) => search,
+  loader: ({ context, deps }) => {
+    // A visit starts with the table's refresh counter at 0.
+    const table = readTableUrlState(deps, API_KEYS_TABLE_URL_CONFIG)
+    prefetchRouteData(context.queryClient, apiKeysListQueryOptions(table, 0))
+    prefetchRouteData(context.queryClient, userGroupsQueryOptions)
+  },
   component: ApiKeys,
 })

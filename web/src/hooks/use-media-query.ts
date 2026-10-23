@@ -18,6 +18,18 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useSyncExternalStore } from 'react'
 
+/** The width below which tables switch to their compact phone layout. */
+export const MOBILE_MEDIA_QUERY = '(max-width: 640px)'
+
+/**
+ * Whether a media query matches now. Outside React, for example in a route
+ * loader that needs the same value `useMediaQuery` renders with.
+ */
+export function matchesMediaQuery(query: string): boolean {
+  if (typeof window === 'undefined') return false
+  return window.matchMedia(query).matches
+}
+
 /**
  * React hook for responsive media queries
  * @param query - CSS media query string (e.g., "(max-width: 640px)")
@@ -35,13 +47,7 @@ export function useMediaQuery(query: string): boolean {
       media.addEventListener('change', onStoreChange)
       return () => media.removeEventListener('change', onStoreChange)
     },
-    () => {
-      // Client-side: return the current match state
-      if (typeof window !== 'undefined') {
-        return window.matchMedia(query).matches
-      }
-      return false
-    },
+    () => matchesMediaQuery(query),
     () => {
       // Server-side: return false as fallback
       return false

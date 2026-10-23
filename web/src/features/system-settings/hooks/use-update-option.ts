@@ -20,6 +20,11 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 
+import { invalidatePaymentSettingQueries } from '@/features/wallet/lib/wallet-queries'
+import {
+  siteGroupsQueryOptions,
+  userGroupsQueryOptions,
+} from '@/lib/group-queries'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
@@ -48,6 +53,21 @@ const STATUS_RELATED_KEYS = new Set([
   'QuotaRemindThreshold',
 ])
 
+// Options the group lists are built from. The pricing page shows the group
+// ratios too.
+const GROUP_LIST_KEYS = new Set([
+  'GroupRatio',
+  'UserUsableGroups',
+  'GroupGroupRatio',
+  'AutoGroups',
+  'group_ratio_setting.group_special_usable_group',
+])
+
+// Options the wallet's payment and top-up settings are built from.
+function isPaymentSettingKey(key: string): boolean {
+  return key.startsWith('payment_setting.') || key === 'TopUpLink'
+}
+
 export function useUpdateOption() {
   const queryClient = useQueryClient()
 
@@ -58,6 +78,19 @@ export function useUpdateOption() {
       if (data.success) {
         // Always refresh system-options
         queryClient.invalidateQueries({ queryKey: ['system-options'] })
+
+        if (GROUP_LIST_KEYS.has(variables.key)) {
+          queryClient.invalidateQueries({
+            queryKey: siteGroupsQueryOptions.queryKey,
+          })
+          queryClient.invalidateQueries({
+            queryKey: userGroupsQueryOptions.queryKey,
+          })
+          queryClient.invalidateQueries({ queryKey: ['pricing'] })
+        }
+        if (isPaymentSettingKey(variables.key)) {
+          invalidatePaymentSettingQueries(queryClient)
+        }
 
         // If updating frontend-display-related config, also refresh status
         if (STATUS_RELATED_KEYS.has(variables.key)) {

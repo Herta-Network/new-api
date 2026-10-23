@@ -25,7 +25,8 @@ import { getSelf } from '@/lib/api'
 import { formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 
-import { getRedemptionInfo, redeemTopupCode } from '../api'
+import { redeemTopupCode } from '../api'
+import { redemptionInfoQueryOptions } from '../lib/wallet-queries'
 
 // ============================================================================
 // Redemption Hooks
@@ -33,11 +34,7 @@ import { getRedemptionInfo, redeemTopupCode } from '../api'
 
 /** Whether codes can be redeemed and the link to buy them. */
 export function useRedemptionInfo() {
-  return useQuery({
-    queryKey: ['redemption', 'info'],
-    queryFn: getRedemptionInfo,
-    staleTime: 60 * 1000,
-  })
+  return useQuery(redemptionInfoQueryOptions)
 }
 
 export function useRedemption() {

@@ -47,7 +47,11 @@ const queryClient = createAppQueryClient(() => {
   void router.navigate({ to: '/500' })
 })
 
-// Create a new router instance
+// Create a new router instance. Hovering or focusing a link preloads its
+// route, and the route loaders prefetch the page's queries
+// (`prefetchRouteData`). The router keeps no loader data of its own, so it
+// reruns a loader on every preload and React Query decides what to fetch:
+// fresh data is reused, so hovering a link again costs no request.
 const router = createRouter({
   routeTree,
   context: { queryClient },

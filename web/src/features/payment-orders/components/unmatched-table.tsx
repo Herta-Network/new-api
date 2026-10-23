@@ -32,15 +32,18 @@ import { toIntlLocale } from '@/i18n/languages'
 import { formatTimestampToDate } from '@/lib/format'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import { listPaymentUnmatched, resolvePaymentUnmatched } from '../api'
+import { resolvePaymentUnmatched } from '../api'
 import { PAYMENT_UNMATCHED_STATES } from '../constants'
 import { formatOrderAmount, paymentPlatformLabel } from '../lib/format'
+import {
+  PAYMENT_UNMATCHED_TABLE_URL_CONFIG,
+  paymentUnmatchedListQueryOptions,
+  paymentUnmatchedQueryKey,
+} from '../lib/payment-orders-query'
 import type { PaymentUnmatched } from '../types'
 import { PaymentNoteDialog } from './payment-note-dialog'
 
 const route = getRouteApi('/_authenticated/admin/payment-orders/$section')
-
-const paymentUnmatchedQueryKey = ['payment-unmatched'] as const
 
 export function PaymentUnmatchedTable() {
   const { t, i18n } = useTranslation()
@@ -57,32 +60,11 @@ export function PaymentUnmatchedTable() {
   } = useTableUrlState({
     search: route.useSearch(),
     navigate: route.useNavigate(),
-    pagination: {
-      pageKey: 'uPage',
-      pageSizeKey: 'uPageSize',
-      defaultPage: 1,
-      defaultPageSize: 20,
-    },
-    globalFilter: { enabled: false },
-    columnFilters: [
-      { columnId: 'resolved_at', searchKey: 'uState', type: 'array' },
-    ],
+    ...PAYMENT_UNMATCHED_TABLE_URL_CONFIG,
   })
-  const resolved = (
-    columnFilters.find((filter) => filter.id === 'resolved_at')?.value as
-      | string[]
-      | undefined
-  )?.[0]
 
-  const filters = {
-    p: pagination.pageIndex + 1,
-    page_size: pagination.pageSize,
-    resolved,
-  }
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: [...paymentUnmatchedQueryKey, filters],
-    queryFn: async () =>
-      requireServerSuccess(await listPaymentUnmatched(filters)).data,
+    ...paymentUnmatchedListQueryOptions({ columnFilters, pagination }),
     placeholderData: (previous) => previous,
   })
 

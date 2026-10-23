@@ -38,10 +38,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { getGroups } from '@/features/users/api'
 import { useMediaQuery } from '@/hooks'
-import { getUserGroups } from '@/lib/api'
-import { requireServerSuccess } from '@/lib/server-error-message'
+import {
+  siteGroupsQueryOptions,
+  userGroupsQueryOptions,
+} from '@/lib/group-queries'
 
 import { LOG_TYPE_ALL_VALUE, LOG_TYPE_FILTERS } from '../constants'
 import { buildSearchParams } from '../lib/filter'
@@ -130,13 +131,11 @@ export function CommonLogsFilterBar<TData>(
   const { sensitiveVisible, setSensitiveVisible } = useUsageLogsContext()
   const fetchingLogs = useIsFetching({ queryKey: ['logs'] })
   const { data: adminGroups } = useQuery({
-    queryKey: ['groups'],
-    queryFn: async () => requireServerSuccess(await getGroups()),
+    ...siteGroupsQueryOptions,
     enabled: isAdmin,
   })
   const { data: userGroups } = useQuery({
-    queryKey: ['user-groups'],
-    queryFn: async () => requireServerSuccess(await getUserGroups()),
+    ...userGroupsQueryOptions,
     enabled: !isAdmin,
   })
   const groupOptions = useMemo(() => {

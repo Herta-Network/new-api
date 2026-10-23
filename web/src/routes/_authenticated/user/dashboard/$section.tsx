@@ -20,9 +20,15 @@ import { createFileRoute, redirect } from '@tanstack/react-router'
 
 import { Dashboard } from '@/features/dashboard'
 import {
+  overviewApiKeysQueryOptions,
+  overviewUsageTrendQueryOptions,
+  overviewUserModelsQueryOptions,
+} from '@/features/dashboard/lib/overview-queries'
+import {
   DASHBOARD_DEFAULT_SECTION,
   isDashboardSection,
 } from '@/features/dashboard/section-registry'
+import { prefetchRouteData } from '@/lib/route-prefetch'
 
 export const Route = createFileRoute('/_authenticated/user/dashboard/$section')(
   {
@@ -33,6 +39,12 @@ export const Route = createFileRoute('/_authenticated/user/dashboard/$section')(
           params: { section: DASHBOARD_DEFAULT_SECTION.self },
         })
       }
+    },
+    loader: ({ context, params }) => {
+      if (params.section !== 'overview') return
+      prefetchRouteData(context.queryClient, overviewApiKeysQueryOptions)
+      prefetchRouteData(context.queryClient, overviewUserModelsQueryOptions)
+      prefetchRouteData(context.queryClient, overviewUsageTrendQueryOptions)
     },
     component: UserDashboardPage,
   }

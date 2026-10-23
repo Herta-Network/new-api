@@ -20,7 +20,6 @@ import { Bitcoin, CreditCard, QrCode, Wallet } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 import { IconAlipay, IconStripe, IconWeChat } from '@/assets/brand-icons'
-import { ReactIconByName } from '@/components/react-icon-by-name'
 
 import {
   ALIPAY_ICON_COLOR,
@@ -29,6 +28,7 @@ import {
   WECHAT_PAY_ICON_COLOR,
 } from '../constants'
 import type { StripePaymentMethodType } from '../types'
+import { PAYMENT_ICON_BY_NAME } from './payment-icons'
 
 // ============================================================================
 // UI Helper Functions
@@ -63,10 +63,10 @@ function normalizeHttpIconUrl(raw: string | undefined | null): string | null {
 /**
  * Get payment method icon component
  *
- * When icon is provided, render a safe https image URL or resolve it as a
- * react-icons component name. Invalid configured icons intentionally render
- * nothing instead of falling back to the platform icon. A Stripe method
- * without an icon shows the icon of the payment method type it collects.
+ * When icon is provided, render a safe https image URL or the curated icon
+ * of that name (PAYMENT_ICONS). Any other configured icon falls back to the
+ * platform icon, as a method without an icon does; for a Stripe method that
+ * is the icon of the payment method type it collects.
  */
 export function getPaymentIcon(
   platform: string | undefined,
@@ -90,10 +90,10 @@ export function getPaymentIcon(
       />
     )
   }
-  if (iconValue) {
+  const CuratedIcon = iconValue ? PAYMENT_ICON_BY_NAME.get(iconValue) : null
+  if (CuratedIcon) {
     return (
-      <ReactIconByName
-        name={iconValue}
+      <CuratedIcon
         className={className}
         title={altName || platform || iconValue}
       />

@@ -32,11 +32,7 @@ import { Input } from '@/components/ui/input'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import {
-  listPaymentOrders,
-  runPaymentOrderAction,
-  type PaymentOrderAction,
-} from '../api'
+import { runPaymentOrderAction, type PaymentOrderAction } from '../api'
 import {
   PAYMENT_ORDER_STATUS,
   PAYMENT_ORDER_STATUSES,
@@ -44,13 +40,16 @@ import {
   PAYMENT_PURPOSES,
 } from '../constants'
 import { paymentPlatformLabel } from '../lib/format'
+import {
+  PAYMENT_ORDERS_TABLE_URL_CONFIG,
+  paymentOrdersListQueryOptions,
+  paymentOrdersQueryKey,
+} from '../lib/payment-orders-query'
 import type { PaymentOrder } from '../types'
 import { usePaymentOrdersColumns } from './orders-columns'
 import { PaymentNoteDialog } from './payment-note-dialog'
 
 const route = getRouteApi('/_authenticated/admin/payment-orders/$section')
-
-const paymentOrdersQueryKey = ['payment-orders'] as const
 
 type ActionRequest = {
   order: PaymentOrder
@@ -96,40 +95,20 @@ export function PaymentOrdersTable() {
   } = useTableUrlState({
     search: route.useSearch(),
     navigate: route.useNavigate(),
-    pagination: { defaultPage: 1, defaultPageSize: 20 },
-    globalFilter: { enabled: true, key: 'filter' },
-    columnFilters: [
-      { columnId: 'status', searchKey: 'status', type: 'array' },
-      { columnId: 'purpose', searchKey: 'purpose', type: 'array' },
-      { columnId: 'platform', searchKey: 'platform', type: 'array' },
-      { columnId: 'user_id', searchKey: 'user', type: 'string' },
-    ],
+    ...PAYMENT_ORDERS_TABLE_URL_CONFIG,
   })
-  const firstFilter = (columnId: string) =>
-    (
-      columnFilters.find((filter) => filter.id === columnId)?.value as
-        | string[]
-        | undefined
-    )?.[0]
   const userFilter = useDebouncedColumnFilter({
     columnFilters,
     columnId: 'user_id',
     onColumnFiltersChange,
   })
 
-  const filters = {
-    p: pagination.pageIndex + 1,
-    page_size: pagination.pageSize,
-    order_no: globalFilter?.trim() || undefined,
-    user_id: userFilter.value.trim() || undefined,
-    status: firstFilter('status'),
-    purpose: firstFilter('purpose'),
-    platform: firstFilter('platform'),
-  }
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: [...paymentOrdersQueryKey, filters],
-    queryFn: async () =>
-      requireServerSuccess(await listPaymentOrders(filters)).data,
+    ...paymentOrdersListQueryOptions({
+      globalFilter,
+      columnFilters,
+      pagination,
+    }),
     placeholderData: (previous) => previous,
   })
 

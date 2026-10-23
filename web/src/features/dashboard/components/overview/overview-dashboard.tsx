@@ -48,13 +48,11 @@ import {
 } from '@/components/page-transition'
 import { Button } from '@/components/ui/button'
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
-import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
+import { fetchTokenKey } from '@/features/keys/api'
 import type { ApiKey } from '@/features/keys/types'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
-import { getUserModels } from '@/lib/api'
 import { handleServerError } from '@/lib/handle-server-error'
 import { MOTION_TRANSITION } from '@/lib/motion'
-import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -62,6 +60,10 @@ import {
   useApiInfo,
   useDashboardContentVisibility,
 } from '../../hooks/use-status-data'
+import {
+  overviewApiKeysQueryOptions,
+  overviewUserModelsQueryOptions,
+} from '../../lib/overview-queries'
 import { AnnouncementsPanel } from './announcements-panel'
 import { ApiInfoPanel } from './api-info-panel'
 import { FAQPanel } from './faq-panel'
@@ -476,23 +478,8 @@ export function OverviewDashboard() {
   const remainQuota = Number(user?.quota ?? 0)
   const usedQuota = Number(user?.used_quota ?? 0)
 
-  const apiKeysQuery = useQuery({
-    queryKey: ['dashboard', 'overview', 'api-keys'],
-    queryFn: async () => {
-      const result = requireServerSuccess(await getApiKeys({ p: 1, size: 10 }))
-      return result.success ? (result.data?.items ?? []) : []
-    },
-    staleTime: 60 * 1000,
-  })
-
-  const modelsQuery = useQuery({
-    queryKey: ['dashboard', 'overview', 'user-models'],
-    queryFn: async () => {
-      const result = requireServerSuccess(await getUserModels())
-      return result.success ? (result.data ?? []) : []
-    },
-    staleTime: 5 * 60 * 1000,
-  })
+  const apiKeysQuery = useQuery(overviewApiKeysQueryOptions)
+  const modelsQuery = useQuery(overviewUserModelsQueryOptions)
 
   const preferredKey = useMemo(
     () => getPreferredKey(apiKeysQuery.data ?? []),

@@ -29,7 +29,7 @@ test('the built-in Stripe icon preserves the requested size and brand color', ()
   expect(icon).toHaveStyle({ color: STRIPE_ICON_COLOR })
 })
 
-test('an admin-configured Simple Icon still resolves through the lazy icon loader', async () => {
+test('an admin-configured curated icon renders at once with the method name as its title', () => {
   render(
     getPaymentIcon(
       PAYMENT_PLATFORMS.EPAY,
@@ -38,6 +38,19 @@ test('an admin-configured Simple Icon still resolves through the lazy icon loade
       'Configured Alipay'
     )
   )
-  const title = await screen.findByTitle('Configured Alipay')
+  const title = screen.getByTitle('Configured Alipay')
   expect(title.closest('svg')).toHaveClass('h-4', 'w-4')
+})
+
+test('an icon name outside the curated list falls back to the platform icon', () => {
+  render(
+    getPaymentIcon(
+      PAYMENT_PLATFORMS.STRIPE,
+      'h-4 w-4',
+      'GiTwoCoins',
+      'Legacy icon'
+    )
+  )
+  expect(screen.queryByTitle('Legacy icon')).not.toBeInTheDocument()
+  expect(screen.getByRole('img', { name: 'Stripe' })).toHaveClass('h-4', 'w-4')
 })

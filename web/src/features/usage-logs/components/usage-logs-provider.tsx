@@ -24,17 +24,8 @@ import { ROLE } from '@/lib/roles'
 import type { DataScope } from '@/lib/workspace'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { resolveLogsViewAccess } from '../lib/usage-logs-query'
 import type { ChannelAffinityInfo } from '../types'
-
-export type LogsViewAccess = 'self' | 'admin' | 'root'
-
-export function resolveLogsViewAccess(
-  role: number,
-  scope: DataScope
-): LogsViewAccess {
-  if (scope !== 'site' || role < ROLE.ADMIN) return 'self'
-  return role === ROLE.SUPER_ADMIN ? 'root' : 'admin'
-}
 
 const userUsageLogsRoute = getRouteApi(
   '/_authenticated/user/usage-logs/$section'

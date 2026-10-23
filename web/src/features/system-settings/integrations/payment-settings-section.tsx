@@ -44,6 +44,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { invalidatePaymentSettingQueries } from '@/features/wallet/lib/wallet-queries'
 import { formatTimestampToDate } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
@@ -163,6 +164,7 @@ export function PaymentSettingsSection(props: PaymentSettingsSectionProps) {
       toast.success(t('Compliance confirmed successfully'))
       setShowComplianceDialog(false)
       void queryClient.invalidateQueries({ queryKey: ['system-options'] })
+      invalidatePaymentSettingQueries(queryClient)
     },
     onError: (error: Error) => {
       handleServerError(error, t('Failed to confirm compliance'))

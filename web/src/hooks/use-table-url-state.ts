@@ -54,9 +54,8 @@ export type NavigateFn = (opts: {
   replace?: boolean
 }) => void
 
-type UseTableUrlStateParams = {
-  search: SearchRecord
-  navigate: NavigateFn
+/** How a table maps its state to search params, without the route bindings. */
+export type TableUrlStateConfig = {
   pagination?: {
     pageKey?: string
     pageSizeKey?: string
@@ -85,6 +84,81 @@ type UseTableUrlStateParams = {
         deserialize?: (value: unknown) => unknown
       }
   >
+}
+
+type UseTableUrlStateParams = TableUrlStateConfig & {
+  search: SearchRecord
+  navigate: NavigateFn
+}
+
+/** The table state a set of search params describes. */
+export type TableUrlState = {
+  globalFilter?: string
+  columnFilters: ColumnFiltersState
+  pagination: PaginationState
+}
+
+function readColumnFilters(
+  search: SearchRecord,
+  columnFiltersCfg: NonNullable<TableUrlStateConfig['columnFilters']>
+): ColumnFiltersState {
+  const collected: ColumnFiltersState = []
+  for (const cfg of columnFiltersCfg) {
+    const raw = search[cfg.searchKey]
+    const deserialize = cfg.deserialize ?? ((v: unknown) => v)
+    if (cfg.type === 'string') {
+      const value = (deserialize(raw) as string) ?? ''
+      if (typeof value === 'string' && value.trim() !== '') {
+        collected.push({ id: cfg.columnId, value })
+      }
+    } else {
+      // default to array type
+      const value = (deserialize(raw) as unknown[]) ?? []
+      if (Array.isArray(value) && value.length > 0) {
+        collected.push({ id: cfg.columnId, value })
+      }
+    }
+  }
+  return collected
+}
+
+function readPagination(
+  search: SearchRecord,
+  paginationCfg: TableUrlStateConfig['pagination']
+): PaginationState {
+  const rawPage = search[paginationCfg?.pageKey ?? 'page']
+  const rawPageSize = search[paginationCfg?.pageSizeKey ?? 'pageSize']
+  const pageNum =
+    typeof rawPage === 'number' ? rawPage : (paginationCfg?.defaultPage ?? 1)
+  const pageSizeNum =
+    typeof rawPageSize === 'number'
+      ? rawPageSize
+      : (getStoredPageSize() ?? paginationCfg?.defaultPageSize ?? 20)
+  return { pageIndex: Math.max(0, pageNum - 1), pageSize: pageSizeNum }
+}
+
+function readGlobalFilter(
+  search: SearchRecord,
+  globalFilterCfg: TableUrlStateConfig['globalFilter']
+): string | undefined {
+  if (!(globalFilterCfg?.enabled ?? true)) return undefined
+  const raw = search[globalFilterCfg?.key ?? 'filter']
+  return typeof raw === 'string' ? raw : ''
+}
+
+/**
+ * The state `useTableUrlState` starts from for these search params. Route
+ * loaders use it to prefetch the page of data the table requests first.
+ */
+export function readTableUrlState(
+  search: SearchRecord,
+  config: TableUrlStateConfig
+): TableUrlState {
+  return {
+    globalFilter: readGlobalFilter(search, config.globalFilter),
+    columnFilters: readColumnFilters(search, config.columnFilters ?? []),
+    pagination: readPagination(search, config.pagination),
+  }
 }
 
 type UseTableUrlStateReturn = {
@@ -125,26 +199,10 @@ export function useTableUrlState(
   const trimGlobal = globalFilterCfg?.trim ?? true
 
   // Build initial column filters from the current search params
-  const initialColumnFilters: ColumnFiltersState = useMemo(() => {
-    const collected: ColumnFiltersState = []
-    for (const cfg of columnFiltersCfg) {
-      const raw = (search as SearchRecord)[cfg.searchKey]
-      const deserialize = cfg.deserialize ?? ((v: unknown) => v)
-      if (cfg.type === 'string') {
-        const value = (deserialize(raw) as string) ?? ''
-        if (typeof value === 'string' && value.trim() !== '') {
-          collected.push({ id: cfg.columnId, value })
-        }
-      } else {
-        // default to array type
-        const value = (deserialize(raw) as unknown[]) ?? []
-        if (Array.isArray(value) && value.length > 0) {
-          collected.push({ id: cfg.columnId, value })
-        }
-      }
-    }
-    return collected
-  }, [columnFiltersCfg, search])
+  const initialColumnFilters: ColumnFiltersState = useMemo(
+    () => readColumnFilters(search, columnFiltersCfg),
+    [columnFiltersCfg, search]
+  )
 
   const [columnFilters, setColumnFilters] =
     useState<ColumnFiltersState>(initialColumnFilters)
@@ -155,16 +213,16 @@ export function useTableUrlState(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
 
-  const pagination: PaginationState = useMemo(() => {
-    const rawPage = (search as SearchRecord)[pageKey]
-    const rawPageSize = (search as SearchRecord)[pageSizeKey]
-    const pageNum = typeof rawPage === 'number' ? rawPage : defaultPage
-    const pageSizeNum =
-      typeof rawPageSize === 'number'
-        ? rawPageSize
-        : (getStoredPageSize() ?? defaultPageSize)
-    return { pageIndex: Math.max(0, pageNum - 1), pageSize: pageSizeNum }
-  }, [search, pageKey, pageSizeKey, defaultPage, defaultPageSize])
+  const pagination: PaginationState = useMemo(
+    () =>
+      readPagination(search, {
+        pageKey,
+        pageSizeKey,
+        defaultPage,
+        defaultPageSize,
+      }),
+    [search, pageKey, pageSizeKey, defaultPage, defaultPageSize]
+  )
 
   const onPaginationChange: OnChangeFn<PaginationState> = (updater) => {
     const next = typeof updater === 'function' ? updater(pagination) : updater
@@ -180,11 +238,9 @@ export function useTableUrlState(
     })
   }
 
-  const [globalFilter, setGlobalFilter] = useState<string | undefined>(() => {
-    if (!globalFilterEnabled) return undefined
-    const raw = (search as SearchRecord)[globalFilterKey]
-    return typeof raw === 'string' ? raw : ''
-  })
+  const [globalFilter, setGlobalFilter] = useState<string | undefined>(() =>
+    readGlobalFilter(search, globalFilterCfg)
+  )
 
   const onGlobalFilterChange: OnChangeFn<string> | undefined =
     globalFilterEnabled

@@ -73,6 +73,7 @@ import {
 } from '@/lib/admin-permissions'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
+import { siteGroupsQueryOptions } from '@/lib/group-queries'
 import { handleServerError } from '@/lib/handle-server-error'
 import { accountPasswordSchema } from '@/lib/password-policy'
 import { ROLE } from '@/lib/roles'
@@ -80,13 +81,7 @@ import { AuthOperationError } from '@/lib/secure-verification'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
-import {
-  createUser,
-  updateUser,
-  getUser,
-  getGroups,
-  getPermissionCatalog,
-} from '../api'
+import { createUser, updateUser, getUser, getPermissionCatalog } from '../api'
 import { BINDING_FIELDS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
   userFormSchema,
@@ -121,11 +116,7 @@ export function UsersMutateDrawer({
   const loadedPermissions = useRef<AdminPermissionMatrix | undefined>(undefined)
 
   // Fetch groups
-  const { data: groupsData } = useQuery({
-    queryKey: ['groups'],
-    queryFn: async () => requireServerSuccess(await getGroups()),
-    staleTime: 5 * 60 * 1000,
-  })
+  const { data: groupsData } = useQuery(siteGroupsQueryOptions)
 
   const groups = groupsData?.data || []
 

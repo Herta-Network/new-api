@@ -65,12 +65,11 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { ModelPricingPanel } from '@/features/model-pricing/model-pricing-panel'
 import {
-  requireServerSuccess,
   createServerError,
   getServerErrorMessage,
 } from '@/lib/server-error-message'
 
-import { createModel, updateModel, getModel, getVendors } from '../../api'
+import { createModel, updateModel, getModel } from '../../api'
 import { getNameRuleOptions, ENDPOINT_TEMPLATES } from '../../constants'
 import { modelsQueryKeys, vendorsQueryKeys } from '../../lib'
 import {
@@ -80,6 +79,7 @@ import {
   transformFormDataToModelPayload,
   type ModelFormValues,
 } from '../../lib/model-form'
+import { vendorsListQueryOptions } from '../../lib/models-query'
 import type { Model } from '../../types'
 import { ModelConnections } from '../model-connections'
 
@@ -119,9 +119,7 @@ export function ModelMutateDrawer(props: {
     defaultValues: MODEL_FORM_DEFAULT_VALUES,
   })
   const vendorsQuery = useQuery({
-    queryKey: vendorsQueryKeys.list(),
-    queryFn: async () =>
-      requireServerSuccess(await getVendors({ page_size: 1000 })),
+    ...vendorsListQueryOptions,
     enabled: props.open,
   })
   const vendors = vendorsQuery.data?.data?.items ?? []

@@ -60,6 +60,7 @@ import {
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
+  CHANNELS_TAG_MODE_STORAGE_KEY,
   handleDeleteAllDisabled,
   handleFixAbilities,
   handleTestAllChannels,
@@ -98,7 +99,7 @@ export function ChannelsPrimaryButtons() {
   )
 
   const handleTagModeToggle = (checked: boolean) => {
-    localStorage.setItem('enable-tag-mode', String(checked))
+    localStorage.setItem(CHANNELS_TAG_MODE_STORAGE_KEY, String(checked))
     setEnableTagMode(checked)
   }
 
