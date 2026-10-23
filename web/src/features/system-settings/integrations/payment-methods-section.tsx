@@ -26,7 +26,6 @@ import { BadgeCell } from '@/components/data-table/core/badge-cell'
 import { DataTableRowActionMenu } from '@/components/data-table/core/row-action-menu'
 import { StaticDataTable } from '@/components/data-table/static/static-data-table'
 import { ErrorState } from '@/components/error-state'
-import { ReactIconByName } from '@/components/react-icon-by-name'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -35,6 +34,7 @@ import {
   DropdownMenuShortcut,
 } from '@/components/ui/dropdown-menu'
 import { STRIPE_PAYMENT_METHOD_TYPE_LABELS } from '@/features/wallet/constants'
+import { PAYMENT_ICON_BY_NAME } from '@/features/wallet/lib/payment-icons'
 import { getPaymentIcon } from '@/features/wallet/lib/ui'
 import type { StripePaymentMethodType } from '@/features/wallet/types'
 import { toIntlLocale } from '@/i18n/languages'
@@ -136,18 +136,20 @@ export function PaymentMethodsSection(props: PaymentMethodsSectionProps) {
             id: 'name',
             header: t('Name'),
             className: 'w-40',
-            cell: (method) => (
-              <span className='flex items-center gap-2 font-medium'>
-                {method.icon && (
-                  <ReactIconByName
-                    name={method.icon}
-                    className='text-muted-foreground size-4 shrink-0'
-                    aria-hidden='true'
-                  />
-                )}
-                <span className='truncate'>{method.name}</span>
-              </span>
-            ),
+            cell: (method) => {
+              const Icon = PAYMENT_ICON_BY_NAME.get(method.icon.trim())
+              return (
+                <span className='flex items-center gap-2 font-medium'>
+                  {Icon && (
+                    <Icon
+                      className='text-muted-foreground size-4 shrink-0'
+                      aria-hidden='true'
+                    />
+                  )}
+                  <span className='truncate'>{method.name}</span>
+                </span>
+              )
+            },
           },
           {
             id: 'platform',

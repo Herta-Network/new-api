@@ -21,6 +21,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { PAYMENT_ICONS } from '@/features/wallet/lib/payment-icons'
 import { api } from '@/lib/api'
 
 import type {
@@ -375,6 +376,83 @@ describe('payment methods', () => {
     expect(
       within(dialog).getByRole('combobox', { name: 'Payment method type' })
     ).toHaveTextContent('Card')
+  })
+
+  it('lists the curated payment icons with their icons and saves the name of the chosen one', async () => {
+    const request = mockApi([balance, epay])
+    const user = renderSection()
+    await user.click(
+      within(await screen.findByRole('row', { name: /Alipay/ })).getByRole(
+        'button',
+        { name: 'Edit' }
+      )
+    )
+    const dialog = await screen.findByRole('dialog')
+    const picker = within(dialog).getByRole('combobox', { name: 'Icon' })
+    expect(picker).toHaveValue('Platform icon')
+    await user.click(picker)
+
+    const options = await screen.findAllByRole('option')
+    expect(options.map((option) => option.textContent)).toEqual([
+      'Platform icon',
+      ...PAYMENT_ICONS.map((icon) => icon.labelKey),
+    ])
+    for (const option of options.slice(1)) {
+      expect(option.querySelector('svg')).toBeInTheDocument()
+    }
+    await user.click(screen.getByRole('option', { name: 'Tether (USDT)' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(request.put).toHaveBeenCalledTimes(1))
+    expect(request.put).toHaveBeenCalledWith(
+      '/api/payment/settings/methods/2',
+      expect.objectContaining({ icon: 'SiTether' })
+    )
+  })
+
+  it('shows a stored curated icon in its row and picker and clears it to the platform icon', async () => {
+    const request = mockApi([balance, { ...epay, icon: 'SiAlipay' }])
+    const user = renderSection()
+    const row = within(await screen.findByRole('row', { name: /Alipay/ }))
+    expect(
+      row.getByRole('cell', { name: 'Alipay' }).querySelector('svg')
+    ).toBeInTheDocument()
+    await user.click(row.getByRole('button', { name: 'Edit' }))
+    const dialog = await screen.findByRole('dialog')
+    const picker = within(dialog).getByRole('combobox', { name: 'Icon' })
+    expect(picker).toHaveValue('Alipay')
+    await user.click(picker)
+    await user.click(
+      await screen.findByRole('option', { name: 'Platform icon' })
+    )
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(request.put).toHaveBeenCalledTimes(1))
+    expect(request.put).toHaveBeenCalledWith(
+      '/api/payment/settings/methods/2',
+      expect.objectContaining({ icon: '' })
+    )
+  })
+
+  it('keeps a stored icon name outside the curated list when the picker is left alone', async () => {
+    const request = mockApi([balance, { ...epay, icon: 'GiTwoCoins' }])
+    const user = renderSection()
+    const row = within(await screen.findByRole('row', { name: /Alipay/ }))
+    expect(
+      row.getByRole('cell', { name: 'Alipay' }).querySelector('svg')
+    ).toBeNull()
+    await user.click(row.getByRole('button', { name: 'Edit' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByRole('combobox', { name: 'Icon' })).toHaveValue(
+      'GiTwoCoins'
+    )
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(request.put).toHaveBeenCalledTimes(1))
+    expect(request.put).toHaveBeenCalledWith(
+      '/api/payment/settings/methods/2',
+      expect.objectContaining({ icon: 'GiTwoCoins' })
+    )
   })
 
   it('shows the callback URL and lets a stale Stripe webhook be synced', async () => {
