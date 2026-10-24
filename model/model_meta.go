@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"gorm.io/gorm"
 )
@@ -23,6 +25,7 @@ type ModelSquareState string
 const (
 	ModelSquareVisible     ModelSquareState = "visible"
 	ModelSquareUnavailable ModelSquareState = "unavailable"
+	ModelSquareUnpriced    ModelSquareState = "unpriced"
 	ModelSquareHidden      ModelSquareState = "hidden"
 	ModelSquarePartial     ModelSquareState = "partial"
 )
@@ -99,8 +102,10 @@ func resolveModelMetadata(records []Model, names []string) map[string]*Model {
 	return resolved
 }
 
-// FillModelSquareStates applies the same metadata policy as the public catalog
-// to live routes, then aggregates concrete models for metadata rule rows.
+// FillModelSquareStates applies the UsableCatalog policy for a user who does
+// not accept unpriced models to live routes: a served model is visible when
+// it is listed and billable, or in self-use mode. Metadata rule rows then
+// aggregate their concrete models.
 func FillModelSquareStates(rows []*Model, configured map[string][]int, connections []ModelConnection) error {
 	var metadata []Model
 	if err := DB.Find(&metadata).Error; err != nil {
@@ -129,6 +134,8 @@ func FillModelSquareStates(rows []*Model, configured map[string][]int, connectio
 		state := ModelSquareUnavailable
 		if policy := resolved[name]; policy != nil && policy.Status != 1 {
 			state = ModelSquareHidden
+		} else if available[name] && !operation_setting.SelfUseModeEnabled && !billing_setting.ModelBillable(name) {
+			state = ModelSquareUnpriced
 		} else if available[name] {
 			state = ModelSquareVisible
 		}
@@ -142,7 +149,7 @@ func FillModelSquareStates(rows []*Model, configured map[string][]int, connectio
 			row.SquareState = states[row.ModelName]
 			continue
 		}
-		total, visible, hidden := 0, 0, 0
+		total, visible, unpriced, hidden := 0, 0, 0, 0
 		for name := range configured {
 			if !row.MatchesName(name) {
 				continue
@@ -151,6 +158,8 @@ func FillModelSquareStates(rows []*Model, configured map[string][]int, connectio
 			switch states[name] {
 			case ModelSquareVisible:
 				visible++
+			case ModelSquareUnpriced:
+				unpriced++
 			case ModelSquareHidden:
 				hidden++
 			}
@@ -167,9 +176,40 @@ func FillModelSquareStates(rows []*Model, configured map[string][]int, connectio
 			row.SquareState = ModelSquareVisible
 		case visible > 0:
 			row.SquareState = ModelSquarePartial
+		case unpriced > 0:
+			row.SquareState = ModelSquareUnpriced
 		}
 	}
 	return nil
+}
+
+// ModelCatalogStatus is how the catalog treats a model name a channel
+// supplies. Users see a served model only when it is listed and priced.
+type ModelCatalogStatus struct {
+	Registered bool `json:"registered"`
+	Listed     bool `json:"listed"`
+	Priced     bool `json:"priced"`
+}
+
+// GetModelCatalogStatus resolves names through the metadata rules and the
+// UsableCatalog price test for a user who does not accept unpriced models.
+func GetModelCatalogStatus(names []string) (map[string]ModelCatalogStatus, error) {
+	var metadata []Model
+	if err := DB.Find(&metadata).Error; err != nil {
+		return nil, err
+	}
+	names = normalizeLookupValues(names)
+	resolved := resolveModelMetadata(metadata, names)
+	statuses := make(map[string]ModelCatalogStatus, len(names))
+	for _, name := range names {
+		policy := resolved[name]
+		statuses[name] = ModelCatalogStatus{
+			Registered: policy != nil,
+			Listed:     policy == nil || policy.Status == 1,
+			Priced:     operation_setting.SelfUseModeEnabled || billing_setting.ModelBillable(name),
+		}
+	}
+	return statuses, nil
 }
 
 // GetConfiguredModelChannels includes disabled channels and reads no credentials.

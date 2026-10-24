@@ -27,6 +27,16 @@ import type { ServerPricingMode } from '@/features/model-pricing/api'
 /**
  * Bound channel information
  */
+/**
+ * How the catalog treats a model name a channel supplies. Users see a served
+ * model only when it is listed and priced.
+ */
+export interface ModelCatalogStatus {
+  registered: boolean
+  listed: boolean
+  priced: boolean
+}
+
 export interface BoundChannel {
   name: string
   type: number
@@ -35,7 +45,12 @@ export interface BoundChannel {
 /**
  * Model entity from API
  */
-export type ModelSquareState = 'visible' | 'unavailable' | 'hidden' | 'partial'
+export type ModelSquareState =
+  | 'visible'
+  | 'unavailable'
+  | 'unpriced'
+  | 'hidden'
+  | 'partial'
 
 export interface Model {
   square_state?: ModelSquareState

@@ -30,6 +30,7 @@ import type {
   SyncUpstreamResponse,
   PreviewUpstreamDiffResponse,
   MissingModelsResponse,
+  ModelCatalogStatus,
   PrefillGroupsResponse,
   SyncLocale,
   SyncSource,
@@ -237,6 +238,18 @@ export async function previewUpstreamDiff(params?: {
  */
 export async function getMissingModels(): Promise<MissingModelsResponse> {
   const res = await api.get('/api/models/missing')
+  return res.data
+}
+
+/**
+ * Get how the catalog treats the model names a channel supplies
+ */
+export async function getModelCatalogStatus(models: string[]): Promise<{
+  success: boolean
+  message?: string
+  data?: Record<string, ModelCatalogStatus>
+}> {
+  const res = await api.post('/api/models/catalog_status', { models })
   return res.data
 }
 

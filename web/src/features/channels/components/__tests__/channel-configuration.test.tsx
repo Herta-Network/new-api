@@ -52,6 +52,13 @@ import { ChannelPluginExtensions } from '../channel-plugin-extensions'
 import { ChannelsProvider } from '../channels-provider'
 import { ChannelMutateDrawer } from '../drawers/channel-mutate-drawer'
 
+// The model catalog notice has its own tests; here it answers that every
+// model is visible so the request spies see only channel requests.
+vi.mock('@/features/models/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/features/models/api')>()),
+  getModelCatalogStatus: async () => ({ success: true, data: {} }),
+}))
+
 const originalAuth = useAuthStore.getState().auth
 let client: QueryClient
 let editingChannel: Channel
