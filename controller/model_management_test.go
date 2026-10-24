@@ -653,6 +653,48 @@ export function parseTaskResult() { return {}; }
 		require.True(t, detail.Success)
 		assert.Equal(t, model.ModelSquarePartial, detail.Data.SquareState)
 	})
+	t.Run("catalog_status_for_channel_editor", func(t *testing.T) {
+		previousSelfUse := operation_setting.SelfUseModeEnabled
+		operation_setting.SelfUseModeEnabled = false
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"status-priced":1,"status-hidden":1}`))
+		records := []model.Model{
+			{ModelName: "status-hidden", Status: 0},
+			{ModelName: "status-rule-", NameRule: model.NameRulePrefix, Status: 1},
+		}
+		for i := range records {
+			require.NoError(t, records[i].Insert())
+		}
+		t.Cleanup(func() {
+			operation_setting.SelfUseModeEnabled = previousSelfUse
+			require.NoError(t, ratio_setting.UpdateModelRatioByJSONString("{}"))
+			require.NoError(t, db.Unscoped().Where("id IN ?", []int{records[0].Id, records[1].Id}).Delete(&model.Model{}).Error)
+		})
+		lookup := func() map[string]model.ModelCatalogStatus {
+			var response struct {
+				Success bool
+				Data    map[string]model.ModelCatalogStatus
+			}
+			modelManagementRequest(t, GetModelCatalogStatus, "POST", "/api/models/catalog_status",
+				map[string]any{"models": []string{"status-priced", "status-hidden", "status-rule-a", " status-unpriced ", "status-priced"}}, &response)
+			require.True(t, response.Success)
+			return response.Data
+		}
+		assert.Equal(t, map[string]model.ModelCatalogStatus{
+			"status-priced":   {Listed: true, Priced: true},
+			"status-hidden":   {Registered: true, Priced: true},
+			"status-rule-a":   {Registered: true, Listed: true},
+			"status-unpriced": {Listed: true},
+		}, lookup())
+
+		operation_setting.SelfUseModeEnabled = true
+		assert.True(t, lookup()["status-unpriced"].Priced)
+
+		var tooMany struct{ Success bool }
+		modelManagementRequest(t, GetModelCatalogStatus, "POST", "/api/models/catalog_status",
+			map[string]any{"models": make([]string, maxCatalogStatusModels+1)}, &tooMany)
+		assert.False(t, tooMany.Success)
+	})
+
 	t.Run("channel_model_listing", func(t *testing.T) {
 		exact := model.Model{ModelName: "listing-exact", Status: 1, SyncOfficial: 1}
 		catalog := model.Model{ModelName: "listing-catalog", Status: 1}

@@ -200,7 +200,7 @@ it('requests channel models and distinguishes catalog policy from availability u
   expect(screen.getAllByText('Channels 0 · Groups 0')).toHaveLength(3)
   expect(
     screen.queryByText(
-      'No channel is configured. This model will not appear in the model square.'
+      'No channel is configured. Users will not see this model.'
     )
   ).not.toBeInTheDocument()
   const user = userEvent.setup()
@@ -209,13 +209,13 @@ it('requests channel models and distinguishes catalog policy from availability u
   })[0]
   expect(trigger).toHaveAttribute(
     'title',
-    'No channel is configured. This model will not appear in the model square.'
+    'No channel is configured. Users will not see this model.'
   )
   await user.click(trigger)
   expect(
     await screen.findByRole('dialog', { name: 'Unavailable' })
   ).toHaveTextContent(
-    'No channel is configured. This model will not appear in the model square.'
+    'No channel is configured. Users will not see this model.'
   )
   expect(trigger).toHaveAttribute('aria-expanded', 'true')
   await user.keyboard('{Escape}')
@@ -228,9 +228,7 @@ it('requests channel models and distinguishes catalog policy from availability u
   await user.click(screen.getByRole('button', { name: 'catalog-only' }))
   await user.click(screen.getByRole('tab', { name: 'Channels and groups' }))
   expect(
-    screen.getByText(
-      'No channel is configured. This model will not appear in the model square.'
-    )
+    screen.getByText('No channel is configured. Users will not see this model.')
   ).toBeVisible()
 })
 
@@ -256,8 +254,8 @@ it('keeps channel rows individually selectable and disables metadata mutations f
   for (const name of [
     'Change vendor',
     'Clear vendor',
-    'Show selected models in model square',
-    'Hide selected models from model square',
+    'Show selected models to users',
+    'Hide selected models from users',
     'Delete selected models',
   ]) {
     expect(within(toolbar).getByRole('button', { name })).toBeDisabled()
@@ -355,9 +353,7 @@ it('keeps prices and channel explanations readable in the mobile card and detail
   await user.click(screen.getByRole('button', { name: 'catalog-only' }))
   await user.click(screen.getByRole('tab', { name: 'Channels and groups' }))
   expect(
-    screen.getByText(
-      'No channel is configured. This model will not appear in the model square.'
-    )
+    screen.getByText('No channel is configured. Users will not see this model.')
   ).toBeVisible()
 })
 
@@ -514,9 +510,7 @@ it('opens a long translated reason by touch in the mobile card without requiring
     name: i18n.t('Unavailable'),
   })
   expect(popup).toHaveTextContent(
-    i18n.t(
-      'No channel is configured. This model will not appear in the model square.'
-    )
+    i18n.t('No channel is configured. Users will not see this model.')
   )
   expect(popup).toHaveClass('whitespace-normal', 'break-words')
   expect(popup).toHaveClass('max-w-[calc(100vw-2rem)]')
@@ -757,9 +751,7 @@ it('filters actual visibility independently of policy and restores filters throu
     total: 100,
   })
   const user = userEvent.setup()
-  await user.click(
-    screen.getByRole('button', { name: 'Model square visibility' })
-  )
+  await user.click(screen.getByRole('button', { name: 'User visibility' }))
   await user.click(screen.getByRole('option', { name: 'Partly shown' }))
   await waitFor(() =>
     expect(get).toHaveBeenCalledWith('/api/models/search', {
@@ -789,9 +781,7 @@ it('filters actual visibility independently of policy and restores filters throu
       square_state: ['partial'],
     })
   )
-  await user.click(
-    screen.getByRole('button', { name: /Model square visibility/ })
-  )
+  await user.click(screen.getByRole('button', { name: /User visibility/ }))
   await user.click(screen.getByRole('option', { name: 'Clear filters' }))
   await waitFor(() =>
     expect(router.state.location.search).not.toHaveProperty('square_state')
@@ -827,7 +817,7 @@ it('keeps an active visibility filter when its server result is empty', async ()
   expect(screen.getByText('No Models Found')).toBeVisible()
   expect(screen.getByText('Try adjusting your search')).toBeVisible()
   expect(
-    screen.getByRole('button', { name: /Model square visibility.*Unavailable/ })
+    screen.getByRole('button', { name: /User visibility.*Unavailable/ })
   ).toBeVisible()
   expect(get).toHaveBeenCalledWith('/api/models/search', {
     params: expect.objectContaining({ square_state: 'unavailable', p: 1 }),

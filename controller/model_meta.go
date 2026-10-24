@@ -267,6 +267,31 @@ func BatchDeleteModelMeta(c *gin.Context) {
 	common.ApiSuccess(c, result)
 }
 
+// maxCatalogStatusModels bounds one channel editor lookup.
+const maxCatalogStatusModels = 5000
+
+// GetModelCatalogStatus tells the channel editor which supplied models users
+// will not see because they are unpriced or unlisted.
+func GetModelCatalogStatus(c *gin.Context) {
+	var request struct {
+		Models []string `json:"models"`
+	}
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if len(request.Models) > maxCatalogStatusModels {
+		common.ApiErrorT(c, "Too many items in batch request, maximum is {{max}}", map[string]any{"max": maxCatalogStatusModels})
+		return
+	}
+	statuses, err := model.GetModelCatalogStatus(request.Models)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, statuses)
+}
+
 // enrichModels keeps configured endpoints intact and derives connections from
 // enabled routes, including hidden or unpriced models absent from the catalog.
 func enrichModels(models []*model.Model) error {

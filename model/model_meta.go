@@ -183,6 +183,35 @@ func FillModelSquareStates(rows []*Model, configured map[string][]int, connectio
 	return nil
 }
 
+// ModelCatalogStatus is how the catalog treats a model name a channel
+// supplies. Users see a served model only when it is listed and priced.
+type ModelCatalogStatus struct {
+	Registered bool `json:"registered"`
+	Listed     bool `json:"listed"`
+	Priced     bool `json:"priced"`
+}
+
+// GetModelCatalogStatus resolves names through the metadata rules and the
+// UsableCatalog price test for a user who does not accept unpriced models.
+func GetModelCatalogStatus(names []string) (map[string]ModelCatalogStatus, error) {
+	var metadata []Model
+	if err := DB.Find(&metadata).Error; err != nil {
+		return nil, err
+	}
+	names = normalizeLookupValues(names)
+	resolved := resolveModelMetadata(metadata, names)
+	statuses := make(map[string]ModelCatalogStatus, len(names))
+	for _, name := range names {
+		policy := resolved[name]
+		statuses[name] = ModelCatalogStatus{
+			Registered: policy != nil,
+			Listed:     policy == nil || policy.Status == 1,
+			Priced:     operation_setting.SelfUseModeEnabled || billing_setting.ModelBillable(name),
+		}
+	}
+	return statuses, nil
+}
+
 // GetConfiguredModelChannels includes disabled channels and reads no credentials.
 func GetConfiguredModelChannels() (map[string][]int, error) {
 	var channels []Channel
