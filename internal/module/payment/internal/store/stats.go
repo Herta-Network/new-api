@@ -68,18 +68,16 @@ func bucketIndex(column string, starts []int64) any {
 	return gorm.Expr("width_bucket("+column+", ARRAY["+placeholders+"]::bigint[])", thresholds...)
 }
 
-// GatewayRevenue sums what gateways collected in [start, end) in currency.
-func GatewayRevenue(start, end int64, currency string) (amount int64, orders int64, err error) {
-	var revenue struct {
-		Amount int64
-		Orders int64
-	}
-	err = gatewayPaidOrders().
-		Select("coalesce(sum(amount), 0) AS amount, count(*) AS orders").
-		Where("upper(currency) = ?", currency).
+// GatewayRevenue totals per currency what gateways collected in
+// [start, end).
+func GatewayRevenue(start, end int64) ([]CurrencyTotal, error) {
+	var revenue []CurrencyTotal
+	err := gatewayPaidOrders().
+		Select("currency, count(*) AS count, coalesce(sum(amount), 0) AS amount").
 		Where(paidInRangeSQL, start, end, start, end).
+		Group("currency").
 		Scan(&revenue).Error
-	return revenue.Amount, revenue.Orders, err
+	return revenue, err
 }
 
 // Attention totals per currency the paid orders whose fulfilment failed and
