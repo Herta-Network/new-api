@@ -5,15 +5,19 @@ package console
 
 import (
 	"cmp"
+	"context"
+	"maps"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/internal/module/currency"
 	"github.com/QuantumNous/new-api/internal/module/payment"
 	"github.com/QuantumNous/new-api/internal/module/payment/entity"
 	"github.com/QuantumNous/new-api/model"
 
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -26,7 +30,9 @@ import (
 // Usage, registrations and channels are read from the shared kernel's
 // tables; revenue and payers come from the payment module, which counts
 // what gateways got paid for and reports balance purchases apart. Amounts
-// are hundredths of a currency and are only added within one currency.
+// are hundredths of a currency and are only added within one currency,
+// except the overview's revenue of today, which converts other currencies
+// into the site currency at the current rate.
 
 // Overview is the operations overview of today.
 type Overview struct {
@@ -42,10 +48,15 @@ type Overview struct {
 	ActiveUsers      int64 `json:"active_users"`
 	Registrations    int64 `json:"registrations"`
 
-	// Revenue today in Currency, the site currency.
+	// Revenue today in Currency, the site currency. Revenue priced in
+	// another currency, such as the site currency before a change, is
+	// converted at the current rate of its pair.
 	Currency      string `json:"currency"`
 	Revenue       int64  `json:"revenue"`
 	RevenueOrders int64  `json:"revenue_orders"`
+	// OtherRevenue is the revenue today in a currency without a rate to
+	// Currency, one total per currency; it is not added in.
+	OtherRevenue []Amount `json:"other_revenue"`
 
 	Channels  ChannelCounts `json:"channels"`
 	Attention Attention     `json:"attention"`
@@ -245,11 +256,12 @@ func consoleZone(now time.Time) (string, int) {
 	return now.Location().String(), offset
 }
 
-// GetOverview reports today, as of now, with revenue in currency.
-func GetOverview(now time.Time, currency string) (*Overview, error) {
+// GetOverview reports today, as of now, with revenue in site, the site
+// currency.
+func GetOverview(ctx context.Context, now time.Time, site string) (*Overview, error) {
 	dayStart := localDayStart(now)
 	start, end := dayStart.Unix(), dayStart.AddDate(0, 0, 1).Unix()
-	overview := &Overview{UsageDataEnabled: common.DataExportEnabled, Currency: currency}
+	overview := &Overview{UsageDataEnabled: common.DataExportEnabled, Currency: site}
 	overview.TimeZone, overview.UTCOffset = consoleZone(now)
 
 	var usage struct {
@@ -270,9 +282,32 @@ func GetOverview(now time.Time, currency string) (*Overview, error) {
 		Count(&overview.Registrations).Error; err != nil {
 		return nil, err
 	}
-	var err error
-	if overview.Revenue, overview.RevenueOrders, err = payment.GatewayRevenue(start, end, currency); err != nil {
+	revenue, err := payment.GatewayRevenue(start, end)
+	if err != nil {
 		return nil, err
+	}
+	totals := map[string]payment.CurrencyTotal{}
+	for _, row := range revenue {
+		code := strings.ToUpper(row.Currency)
+		total := totals[code]
+		total.Count += row.Count
+		total.Amount += row.Amount
+		totals[code] = total
+	}
+	overview.OtherRevenue = []Amount{}
+	for _, code := range slices.Sorted(maps.Keys(totals)) {
+		total := totals[code]
+		amount := total.Amount
+		if code != site {
+			rate, err := currency.ResolveRate(ctx, code, site)
+			if err != nil {
+				overview.OtherRevenue = append(overview.OtherRevenue, Amount{Currency: code, Amount: amount})
+				continue
+			}
+			amount = rate.Convert(decimal.NewFromInt(amount)).Round(0).IntPart()
+		}
+		overview.Revenue += amount
+		overview.RevenueOrders += total.Count
 	}
 
 	var channels []struct {
@@ -313,8 +348,8 @@ func GetOverview(now time.Time, currency string) (*Overview, error) {
 		overview.Attention.Amounts = append(overview.Attention.Amounts, Amount{Currency: code, Amount: amount})
 	}
 	slices.SortFunc(overview.Attention.Amounts, func(a, b Amount) int {
-		if (a.Currency == currency) != (b.Currency == currency) {
-			if a.Currency == currency {
+		if (a.Currency == site) != (b.Currency == site) {
+			if a.Currency == site {
 				return -1
 			}
 			return 1

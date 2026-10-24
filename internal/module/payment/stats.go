@@ -16,9 +16,10 @@ type (
 	BucketCount = store.BucketCount
 )
 
-// GatewayRevenue sums what gateways collected in [start, end) in currency.
-func GatewayRevenue(start, end int64, currency string) (amount int64, orders int64, err error) {
-	return store.GatewayRevenue(start, end, currency)
+// GatewayRevenue totals per currency what gateways collected in
+// [start, end).
+func GatewayRevenue(start, end int64) ([]CurrencyTotal, error) {
+	return store.GatewayRevenue(start, end)
 }
 
 // Attention totals per currency the paid orders whose fulfilment failed and

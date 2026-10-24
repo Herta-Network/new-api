@@ -19,7 +19,7 @@ var consoleNow = time.Now
 // GetConsoleOverview reports today's usage, registrations, revenue, channel
 // counts and the payments that need an operator.
 func GetConsoleOverview(c *gin.Context) {
-	overview, err := console.GetOverview(consoleNow(), operation_setting.PaymentCurrency())
+	overview, err := console.GetOverview(c.Request.Context(), consoleNow(), operation_setting.PaymentCurrency())
 	if err != nil {
 		common.ApiError(c, err)
 		return

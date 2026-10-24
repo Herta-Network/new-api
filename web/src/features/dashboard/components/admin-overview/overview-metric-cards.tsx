@@ -108,6 +108,10 @@ export function OverviewMetricCards(props: {
   const attentionAmounts = (attention?.amounts ?? [])
     .map((item) => formatMinorAmount(item.amount, item.currency, locale))
     .join(' + ')
+  // Revenue in a currency without an exchange rate is not added in.
+  const otherRevenue = (overview?.other_revenue ?? [])
+    .map((item) => formatMinorAmount(item.amount, item.currency, locale))
+    .join('; ')
 
   return (
     <div className='grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4'>
@@ -199,7 +203,15 @@ export function OverviewMetricCards(props: {
           icon={Wallet}
           tone='primary'
           loading={loading}
-        />
+        >
+          {otherRevenue && (
+            <p className='text-muted-foreground text-xs'>
+              {t('Other currencies, not added in: {{amounts}}', {
+                amounts: otherRevenue,
+              })}
+            </p>
+          )}
+        </OverviewMetric>
       </Link>
       <Link to='/admin/channels' className={METRIC_LINK_CLASS}>
         <OverviewMetric

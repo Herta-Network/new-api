@@ -172,6 +172,7 @@ const consoleData: Record<string, unknown> = {
     currency: 'CNY',
     revenue: 12000,
     revenue_orders: 4,
+    other_revenue: [],
     channels: { total: 6, enabled: 3, manually_disabled: 1, auto_disabled: 2 },
     attention: {
       count: 3,
@@ -350,6 +351,31 @@ describe('admin operations overview', () => {
     expect(
       screen.queryByText('Includes CN¥15.00 completed by hand')
     ).not.toBeInTheDocument()
+  })
+
+  it('revenue today shows revenue in a currency without an exchange rate apart', async () => {
+    const overview = {
+      ...(consoleData['/api/admin/console/overview'] as ConsoleOverview),
+      currency: 'USD',
+      revenue: 0,
+      revenue_orders: 0,
+      other_revenue: [{ currency: 'CNY', amount: 12000 }],
+    } satisfies ConsoleOverview
+    vi.spyOn(api, 'get').mockImplementation(async (url: string) => ({
+      data: {
+        success: true,
+        data:
+          url === '/api/admin/console/overview' ? overview : consoleData[url],
+      },
+    }))
+
+    await renderAdminOverview()
+
+    expect(
+      await screen.findByRole('link', {
+        name: /Revenue today.*\$0\.00.*Other currencies, not added in: CN¥120\.00/,
+      })
+    ).toBeVisible()
   })
 
   it('shows the empty state when no overview figure loads', async () => {
