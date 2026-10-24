@@ -41,10 +41,13 @@ func setupConsoleControllerTestDB(t *testing.T) {
 	consoleNow = func() time.Time { return time.Date(2026, time.October, 22, 10, 30, 0, 0, consoleTestZone) }
 	setting := operation_setting.GetPaymentSetting()
 	previousCurrency, previousExport := setting.Currency, common.DataExportEnabled
+	previousOverrides, previousAPIKey := setting.ExchangeRateOverrides, setting.ExchangeRateAPIKey
 	setting.Currency, common.DataExportEnabled = "CNY", true
+	setting.ExchangeRateOverrides, setting.ExchangeRateAPIKey = map[string]string{}, ""
 	t.Cleanup(func() {
 		consoleNow = time.Now
 		setting.Currency, common.DataExportEnabled = previousCurrency, previousExport
+		setting.ExchangeRateOverrides, setting.ExchangeRateAPIKey = previousOverrides, previousAPIKey
 	})
 
 	users := []model.User{
@@ -138,6 +141,8 @@ func getConsole[T any](t *testing.T, handler gin.HandlerFunc, target string) T {
 
 func TestGetConsoleOverviewCountsTodayInServerZone(t *testing.T) {
 	setupConsoleControllerTestDB(t)
+	// Pinned as the price of one CNY in EUR, so 7.00 EUR is 7.00 / 0.128.
+	operation_setting.GetPaymentSetting().ExchangeRateOverrides = map[string]string{"CNY/EUR": "0.128"}
 
 	overview := getConsole[console.Overview](t, GetConsoleOverview, "/api/admin/console/overview")
 
@@ -151,9 +156,12 @@ func TestGetConsoleOverviewCountsTodayInServerZone(t *testing.T) {
 		ActiveUsers:      2,
 		Registrations:    2,
 		Currency:         "CNY",
-		Revenue:          12000,
-		RevenueOrders:    4,
-		Channels:         console.ChannelCounts{Total: 6, Enabled: 3, ManuallyDisabled: 1, AutoDisabled: 2},
+		// The EUR order is converted in; the wallet balance's USD order is
+		// not revenue.
+		Revenue:       12000 + 5469,
+		RevenueOrders: 5,
+		OtherRevenue:  []console.Amount{},
+		Channels:      console.ChannelCounts{Total: 6, Enabled: 3, ManuallyDisabled: 1, AutoDisabled: 2},
 		Attention: console.Attention{
 			Count:             3,
 			UnfulfilledOrders: 1,
@@ -161,6 +169,18 @@ func TestGetConsoleOverviewCountsTodayInServerZone(t *testing.T) {
 			Amounts:           []console.Amount{{Currency: "CNY", Amount: 8000}, {Currency: "USD", Amount: 1999}},
 		},
 	}, overview)
+}
+
+// Revenue in a currency without a rate to the site currency is not added in
+// but reported apart.
+func TestGetConsoleOverviewReportsRevenueWithoutRateApart(t *testing.T) {
+	setupConsoleControllerTestDB(t)
+
+	overview := getConsole[console.Overview](t, GetConsoleOverview, "/api/admin/console/overview")
+
+	assert.Equal(t, int64(12000), overview.Revenue)
+	assert.Equal(t, int64(4), overview.RevenueOrders)
+	assert.Equal(t, []console.Amount{{Currency: "EUR", Amount: 700}}, overview.OtherRevenue)
 }
 
 func TestGetConsoleRevenueSeparatesBalanceManualAndOtherCurrencies(t *testing.T) {

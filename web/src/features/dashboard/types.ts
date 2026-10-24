@@ -303,6 +303,11 @@ export interface ConsoleOverview extends ConsoleZone {
   currency: string
   revenue: number
   revenue_orders: number
+  /**
+   * Revenue today in a currency without an exchange rate to `currency`, not
+   * added to `revenue`; revenue in other currencies is converted in.
+   */
+  other_revenue: ConsoleAmount[]
   channels: {
     total: number
     enabled: number
