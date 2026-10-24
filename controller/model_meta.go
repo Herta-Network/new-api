@@ -26,7 +26,7 @@ func SearchModelsMeta(c *gin.Context) {
 func listModelsMeta(c *gin.Context, keyword, vendor string) {
 	squareState := model.ModelSquareState(c.Query("square_state"))
 	switch squareState {
-	case "", model.ModelSquareVisible, model.ModelSquareUnavailable, model.ModelSquareHidden, model.ModelSquarePartial:
+	case "", model.ModelSquareVisible, model.ModelSquareUnavailable, model.ModelSquareUnpriced, model.ModelSquareHidden, model.ModelSquarePartial:
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid model square state"})
 		return

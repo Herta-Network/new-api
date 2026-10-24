@@ -46,7 +46,7 @@ const modelsSearchSchema = z.object({
   vendor: z.array(z.string()).optional().catch([]),
   status: z.array(z.string()).optional().catch([]),
   square_state: z
-    .array(z.enum(['visible', 'unavailable', 'hidden', 'partial']))
+    .array(z.enum(['visible', 'unavailable', 'unpriced', 'hidden', 'partial']))
     .optional()
     .catch([]),
   sync: z.array(z.string()).optional().catch([]),

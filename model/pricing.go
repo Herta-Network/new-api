@@ -1,6 +1,7 @@
 package model
 
 import (
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 )
@@ -48,6 +50,8 @@ type Pricing struct {
 	BillingUsageSchema     map[string]jsplugin.UsageFieldSchema `json:"billing_usage_schema,omitempty"`
 	BillingUsageExamples   []jsplugin.UsageExample              `json:"billing_usage_examples,omitempty"`
 	PricingVersion         string                               `json:"pricing_version,omitempty"`
+	// Billable is billing_setting.ModelBillable when the catalog was built.
+	Billable bool `json:"-"`
 }
 
 type PricingVendor struct {
@@ -87,6 +91,58 @@ func GetPricing() []Pricing {
 		}
 	}
 	return pricingMap
+}
+
+// UsableCatalog returns the catalog entries a user can call: served by an
+// enabled channel in one of groups, listed by model metadata, and billable
+// unless acceptUnpriced. The model square, /v1/models, and the user's model
+// list all apply it, so they agree with each other and with relay.
+func UsableCatalog(groups []string, acceptUnpriced bool) []Pricing {
+	usable := make([]Pricing, 0)
+	for _, pricing := range GetPricing() {
+		if !pricing.Billable && !acceptUnpriced {
+			continue
+		}
+		if slices.ContainsFunc(pricing.EnableGroup, func(group string) bool { return slices.Contains(groups, group) }) {
+			usable = append(usable, pricing)
+		}
+	}
+	return usable
+}
+
+// UsableModelNames lists the UsableCatalog names group by group, in the
+// order of groups and then by name, without repeats.
+func UsableModelNames(groups []string, acceptUnpriced bool) []string {
+	catalog := UsableCatalog(groups, acceptUnpriced)
+	names := make([]string, 0, len(catalog))
+	seen := make(map[string]bool, len(catalog))
+	for _, group := range groups {
+		var groupNames []string
+		for _, pricing := range catalog {
+			if !seen[pricing.ModelName] && slices.Contains(pricing.EnableGroup, group) {
+				seen[pricing.ModelName] = true
+				groupNames = append(groupNames, pricing.ModelName)
+			}
+		}
+		slices.Sort(groupNames)
+		names = append(names, groupNames...)
+	}
+	return names
+}
+
+// AcceptsUnpricedModels reports whether a user may call models without a
+// configured price, which then bill at the default ratio: in self-use mode,
+// or when the user opted in. An anonymous viewer (userId 0) accepts them only
+// in self-use mode.
+func AcceptsUnpricedModels(userId int) bool {
+	if operation_setting.SelfUseModeEnabled {
+		return true
+	}
+	if userId <= 0 {
+		return false
+	}
+	setting, err := GetUserSetting(userId, false)
+	return err == nil && setting.AcceptUnsetRatioModel
 }
 
 func InvalidatePricingCache() {
@@ -343,35 +399,39 @@ func updatePricing() {
 			pricing.Tags = meta.Tags
 			pricing.VendorID = meta.VendorID
 		}
-		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
+		// Prices come from the name that bills the model, as in relay, so a
+		// suffixed name shows its base model's price rather than the default.
+		billingName := billing_setting.ResolveBillingModelName(model)
+		pricing.Billable = billing_setting.ModelBillable(model)
+		modelPrice, findPrice := ratio_setting.GetModelPrice(billingName, false)
 		if findPrice {
 			pricing.ModelPrice = modelPrice
 			pricing.QuotaType = 1
 		} else {
-			modelRatio, _, _ := ratio_setting.GetModelRatio(model)
+			modelRatio, _, _ := ratio_setting.GetModelRatio(billingName)
 			pricing.ModelRatio = modelRatio
-			pricing.CompletionRatio = ratio_setting.GetCompletionRatio(model)
+			pricing.CompletionRatio = ratio_setting.GetCompletionRatio(billingName)
 			pricing.QuotaType = 0
 		}
-		if cacheRatio, ok := ratio_setting.GetCacheRatio(model); ok {
+		if cacheRatio, ok := ratio_setting.GetCacheRatio(billingName); ok {
 			pricing.CacheRatio = &cacheRatio
 		}
-		if createCacheRatio, ok := ratio_setting.GetCreateCacheRatio(model); ok {
+		if createCacheRatio, ok := ratio_setting.GetCreateCacheRatio(billingName); ok {
 			pricing.CreateCacheRatio = &createCacheRatio
 		}
-		if imageRatio, ok := ratio_setting.GetImageRatio(model); ok {
+		if imageRatio, ok := ratio_setting.GetImageRatio(billingName); ok {
 			pricing.ImageRatio = &imageRatio
 		}
-		if ratio_setting.ContainsAudioRatio(model) {
-			audioRatio := ratio_setting.GetAudioRatio(model)
+		if ratio_setting.ContainsAudioRatio(billingName) {
+			audioRatio := ratio_setting.GetAudioRatio(billingName)
 			pricing.AudioRatio = &audioRatio
 		}
-		if ratio_setting.ContainsAudioCompletionRatio(model) {
-			audioCompletionRatio := ratio_setting.GetAudioCompletionRatio(model)
+		if ratio_setting.ContainsAudioCompletionRatio(billingName) {
+			audioCompletionRatio := ratio_setting.GetAudioCompletionRatio(billingName)
 			pricing.AudioCompletionRatio = &audioCompletionRatio
 		}
-		if billingMode := billing_setting.GetBillingMode(model); billingMode == "tiered_expr" {
-			if expr, ok := billing_setting.GetBillingExpr(model); ok && strings.TrimSpace(expr) != "" {
+		if billingMode := billing_setting.GetBillingMode(billingName); billingMode == "tiered_expr" {
+			if expr, ok := billing_setting.GetBillingExpr(billingName); ok && strings.TrimSpace(expr) != "" {
 				pricing.BillingMode = billingMode
 				pricing.BillingExpr = expr
 			}

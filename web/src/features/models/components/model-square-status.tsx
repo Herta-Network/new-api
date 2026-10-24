@@ -51,7 +51,14 @@ export function ModelSquareStatus(props: { model: Model; detail?: boolean }) {
     case 'partial':
       label = t('Partly shown')
       description = t(
-        'Some matching models are hidden or have no available channel.'
+        'Some matching models are hidden, unpriced, or have no available channel.'
+      )
+      variant = 'warning'
+      break
+    case 'unpriced':
+      label = t('Unpriced')
+      description = t(
+        'A channel serves this model, but it has no price, so users cannot see or call it.'
       )
       variant = 'warning'
       break

@@ -361,7 +361,7 @@ it('keeps prices and channel explanations readable in the mobile card and detail
   ).toBeVisible()
 })
 
-it('uses backend square states for success, warning, hidden, and partial rows including models without metadata', async () => {
+it('uses backend square states for success, warning, unpriced, hidden, and partial rows including models without metadata', async () => {
   const activeChannels = [{ name: 'Active', type: 1 }]
   await renderList([
     { ...metadata, model_name: 'catalog-only' },
@@ -403,9 +403,15 @@ it('uses backend square states for success, warning, hidden, and partial rows in
       square_state: 'hidden',
       bound_channels: activeChannels,
     },
+    {
+      ...channel,
+      model_name: 'bare-unpriced',
+      square_state: 'unpriced',
+      bound_channels: activeChannels,
+    },
   ])
   expect(screen.getByRole('button', { name: 'Display policy' })).toBeVisible()
-  for (const label of ['Unavailable', 'Partly shown']) {
+  for (const label of ['Unavailable', 'Unpriced', 'Partly shown']) {
     const badge = screen.getByText(label).closest('[data-slot="status-badge"]')
     expect(badge).toHaveClass('text-warning')
     expect(badge?.querySelector('svg')).toBeInTheDocument()

@@ -35,7 +35,12 @@ export interface BoundChannel {
 /**
  * Model entity from API
  */
-export type ModelSquareState = 'visible' | 'unavailable' | 'hidden' | 'partial'
+export type ModelSquareState =
+  | 'visible'
+  | 'unavailable'
+  | 'unpriced'
+  | 'hidden'
+  | 'partial'
 
 export interface Model {
   square_state?: ModelSquareState
