@@ -2,8 +2,10 @@ package controller
 
 import (
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -39,6 +41,9 @@ func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	gin.SetMode(gin.TestMode)
 	common.RedisEnabled = false
 	pgtest.Reset(t, model.DB)
+	// Every model list reads the catalog, which caches the abilities.
+	model.InvalidatePricingCache()
+	t.Cleanup(model.InvalidatePricingCache)
 	return model.DB
 }
 
@@ -130,6 +135,7 @@ func decodeUserModelsResponse(t *testing.T, recorder *httptest.ResponseRecorder)
 }
 
 func TestGetUserModelsFiltersByRequestedGroup(t *testing.T) {
+	withSelfUseModeEnabled(t)
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.Create(&model.User{
 		Id:       1002,
@@ -164,6 +170,7 @@ func TestGetUserModelsFiltersByRequestedGroup(t *testing.T) {
 }
 
 func TestGetUserModelsExpandsAutoGroupsInConfiguredOrder(t *testing.T) {
+	withSelfUseModeEnabled(t)
 	originalAutoGroups := setting.AutoGroups2JsonString()
 	originalUsableGroups := setting.UserUsableGroups2JSONString()
 	originalSpecialGroups := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.ReadAll()
@@ -211,6 +218,83 @@ func TestGetUserModelsExpandsAutoGroupsInConfiguredOrder(t *testing.T) {
 	require.Len(t, models, 3)
 	assert.ElementsMatch(t, []string{"zz-vip-model", "zz-shared-model"}, models[:2])
 	assert.Equal(t, "zz-default-model", models[2])
+}
+
+func TestModelListsShareCatalogPolicy(t *testing.T) {
+	withSelfUseModeDisabled(t)
+	savedRatios := ratio_setting.ModelRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedRatios))
+	})
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"zz-catalog-priced":2,"zz-catalog-base":3,"zz-catalog-hidden":1}`))
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1004,
+		Username: "catalog-policy-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, (&model.Model{ModelName: "zz-catalog-hidden", Status: 0}).Insert())
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "zz-catalog-priced", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "zz-catalog-base@thinking:on", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "zz-catalog-unpriced", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "zz-catalog-hidden", ChannelId: 1, Enabled: true},
+	}).Error)
+
+	lists := func() (openAI, user []string, pricing map[string]model.Pricing) {
+		model.InvalidatePricingCache()
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+		ctx.Set("id", 1004)
+		ListModels(ctx, constant.ChannelTypeOpenAI)
+		for _, item := range decodeListModelsPayload(t, recorder).Data {
+			openAI = append(openAI, item.Id)
+		}
+
+		recorder = httptest.NewRecorder()
+		ctx, _ = gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/models", nil)
+		ctx.Set("id", 1004)
+		GetUserModels(ctx)
+		user = decodeUserModelsResponse(t, recorder)
+
+		recorder = httptest.NewRecorder()
+		ctx, _ = gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/api/pricing", nil)
+		ctx.Set("id", 1004)
+		GetPricing(ctx)
+		var payload struct {
+			Success bool            `json:"success"`
+			Data    []model.Pricing `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+		require.True(t, payload.Success)
+		return openAI, user, pricingByModelName(payload.Data)
+	}
+
+	// Unpriced and unlisted models stay out of every list; a modifier name
+	// shows the base price that bills it.
+	expected := []string{"zz-catalog-base@thinking:on", "zz-catalog-priced"}
+	openAI, user, pricing := lists()
+	assert.Equal(t, expected, openAI)
+	assert.Equal(t, expected, user)
+	assert.ElementsMatch(t, expected, slices.Collect(maps.Keys(pricing)))
+	assert.Equal(t, 3.0, pricing["zz-catalog-base@thinking:on"].ModelRatio)
+	assert.Equal(t, 2.0, pricing["zz-catalog-priced"].ModelRatio)
+
+	// Opting in to unpriced models adds them everywhere at the default ratio
+	// they bill at; listing policy still applies.
+	require.NoError(t, db.Model(&model.User{}).Where("id = ?", 1004).Update("setting", `{"accept_unset_model_ratio_model":true}`).Error)
+	expected = []string{"zz-catalog-base@thinking:on", "zz-catalog-priced", "zz-catalog-unpriced"}
+	openAI, user, pricing = lists()
+	assert.Equal(t, expected, openAI)
+	assert.Equal(t, expected, user)
+	assert.ElementsMatch(t, expected, slices.Collect(maps.Keys(pricing)))
+	assert.Equal(t, 37.5, pricing["zz-catalog-unpriced"].ModelRatio)
 }
 
 func TestListModelsIncludesTieredBillingModel(t *testing.T) {

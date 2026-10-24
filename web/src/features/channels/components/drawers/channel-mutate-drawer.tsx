@@ -222,6 +222,7 @@ import {
   type PassthroughKind,
 } from '../dialogs/passthrough-warning-dialog'
 import { StatusCodeRiskDialog } from '../dialogs/status-code-risk-dialog'
+import { ModelCatalogNotice } from '../model-catalog-notice'
 import {
   ModelMappingBatchDialog,
   type ModelMappingBatchResult,
@@ -3286,6 +3287,7 @@ export function ChannelMutateDrawer({
                       </AlertDescription>
                     </Alert>
                   )}
+                  <ModelCatalogNotice models={currentModelsArray} />
                   <FormMessage />
                 </FormItem>
               )}

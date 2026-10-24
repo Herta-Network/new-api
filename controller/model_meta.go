@@ -26,7 +26,7 @@ func SearchModelsMeta(c *gin.Context) {
 func listModelsMeta(c *gin.Context, keyword, vendor string) {
 	squareState := model.ModelSquareState(c.Query("square_state"))
 	switch squareState {
-	case "", model.ModelSquareVisible, model.ModelSquareUnavailable, model.ModelSquareHidden, model.ModelSquarePartial:
+	case "", model.ModelSquareVisible, model.ModelSquareUnavailable, model.ModelSquareUnpriced, model.ModelSquareHidden, model.ModelSquarePartial:
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid model square state"})
 		return
@@ -265,6 +265,31 @@ func BatchDeleteModelMeta(c *gin.Context) {
 	}
 	recordManageAudit(c, "model.delete_batch", map[string]any{"model_ids": request.ModelIDs, "remove_from_channels": request.RemoveFromChannels, "remove_pricing": request.RemovePricing, "updated_channels": result.UpdatedChannels})
 	common.ApiSuccess(c, result)
+}
+
+// maxCatalogStatusModels bounds one channel editor lookup.
+const maxCatalogStatusModels = 5000
+
+// GetModelCatalogStatus tells the channel editor which supplied models users
+// will not see because they are unpriced or unlisted.
+func GetModelCatalogStatus(c *gin.Context) {
+	var request struct {
+		Models []string `json:"models"`
+	}
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if len(request.Models) > maxCatalogStatusModels {
+		common.ApiErrorT(c, "Too many items in batch request, maximum is {{max}}", map[string]any{"max": maxCatalogStatusModels})
+		return
+	}
+	statuses, err := model.GetModelCatalogStatus(request.Models)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, statuses)
 }
 
 // enrichModels keeps configured endpoints intact and derives connections from

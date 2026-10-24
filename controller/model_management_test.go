@@ -26,6 +26,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -464,6 +465,20 @@ export function parseTaskResult() { return {}; }
 	db := modelManagementDB(t)
 
 	t.Run("square_states_follow_catalog_policy", func(t *testing.T) {
+		previousSelfUse := operation_setting.SelfUseModeEnabled
+		operation_setting.SelfUseModeEnabled = false
+		// Every served name has a price except the square-unpriced ones.
+		ratios := map[string]float64{}
+		for _, name := range []string{"square-visible", "square-hidden", "square-bare", "square-partial-on", "square-partial-hidden", "square-hidden-child", "square-hidden-override", "square-prefix-ending", "square-contains-ending", "square-disabled", "square-partial-off", "square-off-child"} {
+			ratios[name] = 1
+		}
+		encodedRatios, err := common.Marshal(ratios)
+		require.NoError(t, err)
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(encodedRatios)))
+		t.Cleanup(func() {
+			operation_setting.SelfUseModeEnabled = previousSelfUse
+			require.NoError(t, ratio_setting.UpdateModelRatioByJSONString("{}"))
+		})
 		records := []model.Model{
 			{ModelName: "square-visible", Status: 1},
 			{ModelName: "square-hidden", Status: 0},
@@ -479,6 +494,7 @@ export function parseTaskResult() { return {}; }
 			{ModelName: "-ending", NameRule: model.NameRuleSuffix, Status: 1},
 			{ModelName: "square-prefix-", NameRule: model.NameRulePrefix, Status: 0},
 			{ModelName: "square-contains", NameRule: model.NameRuleContains, Status: 0},
+			{ModelName: "square-unpriced-", NameRule: model.NameRulePrefix, Status: 1},
 		}
 		ids := make([]int, 0, len(records))
 		for i := range records {
@@ -486,7 +502,7 @@ export function parseTaskResult() { return {}; }
 			ids = append(ids, records[i].Id)
 		}
 		active := model.Channel{Name: "Square active", Type: 1, Key: "fixture", Group: "default", Status: common.ChannelStatusEnabled,
-			Models: "square-visible,square-hidden,square-bare,square-partial-on,square-partial-hidden,square-hidden-child,square-hidden-override,square-prefix-ending,square-contains-ending"}
+			Models: "square-visible,square-hidden,square-bare,square-partial-on,square-partial-hidden,square-hidden-child,square-hidden-override,square-prefix-ending,square-contains-ending,square-unpriced,square-unpriced-child"}
 		inactive := model.Channel{Name: "Square inactive", Type: 1, Key: "fixture", Group: "default", Status: common.ChannelStatusManuallyDisabled,
 			Models: "square-disabled,square-partial-off,square-off-child"}
 		for _, channel := range []*model.Channel{&active, &inactive} {
@@ -510,7 +526,7 @@ export function parseTaskResult() { return {}; }
 		}
 		catalog := make(map[string]bool)
 		model.RefreshPricing()
-		for _, row := range model.GetPricing() {
+		for _, row := range model.UsableCatalog([]string{"default"}, false) {
 			catalog[row.ModelName] = true
 		}
 		expected := map[string]model.ModelSquareState{
@@ -535,6 +551,9 @@ export function parseTaskResult() { return {}; }
 			"square-contains-ending": model.ModelSquareVisible,
 			"square-contains":        model.ModelSquareVisible,
 			"square-prefix-":         model.ModelSquareHidden,
+			"square-unpriced":        model.ModelSquareUnpriced,
+			"square-unpriced-child":  model.ModelSquareUnpriced,
+			"square-unpriced-":       model.ModelSquareUnpriced,
 		}
 		for name, state := range expected {
 			row, exists := byName[name]
@@ -554,7 +573,7 @@ export function parseTaskResult() { return {}; }
 					Total int
 				}
 			}
-			for _, state := range []model.ModelSquareState{model.ModelSquareVisible, model.ModelSquareUnavailable, model.ModelSquareHidden, model.ModelSquarePartial} {
+			for _, state := range []model.ModelSquareState{model.ModelSquareVisible, model.ModelSquareUnavailable, model.ModelSquareUnpriced, model.ModelSquareHidden, model.ModelSquarePartial} {
 				t.Run(string(state), func(t *testing.T) {
 					expectedNames := []string{}
 					for name, expectedState := range expected {
@@ -634,6 +653,48 @@ export function parseTaskResult() { return {}; }
 		require.True(t, detail.Success)
 		assert.Equal(t, model.ModelSquarePartial, detail.Data.SquareState)
 	})
+	t.Run("catalog_status_for_channel_editor", func(t *testing.T) {
+		previousSelfUse := operation_setting.SelfUseModeEnabled
+		operation_setting.SelfUseModeEnabled = false
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"status-priced":1,"status-hidden":1}`))
+		records := []model.Model{
+			{ModelName: "status-hidden", Status: 0},
+			{ModelName: "status-rule-", NameRule: model.NameRulePrefix, Status: 1},
+		}
+		for i := range records {
+			require.NoError(t, records[i].Insert())
+		}
+		t.Cleanup(func() {
+			operation_setting.SelfUseModeEnabled = previousSelfUse
+			require.NoError(t, ratio_setting.UpdateModelRatioByJSONString("{}"))
+			require.NoError(t, db.Unscoped().Where("id IN ?", []int{records[0].Id, records[1].Id}).Delete(&model.Model{}).Error)
+		})
+		lookup := func() map[string]model.ModelCatalogStatus {
+			var response struct {
+				Success bool
+				Data    map[string]model.ModelCatalogStatus
+			}
+			modelManagementRequest(t, GetModelCatalogStatus, "POST", "/api/models/catalog_status",
+				map[string]any{"models": []string{"status-priced", "status-hidden", "status-rule-a", " status-unpriced ", "status-priced"}}, &response)
+			require.True(t, response.Success)
+			return response.Data
+		}
+		assert.Equal(t, map[string]model.ModelCatalogStatus{
+			"status-priced":   {Listed: true, Priced: true},
+			"status-hidden":   {Registered: true, Priced: true},
+			"status-rule-a":   {Registered: true, Listed: true},
+			"status-unpriced": {Listed: true},
+		}, lookup())
+
+		operation_setting.SelfUseModeEnabled = true
+		assert.True(t, lookup()["status-unpriced"].Priced)
+
+		var tooMany struct{ Success bool }
+		modelManagementRequest(t, GetModelCatalogStatus, "POST", "/api/models/catalog_status",
+			map[string]any{"models": make([]string, maxCatalogStatusModels+1)}, &tooMany)
+		assert.False(t, tooMany.Success)
+	})
+
 	t.Run("channel_model_listing", func(t *testing.T) {
 		exact := model.Model{ModelName: "listing-exact", Status: 1, SyncOfficial: 1}
 		catalog := model.Model{ModelName: "listing-catalog", Status: 1}

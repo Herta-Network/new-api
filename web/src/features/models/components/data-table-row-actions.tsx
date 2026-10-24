@@ -58,9 +58,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     handleToggleModelStatus(model.id, model.status, queryClient)
   }
 
-  const toggleLabel = isEnabled
-    ? t('Hide from model square')
-    : t('Show in model square')
+  const toggleLabel = isEnabled ? t('Hide from users') : t('Show to users')
 
   return (
     <div className='-ml-1.5 flex min-w-0 items-center gap-1 [&>button]:min-w-0 [&>button]:shrink'>

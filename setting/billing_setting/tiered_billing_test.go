@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -108,4 +109,38 @@ func TestSmokeTestExprRejectsTaskUsageWithoutSchema(t *testing.T) {
 	assert.ErrorContains(t, err, "no task plugin usage schema")
 
 	require.NoError(t, SmokeTestExpr(`tier("base", p * 2 + c * 8)`))
+}
+
+// Model lists show a model only when relay can bill it, so ModelBillable
+// must resolve the billing name and accept every configured price kind.
+func TestModelBillableMatchesRelayPricing(t *testing.T) {
+	saved := billingSetting
+	savedRatios, savedPrices := ratio_setting.ModelRatio2JSONString(), ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		billingSetting = saved
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedRatios))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices))
+	})
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"zz-ratio":1}`))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"zz-price":0.1}`))
+	billingSetting = BillingSetting{
+		BillingMode: map[string]string{"zz-tiered": BillingModeTieredExpr, "zz-tiered-empty": BillingModeTieredExpr},
+		BillingExpr: map[string]string{"zz-tiered": `tier("base", p * 1)`},
+		PluginBillingExpr: map[string]string{
+			PluginBillingExprKey("zz-plugin", "zz-plugin-model"): `tier("base", 1)`,
+			PluginBillingExprKey("zz-plugin", "zz-plugin-empty"): " ",
+		},
+	}
+	for name, billable := range map[string]bool{
+		"zz-ratio":             true,
+		"zz-price":             true,
+		"zz-tiered":            true,
+		"zz-tiered-empty":      false,
+		"zz-plugin-model":      true,
+		"zz-plugin-empty":      false,
+		"zz-ratio@thinking:on": true,
+		"zz-unpriced":          false,
+	} {
+		assert.Equal(t, billable, ModelBillable(name), name)
+	}
 }

@@ -193,10 +193,11 @@ export function ModelsTable() {
           },
           {
             columnId: 'square_state',
-            title: t('Model square visibility'),
+            title: t('User visibility'),
             options: [
               { label: t('Displayed'), value: 'visible' },
               { label: t('Unavailable'), value: 'unavailable' },
+              { label: t('Unpriced'), value: 'unpriced' },
               { label: t('Listing hidden'), value: 'hidden' },
               { label: t('Partly shown'), value: 'partial' },
             ],
