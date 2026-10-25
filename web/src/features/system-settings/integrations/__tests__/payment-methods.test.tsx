@@ -61,8 +61,8 @@ const platforms: PaymentPlatformsInfo = {
           secret: false,
           managed: false,
           options: [
-            { value: 'v1', label: 'EPay V1 (MD5 merchant key)' },
             { value: 'v2', label: 'EPay V2 (RSA keys)' },
+            { value: 'v1', label: 'EPay V1 (MD5 merchant key)' },
           ],
         },
         {
@@ -259,7 +259,18 @@ describe('payment methods', () => {
       within(dialog).getByRole('textbox', { name: 'Merchant ID' }),
       '1001'
     )
-    await user.type(within(dialog).getByLabelText('Merchant key'), 'secret')
+    await user.type(
+      within(dialog).getByLabelText('Merchant private key'),
+      'MIIEv-private'
+    )
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Platform public key' }),
+      'MIIBI-public'
+    )
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Payment type' }),
+      'alipay'
+    )
     await user.click(
       within(dialog).getByRole('combobox', { name: 'Payment fee' })
     )
@@ -285,10 +296,11 @@ describe('payment methods', () => {
         config: {
           url: 'https://pay.example.com',
           pid: '1001',
-          version: 'v1',
+          version: 'v2',
           checkout: 'api',
-          key: 'secret',
-          type: '',
+          private_key: 'MIIEv-private',
+          platform_public_key: 'MIIBI-public',
+          type: 'alipay',
         },
         fee_mode: 3,
         fee_rate_bp: 290,
@@ -319,12 +331,14 @@ describe('payment methods', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
     expect(
-      await within(dialog).findByText('This field is required')
-    ).toBeVisible()
-    expect(within(dialog).getByLabelText('Merchant key')).toHaveAttribute(
-      'aria-invalid',
-      'true'
-    )
+      await within(dialog).findAllByText('This field is required')
+    ).toHaveLength(2)
+    expect(
+      within(dialog).getByLabelText('Merchant private key')
+    ).toHaveAttribute('aria-invalid', 'true')
+    expect(
+      within(dialog).getByRole('textbox', { name: 'Platform public key' })
+    ).toHaveAttribute('aria-invalid', 'true')
     expect(request.post).not.toHaveBeenCalled()
   })
 
@@ -364,22 +378,31 @@ describe('payment methods', () => {
     )
   })
 
-  it('asks for the RSA keys instead of the merchant key once EPay V2 is chosen and saves only those', async () => {
+  it('starts a new EPay method on V2 API orders and asks for the merchant key instead of the RSA keys once V1 is chosen', async () => {
     const request = mockApi([balance])
     const user = renderSection()
     await user.click(
       await screen.findByRole('button', { name: 'Add payment method' })
     )
     const dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getByLabelText('Merchant key')).toBeVisible()
     expect(
-      within(dialog).queryByLabelText('Merchant private key')
-    ).not.toBeInTheDocument()
+      within(dialog).getByRole('combobox', { name: 'Protocol version' })
+    ).toHaveTextContent('EPay V2 (RSA keys)')
+    expect(
+      within(dialog).getByRole('combobox', { name: 'Checkout mode' })
+    ).toHaveTextContent('API order')
     expect(
       within(dialog).getByText(
         'An API order is created by the server, which notices a failing gateway before the buyer leaves.'
       )
     ).toBeVisible()
+    expect(
+      within(dialog).getByLabelText('Merchant private key')
+    ).toHaveAttribute('type', 'password')
+    expect(
+      within(dialog).queryByLabelText('Merchant key')
+    ).not.toBeInTheDocument()
+
     await user.type(
       within(dialog).getByRole('textbox', { name: 'Name' }),
       'Alipay'
@@ -392,35 +415,24 @@ describe('payment methods', () => {
       within(dialog).getByRole('textbox', { name: 'Merchant ID' }),
       '1001'
     )
-    await user.type(within(dialog).getByLabelText('Merchant key'), 'v1-secret')
-    await user.click(
-      within(dialog).getByRole('combobox', { name: 'Protocol version' })
-    )
-    await user.click(
-      await screen.findByRole('option', { name: 'EPay V2 (RSA keys)' })
-    )
-
-    expect(
-      within(dialog).queryByLabelText('Merchant key')
-    ).not.toBeInTheDocument()
-    expect(
-      within(dialog).getByLabelText('Merchant private key')
-    ).toHaveAttribute('type', 'password')
-    const publicKey = within(dialog).getByRole('textbox', {
-      name: 'Platform public key',
-    })
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
-    expect(
-      await within(dialog).findAllByText('This field is required')
-    ).toHaveLength(2)
-    expect(publicKey).toHaveAttribute('aria-invalid', 'true')
-    expect(request.post).not.toHaveBeenCalled()
-
     await user.type(
       within(dialog).getByLabelText('Merchant private key'),
       'MIIEv-private'
     )
-    await user.type(publicKey, 'MIIBI-public')
+    await user.click(
+      within(dialog).getByRole('combobox', { name: 'Protocol version' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'EPay V1 (MD5 merchant key)' })
+    )
+
+    expect(
+      within(dialog).queryByLabelText('Merchant private key')
+    ).not.toBeInTheDocument()
+    expect(
+      within(dialog).queryByRole('textbox', { name: 'Platform public key' })
+    ).not.toBeInTheDocument()
+    await user.type(within(dialog).getByLabelText('Merchant key'), 'v1-secret')
     await user.type(
       within(dialog).getByRole('textbox', { name: 'Payment type' }),
       'alipay'
@@ -434,10 +446,9 @@ describe('payment methods', () => {
         config: {
           url: 'https://pay.example.com',
           pid: '1001',
-          version: 'v2',
+          version: 'v1',
           checkout: 'api',
-          private_key: 'MIIEv-private',
-          platform_public_key: 'MIIBI-public',
+          key: 'v1-secret',
           type: 'alipay',
         },
       })

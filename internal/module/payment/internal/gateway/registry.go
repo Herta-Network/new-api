@@ -197,9 +197,11 @@ func Platforms() []PlatformInfo {
 			Fields: []Field{
 				{Key: "url", Label: "Gateway URL", Required: true},
 				{Key: "pid", Label: "Merchant ID", Required: true},
+				// A new method starts on the first choices: V2 with API orders,
+				// whose gateway failures the server notices.
 				{Key: "version", Label: "Protocol version", Type: FieldSelect, Required: true, Options: []FieldOption{
-					{Value: EPayV1, Label: "EPay V1 (MD5 merchant key)"},
 					{Value: EPayV2, Label: "EPay V2 (RSA keys)"},
+					{Value: EPayV1, Label: "EPay V1 (MD5 merchant key)"},
 				}},
 				{Key: "checkout", Label: "Checkout mode", Type: FieldSelect, Required: true,
 					Description: "An API order is created by the server, which notices a failing gateway before the buyer leaves.",
