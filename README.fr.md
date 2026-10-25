@@ -195,7 +195,7 @@ git clone https://github.com/QuantumNous/new-api.git
 cd new-api
 ```
 
-Avant de démarrer, modifiez `docker-compose.yml` : remplacez les mots de passe d'exemple de la base et de Redis dans les services et les chaînes de connexion, puis définissez un `SESSION_SECRET` aléatoire et persistant (générable avec `openssl rand -hex 32`). Déployez la console depuis new-api-frontend (par exemple sur Cloudflare Pages, comme le décrit son README), définissez `FRONTEND_ORIGINS` sur l'origine de la console et consultez la section sur le déploiement séparé de [docs/authentication.md](docs/authentication.md) pour les autres réglages.
+Avant de démarrer, modifiez `docker-compose.yml` : remplacez les mots de passe d'exemple de la base et de Redis dans les services et les chaînes de connexion, puis définissez un `SESSION_SECRET` aléatoire et persistant (générable avec `openssl rand -hex 32`). Déployez la console depuis new-api-frontend (par exemple sur Cloudflare Pages, comme le décrit son README) ; terminer l'assistant d'installation depuis la console enregistre son origine comme réglage « Adresse du frontend », la seule adresse de la console dont le backend a besoin. Consultez la section sur le déploiement séparé de [docs/authentication.md](docs/authentication.md) pour les autres réglages.
 
 ```bash
 docker compose up -d
@@ -222,7 +222,7 @@ SQLite et MySQL ne sont pas pris en charge, et aucune migration depuis ces bases
 | `REDIS_CONN_STRING` | Chaîne de connexion Redis |
 | `SESSION_SECRET` | Secret d'authentification persistant, identique sur tous les nœuds |
 | `CRYPTO_SECRET` | Vaut `SESSION_SECRET` par défaut ; même valeur effective pour les nœuds partageant Redis |
-| `FRONTEND_ORIGINS` | Quand la console appelle le backend depuis une autre origine, y compris pendant l'assistant d'installation : origines exactes, séparées par des virgules, que l'API de la console admet en CORS, sans chemin ni joker. Remplace `SESSION_COOKIE_SECURE` et `SESSION_COOKIE_TRUSTED_URL`, obsolètes |
+| `FRONTEND_ORIGINS` | Facultatif : origines exactes, séparées par des virgules, que l'API de la console admet en CORS en plus de l'adresse du frontend enregistrée à l'installation, sans chemin ni joker. Remplace `SESSION_COOKIE_SECURE` et `SESSION_COOKIE_TRUSTED_URL`, obsolètes |
 | `TRUSTED_PROXIES` | IP/CIDR des proxys de confiance, ou `none` ; à configurer selon votre réseau |
 
 Consultez l'[exemple d'environnement](./.env.example), la [référence des variables](https://docs.newapi.ai/en/docs/installation/config-maintenance/environment-variables) et le [guide des sessions](./docs/authentication.md). Injectez les variables du conteneur avec `environment` ou `env_file` dans Compose ; copier `.env.example` ne suffit pas.

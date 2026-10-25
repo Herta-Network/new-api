@@ -874,12 +874,13 @@ func TestWebFallbackSendsConsolePathsToTheFrontend(t *testing.T) {
 	assert.Equal(t, http.StatusFound, callback.Code)
 	assert.Equal(t, "https://app.example.com/oauth/github?code=abc&state=xyz", callback.Header().Get("Location"))
 
+	// FRONTEND_BASE_URL is no longer read.
 	t.Setenv("FRONTEND_BASE_URL", "https://console.example.com/")
 	withEnv := gin.New()
 	SetWebRouter(withEnv, passThrough)
 	root := performPluginRequest(withEnv, http.MethodGet, "/")
 	assert.Equal(t, http.StatusFound, root.Code)
-	assert.Equal(t, "https://console.example.com/", root.Header().Get("Location"))
+	assert.Equal(t, "https://app.example.com/", root.Header().Get("Location"))
 }
 
 func TestSecurityRoutesDisableCachingBeforeAuthentication(t *testing.T) {

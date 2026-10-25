@@ -210,7 +210,7 @@ git clone https://github.com/QuantumNous/new-api.git
 cd new-api
 ```
 
-Before starting, edit `docker-compose.yml`: replace the database and Redis example passwords in both the services and connection strings, and set a persistent random `SESSION_SECRET` (generate one with `openssl rand -hex 32`). Deploy the console from new-api-frontend (for example on Cloudflare Pages, as its README describes), set `FRONTEND_ORIGINS` to the console's origin, and see the split deployment section of [docs/authentication.md](docs/authentication.md) for the related settings.
+Before starting, edit `docker-compose.yml`: replace the database and Redis example passwords in both the services and connection strings, and set a persistent random `SESSION_SECRET` (generate one with `openssl rand -hex 32`). Deploy the console from new-api-frontend (for example on Cloudflare Pages, as its README describes); completing the setup wizard there records the console's origin as the Frontend Address setting, the only console address the backend needs. See the split deployment section of [docs/authentication.md](docs/authentication.md) for the related settings.
 
 ```bash
 docker compose up -d
@@ -237,7 +237,7 @@ SQLite and MySQL are not supported, and there is no built-in migration from them
 | `REDIS_CONN_STRING` | Redis connection string |
 | `SESSION_SECRET` | Persistent authentication secret; all nodes must use the same value |
 | `CRYPTO_SECRET` | Defaults to `SESSION_SECRET`; nodes sharing Redis must use the same effective value |
-| `FRONTEND_ORIGINS` | Origins of the console when it calls the backend from another origin, including during the setup wizard: comma-separated exact origins the console API admits in CORS, without paths or wildcards. Replaces the deprecated `SESSION_COOKIE_SECURE` and `SESSION_COOKIE_TRUSTED_URL` |
+| `FRONTEND_ORIGINS` | Optional: console origins the console API admits in CORS besides the Frontend Address, which setup records; comma-separated exact origins, without paths or wildcards. Replaces the deprecated `SESSION_COOKIE_SECURE` and `SESSION_COOKIE_TRUSTED_URL` |
 | `TRUSTED_PROXIES` | Trusted reverse-proxy IPs/CIDRs, or `none`; explicitly configure for your network |
 
 See the [environment example](./.env.example), [environment reference](https://docs.newapi.ai/en/docs/installation/config-maintenance/environment-variables), and [authentication and session guide](./docs/authentication.md) for full configuration. Configure container variables in Compose's `environment` or `env_file`; copying `.env.example` alone does not inject variables into the container.

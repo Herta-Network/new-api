@@ -194,7 +194,7 @@ git clone https://github.com/QuantumNous/new-api.git
 cd new-api
 ```
 
-啟動前編輯 `docker-compose.yml`：同時替換資料庫、Redis 服務及對應連線字串中的範例密碼，並設定固定的隨機 `SESSION_SECRET`（可用 `openssl rand -hex 32` 產生）。控制台從 new-api-frontend 部署（例如依其 README 部署到 Cloudflare Pages），把 `FRONTEND_ORIGINS` 設為控制台的 Origin，其餘相關設定見 [docs/authentication.md](docs/authentication.md) 的「前後端分開部署」。
+啟動前編輯 `docker-compose.yml`：同時替換資料庫、Redis 服務及對應連線字串中的範例密碼，並設定固定的隨機 `SESSION_SECRET`（可用 `openssl rand -hex 32` 產生）。控制台從 new-api-frontend 部署（例如依其 README 部署到 Cloudflare Pages）；在控制台上完成初始化精靈時，後端把控制台的 Origin 記為系統設定「前端地址」，這是後端唯一需要知道的控制台地址。其餘相關設定見 [docs/authentication.md](docs/authentication.md) 的「前後端分開部署」。
 
 ```bash
 docker compose up -d
@@ -221,7 +221,7 @@ docker compose logs -f new-api
 | `REDIS_CONN_STRING` | Redis 連線字串 |
 | `SESSION_SECRET` | 持久保存的驗證金鑰，所有節點必須一致 |
 | `CRYPTO_SECRET` | 預設使用 `SESSION_SECRET`；共享 Redis 的節點必須使用相同的有效值 |
-| `FRONTEND_ORIGINS` | 控制台從其他來源存取後端時設定（初始化精靈也需要）：控制台介面在 CORS 中放行的精確 Origin，以逗號分隔，不含路徑或萬用字元。取代已廢棄的 `SESSION_COOKIE_SECURE` 和 `SESSION_COOKIE_TRUSTED_URL` |
+| `FRONTEND_ORIGINS` | 可選：除初始化時記錄的「前端地址」外，控制台介面在 CORS 中額外放行的精確 Origin，以逗號分隔，不含路徑或萬用字元。取代已廢棄的 `SESSION_COOKIE_SECURE` 和 `SESSION_COOKIE_TRUSTED_URL` |
 | `TRUSTED_PROXIES` | 可信反向代理 IP/CIDR，或 `none`；依實際網路明確設定 |
 
 完整設定見[環境變數範例](./.env.example)、[環境變數文件](https://docs.newapi.ai/zh/docs/installation/config-maintenance/environment-variables)和[驗證與登入工作階段說明](./docs/authentication.md)。容器變數應透過 Compose 的 `environment` 或 `env_file` 注入；只複製 `.env.example` 不會自動將變數傳入容器。

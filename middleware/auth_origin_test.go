@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
@@ -124,4 +125,57 @@ func TestCORSAdmitsOnlyFrontendOriginsToTheConsoleAPI(t *testing.T) {
 			assert.Equal(t, "*", response.Header().Get("Access-Control-Allow-Origin"), path)
 		}
 	})
+}
+
+// Before setup no frontend address is known, so the setup wizard on any
+// origin can reach the setup endpoints and the public status; nothing else
+// opens up, and setup closes the exception.
+func TestCORSAdmitsAnyOriginToSetupUntilTheSystemIsSetUp(t *testing.T) {
+	useFrontendOrigins(t, "")
+	previousSetup := constant.Setup
+	t.Cleanup(func() { constant.Setup = previousSetup })
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(CORS())
+	ok := func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"success": true}) }
+	router.GET("/api/setup", ok)
+	router.POST("/api/setup", ok)
+	router.GET("/api/status", ok)
+	router.GET("/api/user/self", ok)
+
+	serve := func(method, path, requestMethod string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, "https://api.example.com"+path, nil)
+		request.Host = "api.example.com"
+		request.Header.Set("Origin", "https://app.example.com")
+		if method == http.MethodOptions {
+			request.Header.Set("Access-Control-Request-Method", requestMethod)
+			request.Header.Set("Access-Control-Request-Headers", "content-type")
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+
+	constant.Setup = false
+	preflight := serve(http.MethodOptions, "/api/setup", http.MethodPost)
+	assert.Equal(t, http.StatusNoContent, preflight.Code)
+	assert.Equal(t, "*", preflight.Header().Get("Access-Control-Allow-Origin"))
+	assert.Contains(t, preflight.Header().Get("Access-Control-Allow-Methods"), "POST")
+	assert.Contains(t, preflight.Header().Get("Access-Control-Allow-Headers"), "Content-Type")
+	for _, path := range []string{"/api/setup", "/api/status"} {
+		response := serve(http.MethodGet, path, "")
+		assert.Equal(t, http.StatusOK, response.Code, path)
+		assert.Equal(t, "*", response.Header().Get("Access-Control-Allow-Origin"), path)
+		assert.Empty(t, response.Header().Get("Access-Control-Allow-Credentials"), path)
+	}
+	other := serve(http.MethodOptions, "/api/user/self", http.MethodGet)
+	assert.Equal(t, http.StatusForbidden, other.Code)
+	assert.Empty(t, other.Header().Get("Access-Control-Allow-Origin"))
+
+	constant.Setup = true
+	afterSetup := serve(http.MethodOptions, "/api/setup", http.MethodPost)
+	assert.Equal(t, http.StatusForbidden, afterSetup.Code)
+	assert.Empty(t, afterSetup.Header().Get("Access-Control-Allow-Origin"))
+	status := serve(http.MethodGet, "/api/status", "")
+	assert.Empty(t, status.Header().Get("Access-Control-Allow-Origin"))
 }

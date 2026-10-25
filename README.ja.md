@@ -195,7 +195,7 @@ git clone https://github.com/QuantumNous/new-api.git
 cd new-api
 ```
 
-起動前に `docker-compose.yml` を編集し、データベースと Redis のサービスおよび接続文字列にあるサンプルパスワードを変更します。永続的に使うランダムな `SESSION_SECRET` も設定してください（`openssl rand -hex 32` で生成可能）。管理画面は new-api-frontend からデプロイし（例: その README に従って Cloudflare Pages へ）、`FRONTEND_ORIGINS` に管理画面のオリジンを設定します。関連する設定は [docs/authentication.md](docs/authentication.md) のフロントエンドとバックエンドの分離デプロイの節を参照してください。
+起動前に `docker-compose.yml` を編集し、データベースと Redis のサービスおよび接続文字列にあるサンプルパスワードを変更します。永続的に使うランダムな `SESSION_SECRET` も設定してください（`openssl rand -hex 32` で生成可能）。管理画面は new-api-frontend からデプロイします（例: その README に従って Cloudflare Pages へ）。管理画面で初期設定ウィザードを完了すると、バックエンドは管理画面のオリジンをシステム設定「フロントエンドURL」として記録します。バックエンドが知る必要のある管理画面のアドレスはこれだけです。関連する設定は [docs/authentication.md](docs/authentication.md) のフロントエンドとバックエンドの分離デプロイの節を参照してください。
 
 ```bash
 docker compose up -d
@@ -222,7 +222,7 @@ SQLite と MySQL には対応しておらず、それらからの移行ツール
 | `REDIS_CONN_STRING` | Redis 接続文字列 |
 | `SESSION_SECRET` | 永続的な認証用シークレット。全ノードで同じ値を使用 |
 | `CRYPTO_SECRET` | 既定は `SESSION_SECRET`。Redis を共有するノードは同じ実効値を使用 |
-| `FRONTEND_ORIGINS` | 管理画面が別のオリジンからバックエンドを呼び出す場合に設定（初期設定ウィザードでも必要）。管理画面の API が CORS で許可する正確なオリジンをカンマ区切りで指定（パスやワイルドカード不可）。廃止された `SESSION_COOKIE_SECURE` と `SESSION_COOKIE_TRUSTED_URL` の後継 |
+| `FRONTEND_ORIGINS` | 任意。初期設定で記録される「フロントエンドURL」以外に、管理画面の API が CORS で許可する正確なオリジンをカンマ区切りで指定（パスやワイルドカード不可）。廃止された `SESSION_COOKIE_SECURE` と `SESSION_COOKIE_TRUSTED_URL` の後継 |
 | `TRUSTED_PROXIES` | 信頼するリバースプロキシの IP/CIDR、または `none`。実際のネットワークに合わせて明示的に設定 |
 
 詳細は[環境変数の例](./.env.example)、[環境変数リファレンス](https://docs.newapi.ai/ja/docs/installation/config-maintenance/environment-variables)、[認証とセッションの説明](./docs/authentication.md)を参照してください。コンテナの変数は Compose の `environment` または `env_file` で渡します。`.env.example` のコピーだけではコンテナに反映されません。

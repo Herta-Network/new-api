@@ -9,9 +9,10 @@ import (
 	"strings"
 )
 
-// FrontendOrigins are the browser origins, other than the backend's own, that
-// serve the console frontend: FRONTEND_ORIGINS, plus the deprecated
-// SESSION_COOKIE_TRUSTED_URL. The console API admits them in CORS.
+// FrontendOrigins are the browser origins, other than the backend's own and
+// the Frontend Address setting's, that serve the console frontend: the
+// optional FRONTEND_ORIGINS, plus the deprecated SESSION_COOKIE_TRUSTED_URL.
+// The console API admits them in CORS.
 var FrontendOrigins []string
 
 // NormalizeOrigin validates and canonicalizes a browser origin. Only an exact
@@ -72,6 +73,9 @@ func InitFrontendOrigins() error {
 		if os.Getenv(name) != "" {
 			SysLog(LogText("%s is deprecated: the console no longer uses a refresh cookie; list frontend origins in FRONTEND_ORIGINS", name))
 		}
+	}
+	if os.Getenv("FRONTEND_BASE_URL") != "" {
+		SysLog(LogText("FRONTEND_BASE_URL is no longer used: console paths on the backend redirect to the Frontend Address setting"))
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
@@ -15,11 +16,16 @@ const consoleAllowedHeaders = "Authorization, Content-Type, Cache-Control, X-Sec
 // CORS answers cross-origin requests on every route. The AI API takes API
 // keys from any client, so it admits every origin. The console API (/api and
 // the playground under /pg) is called only by the console frontend with a
-// dashboard access token, so it admits only the frontend origins:
-// FRONTEND_ORIGINS and the origin of the frontend address setting. The token
+// dashboard access token, so it admits only the frontend origins: the origin
+// of the frontend address setting and the optional FRONTEND_ORIGINS. The token
 // usage and log lookups under /api take API keys and follow the AI API.
 // Neither policy relies on cookies: the browser sends no credential the
 // server reads by itself.
+//
+// Before the system is set up no frontend address is known yet, and the
+// setup wizard records the console's origin as it. Until then the setup
+// endpoints and the public site status answer any origin with "*"; their
+// answers carry nothing sensitive (ASVS 5.0 3.4.2).
 func CORS() gin.HandlerFunc {
 	config := cors.DefaultConfig()
 	config.AllowAllOrigins = true
@@ -42,6 +48,15 @@ func CORS() gin.HandlerFunc {
 		}
 		c.Writer = varyOriginWriter{c.Writer}
 		if normalized, err := common.NormalizeOrigin(origin); err != nil || !isFrontendOrigin(normalized) {
+			if !constant.Setup && (path == "/api/setup" || path == "/api/status") {
+				c.Header("Access-Control-Allow-Origin", "*")
+				if c.Request.Method == http.MethodOptions {
+					c.Header("Access-Control-Allow-Methods", "GET, POST")
+					c.Header("Access-Control-Allow-Headers", consoleAllowedHeaders)
+					c.AbortWithStatus(http.StatusNoContent)
+				}
+				return
+			}
 			if c.Request.Method == http.MethodOptions {
 				c.AbortWithStatus(http.StatusForbidden)
 			}

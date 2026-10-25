@@ -118,21 +118,22 @@ default-src 'self'; script-src 'self' https://telegram.org https://challenges.cl
 
 ## 前后端分开部署
 
-后端不包含也不提供控制台。控制台是独立仓库 [new-api-frontend](https://github.com/Herta-Network/new-api-frontend)，构建产物部署在 Cloudflare Pages 等静态主机上，部署步骤见它的 README。能让前端主机把 `/api`、`/pg` 反向代理到后端时（例如 Nginx 同时托管构建产物和代理接口），页面和接口同源，不涉及 CORS，「前端地址」也可以留空。Cloudflare Pages 这类不能反向代理到外部后端的主机，由浏览器直接访问另一个域名的后端，需要三处配置：
+后端不包含也不提供控制台。控制台是独立仓库 [new-api-frontend](https://github.com/Herta-Network/new-api-frontend)，构建产物部署在 Cloudflare Pages 等静态主机上，部署步骤见它的 README。能让前端主机把 `/api`、`/pg` 反向代理到后端时（例如 Nginx 同时托管构建产物和代理接口），页面和接口同源，不涉及 CORS。Cloudflare Pages 这类不能反向代理到外部后端的主机，由浏览器直接访问另一个域名的后端。后端只需要知道一个地址，即系统设置「前端地址」，初始化时会自动填好：
 
 1. **前端的后端地址**：`index.html` 旁边的 `runtime-config.json`，例如 `{"apiBaseUrl": "https://api.example.com"}`。前端启动前读取它，所有接口请求、日志导出、Ollama 拉取流和 playground 的 SSE 都发往这个地址；文件缺失、无效或为空时请求保持同源。构建时设置环境变量 `API_BASE_URL` 会写入这个文件（Cloudflare Pages 在项目的构建变量里设置）；能直接修改托管文件的主机也可以改这个文件，不用重新构建。
-2. **后端的 CORS 白名单**：环境变量 `FRONTEND_ORIGINS`，逗号分隔的精确 Origin（协议、主机和端口，不带路径、通配符或域名后缀匹配），例如 `https://app.example.com`。系统设置「前端地址」的 Origin 也自动加入白名单。首次安装时还没有「前端地址」，初始化页面的请求只能靠 `FRONTEND_ORIGINS` 放行。
-3. **系统设置「前端地址」**：控制台的公开地址。重置密码链接、邮件里的链接、支付完成返回页、OAuth 回调地址（`<前端地址>/oauth/<provider>`）和默认的 Passkey 域名都使用它；不填时回落到「服务器地址」。「服务器地址」只表示后端：AI 接口地址、支付回调、Midjourney 图片和视频等后端提供的文件都用它。在后端域名上打开的非接口路径（例如旧邮件链接、登记在后端地址上的 OAuth 回调）会带着路径和查询参数 302 重定向到环境变量 `FRONTEND_BASE_URL`，未设置时重定向到「前端地址」；两者都没有时返回 404。
+2. **系统设置「前端地址」**：控制台的公开地址，只填 Origin。浏览器里完成初始化向导时，后端把发起请求的控制台 Origin 记为「前端地址」（此前未设置时）；用 curl 等不带 Origin 的方式初始化，或控制台换了域名，就在系统设置里手动填写。它的 Origin 自动进入 CORS 白名单；重置密码链接、邮件里的链接、支付完成返回页、OAuth 回调地址（`<前端地址>/oauth/<provider>`）和默认的 Passkey 域名都使用它；不填时回落到「服务器地址」。「服务器地址」只表示后端：AI 接口地址、支付回调、Midjourney 图片和视频等后端提供的文件都用它。在后端域名上打开的非接口路径（例如旧邮件链接、登记在后端地址上的 OAuth 回调）会带着路径和查询参数 302 重定向到「前端地址」，未设置时返回 404。环境变量 `FRONTEND_BASE_URL` 不再使用，设置了它时启动日志会提示。
+3. **可选的额外来源**：环境变量 `FRONTEND_ORIGINS`，逗号分隔的精确 Origin（协议、主机和端口，不带路径、通配符或域名后缀匹配），除「前端地址」外还要放行的控制台来源，例如 Cloudflare Pages 的预览地址。一般不需要设置。
 
 CORS 规则：
 
-- `/api` 和 `/pg`（控制台接口）只对 `FRONTEND_ORIGINS` 和「前端地址」的 Origin 返回 `Access-Control-Allow-Origin`（回显该 Origin，附 `Vary: Origin`），不返回 `Access-Control-Allow-Credentials`，预检只允许控制台用到的请求头（`Authorization`、`Content-Type`、`Cache-Control`、`X-Security-Proof`、`X-Auth-Session`、`X-OAuth-Nonce`）。不受信任的 Origin 不会得到任何 CORS 头，其预检返回 403。
+- `/api` 和 `/pg`（控制台接口）只对「前端地址」和 `FRONTEND_ORIGINS` 的 Origin 返回 `Access-Control-Allow-Origin`（回显该 Origin，附 `Vary: Origin`），不返回 `Access-Control-Allow-Credentials`，预检只允许控制台用到的请求头（`Authorization`、`Content-Type`、`Cache-Control`、`X-Security-Proof`、`X-Auth-Session`、`X-OAuth-Nonce`）。不受信任的 Origin 不会得到任何 CORS 头，其预检返回 403。
+- 系统初始化完成前还不知道控制台的地址：此时 `GET /api/setup`、`POST /api/setup` 和 `GET /api/status` 对任意 Origin 返回 `Access-Control-Allow-Origin: *`，其它控制台接口照旧拒绝。这三个接口的响应不含敏感信息（ASVS 5.0 3.4.2）。初始化完成后这个例外关闭；多节点部署中，在初始化之前启动的其它节点要重启后才会关闭。已知的取舍：初始化前，网络上能访问到这个实例的人本来就能用 curl 完成初始化；放开 CORS 后，员工浏览器里打开的任意网页也能对内网中尚未初始化的实例发起初始化。部署后请立即完成初始化，或初始化之后再开放网络访问。
 - AI 接口（`/v1`、`/v1beta`、`/mj`、任务插件路由、`/dashboard/billing`）以及 `/api/usage/token`、`/api/log/token` 用 API Key 鉴权，继续允许任意 Origin，浏览器里直接用 `sk-` 密钥调用的场景不受影响。
 
 域名相关的其它设置：
 
 - OAuth：state 存在 `auth_flows` 表里，不依赖 Cookie。各提供方后台登记的回调地址要改为 `<前端地址>/oauth/<provider>`。
-- Passkey：WebAuthn 在前端页面上执行，RP ID 必须是前端域名本身或其上级域名。设置「前端地址」时，原来的隐式域名会保留为旧域名，已有 Passkey 继续可用；前端换到另一个主域名时，在旧域名上注册的 Passkey 无法在新域名使用，这是 WebAuthn 的限制。
+- Passkey：WebAuthn 在前端页面上执行，RP ID 必须是前端域名本身或其上级域名。修改「前端地址」时，原来的隐式域名会保留为旧域名，已有 Passkey 继续可用（初始化时自动记录的除外，那时还没有 Passkey）；前端换到另一个主域名时，在旧域名上注册的 Passkey 无法在新域名使用，这是 WebAuthn 的限制。
 - Telegram：在 BotFather 里用 `/setdomain` 设置前端域名。
 - Turnstile：在 Cloudflare 后台把前端主机名加入组件允许的主机名列表。
 
@@ -140,14 +141,14 @@ CORS 规则：
 
 ```env
 SESSION_SECRET=<high-entropy-random-value>
-# FRONTEND_ORIGINS 不需要设置；runtime-config.json 的 apiBaseUrl 留空；「前端地址」留空
+# FRONTEND_ORIGINS 不需要设置；runtime-config.json 的 apiBaseUrl 留空；「前端地址」由初始化记为这个域名
 ```
 
 不同域名部署，例如 Cloudflare Pages（控制台 `https://app.example.com`，后端 `https://api.example.com`）：
 
 ```env
 SESSION_SECRET=<high-entropy-random-value>
-FRONTEND_ORIGINS=https://app.example.com
+# FRONTEND_ORIGINS 不需要设置：在 https://app.example.com 上完成初始化时，它被记为「前端地址」
 ```
 
 ```json
@@ -156,7 +157,7 @@ FRONTEND_ORIGINS=https://app.example.com
 
 （Cloudflare Pages 上即构建变量 `API_BASE_URL=https://api.example.com`。）
 
-并在系统设置里把「服务器地址」设为 `https://api.example.com`、「前端地址」设为 `https://app.example.com`。
+并在系统设置里把「服务器地址」设为 `https://api.example.com`，确认「前端地址」是 `https://app.example.com`。
 
 Cloudflare Pages 和 Netlify 读取构建产物里的 `_headers`，自动发送上文的内容安全策略。其它静态服务器要自己给 `index.html`（以及回落到它的所有前端路由）加上 `_headers` 里的 `Content-Security-Policy`，例如 Nginx：
 
