@@ -54,6 +54,7 @@ func orderView(order *entity.PaymentOrder) *gateway.Order {
 		PaymentAmount:   order.PaymentAmount,
 		PaymentCurrency: order.PaymentCurrency,
 		TradeNo:         order.TradeNo,
+		ClientIP:        order.ClientIp,
 		CreatedAt:       time.Unix(order.CreatedAt, 0),
 		ExpiresAt:       time.Unix(order.ExpiresAt, 0),
 	}

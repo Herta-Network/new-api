@@ -453,7 +453,8 @@ func (recorder *sqlRecorder) reset() {
 
 // The payment startup steps seed the balance method once, a second startup
 // rewrites nothing, one gateway payment can bind one order of its platform,
-// and the Stripe methods of an upgraded database collect card payments.
+// the Stripe methods of an upgraded database collect card payments, and its
+// EPay methods speak V1 through the payment page.
 func TestPaymentSchemaMigration(t *testing.T) {
 	pgtest.Reset(t, model.DB)
 	recorder := &sqlRecorder{}
@@ -471,11 +472,14 @@ func TestPaymentSchemaMigration(t *testing.T) {
 				{Id: 4, Platform: "stripe", Token: "t4", Config: `{"public_key":"pk_test_a","secret_key":"sk_test_a","payment_method_type":"wechat_pay"}`},
 				{Id: 5, Platform: "epay", Token: "t5", Config: `{"url":"https://pay.example","pid":"1","key":"k","type":""}`},
 				{Id: 6, Platform: "stripe", Token: "t6", Config: ""},
+				{Id: 7, Platform: "epay", Token: "t7", Config: `{"url":"https://pay.example","pid":"1","version":"v2","checkout":"api","type":"alipay"}`},
+				{Id: 8, Platform: "epay", Token: "t8", Config: `{"url":"https://pay.example","pid":"1","key":"k","checkout":"api","type":"alipay"}`},
 			} {
 				require.NoError(t, db.Create(&method).Error)
 			}
 		}
 		require.NoError(t, EnsureStripeMethodTypes(db))
+		require.NoError(t, EnsureEPayProtocols(db))
 		if pass == 1 {
 			for _, statement := range recorder.statements {
 				assert.NotContains(t, statement, `SET "config"`, "repeated startup must not rewrite a configuration")
@@ -498,8 +502,12 @@ func TestPaymentSchemaMigration(t *testing.T) {
 		2: card,
 		3: card,
 		4: {"public_key": "pk_test_a", "secret_key": "sk_test_a", "payment_method_type": "wechat_pay"},
-		5: {"url": "https://pay.example", "pid": "1", "key": "k", "type": ""},
+		// An EPay method saved before versions and checkout modes keeps
+		// speaking V1 through the payment page; a chosen one is kept.
+		5: {"url": "https://pay.example", "pid": "1", "key": "k", "type": "", "version": "v1", "checkout": "page"},
 		6: nil,
+		7: {"url": "https://pay.example", "pid": "1", "version": "v2", "checkout": "api", "type": "alipay"},
+		8: {"url": "https://pay.example", "pid": "1", "key": "k", "version": "v1", "checkout": "api", "type": "alipay"},
 	}, configs)
 
 	var balance entity.PaymentMethod

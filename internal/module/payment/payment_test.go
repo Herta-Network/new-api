@@ -3,8 +3,13 @@ package payment
 import (
 	"context"
 	"crypto/md5"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -43,16 +48,28 @@ const (
 	testStripeSecret = "whsec_test"
 )
 
-// fakeEPay answers the EPay order query with whatever the test set.
+// fakeEPay answers the EPay order query, and a payment created at mapi.php,
+// with whatever the test set. It keeps the form of the last payment.
 type fakeEPay struct {
-	mu     sync.Mutex
-	status int
-	answer string
+	mu      sync.Mutex
+	status  int
+	answer  string
+	payment string
+	created url.Values
 }
 
 func (f *fakeEPay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if r.URL.Path == "/mapi.php" && f.payment != "" {
+		_ = r.ParseForm()
+		f.created = r.PostForm
+		if f.status != 0 {
+			w.WriteHeader(f.status)
+		}
+		_, _ = w.Write([]byte(f.payment))
+		return
+	}
 	if r.URL.Path != "/api.php" || f.answer == "" {
 		http.NotFound(w, r)
 		return
@@ -67,6 +84,18 @@ func (f *fakeEPay) set(status int, answer string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.status, f.answer = status, answer
+}
+
+func (f *fakeEPay) setPayment(status int, payment string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.status, f.payment, f.created = status, payment, nil
+}
+
+func (f *fakeEPay) lastPayment() url.Values {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.created
 }
 
 type paymentFixture struct {
@@ -342,6 +371,47 @@ func TestEPayCheckoutAndCallbackChain(t *testing.T) {
 	assert.Equal(t, "T1", settled.TradeNo)
 }
 
+// An API checkout asks the gateway for the payment while the buyer waits:
+// the buyer gets what it answers, a gateway that fails is reported instead
+// of a payment page that would not work, and a resumed checkout asks again
+// for the buyer's address the order was made from.
+func TestEPayAPICheckout(t *testing.T) {
+	f := setupPayment(t)
+	ctx := context.Background()
+	method, err := store.GetMethod(testEPayMethod)
+	require.NoError(t, err)
+	apiConfig := strings.Replace(method.Config, `"type":""`, `"version":"v1","checkout":"api","type":"alipay"`, 1)
+	require.NoError(t, model.DB.Model(method).Update("config", apiConfig).Error)
+
+	f.epay.setPayment(0, `{"code":1,"trade_no":"T1","payurl":"https://pay.example/pay/T1"}`)
+	_, checkout, err := CreateOrder(ctx, testUser, topup("100", testEPayMethod), "203.0.113.9")
+	require.NoError(t, err)
+	assert.Equal(t, &Checkout{Type: gateway.ActionURL, URL: "https://pay.example/pay/T1", OrderNo: checkout.OrderNo}, checkout)
+	created := f.epay.lastPayment()
+	assert.Equal(t, "537.06", created.Get("money"))
+	assert.Equal(t, "203.0.113.9", created.Get("clientip"))
+	assert.Equal(t, "https://www.example.test/api/payment/notify/epay/epay-token", created.Get("notify_url"))
+
+	f.epay.setPayment(0, `{"code":1,"trade_no":"T2","qrcode":"https://qr.alipay.com/abc"}`)
+	_, checkout, err = CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	require.NoError(t, err)
+	assert.Equal(t, gateway.ActionQRCode, checkout.Type)
+	assert.Equal(t, "https://qr.alipay.com/abc", checkout.QRCode)
+
+	f.epay.setPayment(http.StatusBadGateway, `bad gateway`)
+	order, checkout, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.10")
+	assert.ErrorIs(t, err, errCheckoutFailed)
+	assert.Nil(t, checkout)
+	require.NotNil(t, order)
+	assert.Equal(t, entity.PaymentOrderPending, order.Status)
+
+	f.epay.setPayment(0, `{"code":1,"trade_no":"T3","payurl":"https://pay.example/pay/T3"}`)
+	resumed, err := ResumeCheckout(ctx, testUser, order.OrderNo)
+	require.NoError(t, err)
+	assert.Equal(t, "https://pay.example/pay/T3", resumed.URL)
+	assert.Equal(t, "203.0.113.10", f.epay.lastPayment().Get("clientip"))
+}
+
 func withParams(base, changes map[string]string) map[string]string {
 	merged := map[string]string{}
 	for key, value := range base {
@@ -578,6 +648,37 @@ func TestAdminMethodsKeepSecrets(t *testing.T) {
 	moved.Platform = gateway.PlatformCryptomus
 	_, err = UpdateMethod(ctx, testEPayMethod, moved)
 	assert.ErrorIs(t, err, errMethodPlatformChanged)
+
+	// The EPay V2 private key is a secret as well; the platform's public key
+	// is not. A method that goes back to V1 keeps no V2 key.
+	merchant, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	merchantDER, err := x509.MarshalPKCS8PrivateKey(merchant)
+	require.NoError(t, err)
+	platform, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	platformDER, err := x509.MarshalPKIXPublicKey(&platform.PublicKey)
+	require.NoError(t, err)
+	platformKey := base64.StdEncoding.EncodeToString(platformDER)
+	v2 := MethodInput{Name: "Alipay V2", Platform: gateway.PlatformEPay, Enabled: true, Config: map[string]any{
+		"url": "https://pay.example.test", "pid": "2002", "version": "v2", "checkout": "api", "type": "alipay",
+		"private_key":         string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: merchantDER})),
+		"platform_public_key": platformKey,
+	}}
+	detail, err = CreateMethod(ctx, v2)
+	require.NoError(t, err)
+	assert.Equal(t, "", detail.Config["private_key"])
+	assert.True(t, detail.SecretsSet["private_key"])
+	assert.Equal(t, platformKey, detail.Config["platform_public_key"])
+	v2.Config["private_key"] = ""
+	v2.Name = "Alipay"
+	_, err = UpdateMethod(ctx, detail.Id, v2)
+	require.NoError(t, err)
+	assert.Equal(t, base64.StdEncoding.EncodeToString(merchantDER), storedConfig(t, detail.Id)["private_key"])
+	_, err = UpdateMethod(ctx, detail.Id, epayInput("v1-key"))
+	require.NoError(t, err)
+	assert.NotContains(t, storedConfig(t, detail.Id), "private_key")
+	assert.Equal(t, "v1-key", storedConfig(t, detail.Id)["key"])
 }
 
 func stripeInput(secretKey, domain string) MethodInput {

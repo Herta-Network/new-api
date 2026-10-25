@@ -25,12 +25,13 @@ var (
 )
 
 // Checkout tells the client how to pay an order: Type is gateway.ActionURL
-// (open URL), gateway.ActionStripe (confirm with Stripe.js) or
-// CheckoutTypePaid.
+// (open URL), gateway.ActionStripe (confirm with Stripe.js),
+// gateway.ActionQRCode (show QRCode to scan) or CheckoutTypePaid.
 type Checkout struct {
 	Type    string                `json:"type"`
 	URL     string                `json:"url,omitempty"`
 	Stripe  *gateway.StripeAction `json:"stripe,omitempty"`
+	QRCode  string                `json:"qr_code,omitempty"`
 	OrderNo string                `json:"order_no"`
 }
 
@@ -169,7 +170,7 @@ func StartCheckout(ctx context.Context, order *entity.PaymentOrder, method *enti
 		logger.LogError(ctx, common.LogText("start payment of order %s failed: %v", order.OrderNo, err))
 		return nil, errCheckoutFailed
 	}
-	return &Checkout{Type: action.Type, URL: action.URL, Stripe: action.Stripe, OrderNo: order.OrderNo}, nil
+	return &Checkout{Type: action.Type, URL: action.URL, Stripe: action.Stripe, QRCode: action.QRCode, OrderNo: order.OrderNo}, nil
 }
 
 // UserOrder loads an order of userId.

@@ -50,6 +50,22 @@ export function editablePaymentFields(fields: PaymentPlatformField[]) {
   return fields.filter((field) => !field.managed)
 }
 
+/**
+ * The editable fields that apply to config: a field shown only under a
+ * choice of another field (the credentials of an EPay version) is left out
+ * while that field holds another value.
+ */
+export function applicablePaymentFields(
+  fields: PaymentPlatformField[],
+  config: Record<string, string>
+) {
+  return editablePaymentFields(fields).filter((field) =>
+    Object.entries(field.when ?? {}).every(
+      ([key, value]) => config[key] === value
+    )
+  )
+}
+
 export function usesFeeRate(mode: number) {
   return (
     mode === PAYMENT_FEE_MODE.RATE || mode === PAYMENT_FEE_MODE.RATE_AND_FIXED
@@ -101,7 +117,7 @@ export function createPaymentMethodSchema(
       fee_fixed: z.string(),
     })
     .superRefine((values, ctx) => {
-      for (const field of editablePaymentFields(fields)) {
+      for (const field of applicablePaymentFields(fields, values.config)) {
         const value = values.config[field.key]?.trim() ?? ''
         const kept = field.secret && secretsSet[field.key]
         if (field.required && !value && !kept) {
@@ -166,8 +182,9 @@ export function paymentMethodFormDefaults(
 }
 
 /**
- * The request body for the form: the fee percentage in basis points, the
- * fixed fee in hundredths, and fee parts the mode does not use as zero.
+ * The request body for the form: the configuration fields that apply, the
+ * fee percentage in basis points, the fixed fee in hundredths, and fee
+ * parts the mode does not use as zero.
  */
 export function toPaymentMethodRequest(
   values: PaymentMethodFormValues,
@@ -175,7 +192,7 @@ export function toPaymentMethodRequest(
 ): PaymentMethodInput {
   const mode = Number(values.fee_mode)
   const config: Record<string, string> = {}
-  for (const field of editablePaymentFields(fields)) {
+  for (const field of applicablePaymentFields(fields, values.config)) {
     config[field.key] = values.config[field.key]?.trim() ?? ''
   }
   const isBalance = values.platform === BALANCE_PAYMENT_PLATFORM
