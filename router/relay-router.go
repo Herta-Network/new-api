@@ -235,20 +235,24 @@ func SetRelayRouter(router *gin.Engine) {
 			controller.Relay(c, types.RelayFormatDeepSeekTools)
 		})
 
+		// The legacy Edits API rewrites input by an instruction; it is a
+		// text request.
+
+		//	@Summary		文本编辑（旧接口）
+		//	@Description	OpenAI 已停用的 Edits 接口：按 instruction 修改 input，按文本请求转发和计费。
+		//	@Tags			OpenAI
+		//	@Param			body	body		dto.GeneralOpenAIRequest	true	"model 和 instruction 必填，input 是要修改的文本"
+		//	@Success		200		{object}	dto.OpenAITextResponse
+		//	@Failure		default	{object}	controller.OpenAIErrorResponse
+		//	@Security		TokenAuth
+		//	@Router			/v1/edits [post]
+		httpRouter.POST("/edits", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAI)
+		})
+
 		// image related routes. /images/generations and /images/edits are
 		// host protocol endpoints (openai_image) registered by
 		// SetTaskPluginProtocolRouter; unclaimed models fall back to Relay.
-
-		//	@Summary	编辑图像（旧路径）
-		//	@Tags		图像
-		//	@Param		body	body		dto.ImageRequest	true	"图像请求，model 必填"
-		//	@Success	200		{object}	dto.ImageResponse
-		//	@Failure	default	{object}	controller.OpenAIErrorResponse
-		//	@Security	TokenAuth
-		//	@Router		/v1/edits [post]
-		httpRouter.POST("/edits", func(c *gin.Context) {
-			controller.Relay(c, types.RelayFormatOpenAIImage)
-		})
 
 		// embedding related routes
 

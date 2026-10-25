@@ -17,6 +17,7 @@ import (
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/pkg/pgtest"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	kittypes "github.com/QuantumNous/new-api/relaykit/types"
@@ -39,6 +40,20 @@ func setupRelayChannelDB(t *testing.T) *gorm.DB {
 		common.MemoryCacheEnabled = previousCache
 	})
 	return model.DB
+}
+
+// A relay mode without a fetch builder answers 400 instead of calling a nil
+// builder.
+func TestRelayTaskFetchRejectsModeWithoutBuilder(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/video/generations/task-1", nil)
+
+	var taskErr *dto.TaskError
+	require.NotPanics(t, func() { taskErr = RelayTaskFetch(c, relayconstant.RelayModeUnknown) })
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_relay_mode", taskErr.Code)
+	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
 }
 
 func TestRealtimeFetchAppliesChannelHeaderOverrides(t *testing.T) {
