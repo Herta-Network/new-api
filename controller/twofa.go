@@ -196,7 +196,7 @@ func RegenerateBackupCodes(c *gin.Context) {
 // Verify2FALogin 登录时验证2FA
 //
 //	@Summary		两步验证登录
-//	@Description	与 POST /api/user/login/verify 相同：提交登录返回的 flow_token 和 TOTP 验证码或备用码，成功后返回访问令牌、登录会话和用户，并写入 new_api_refresh Cookie。
+//	@Description	与 POST /api/user/login/verify 相同：提交登录返回的 flow_token 和 TOTP 验证码或备用码，成功后返回访问令牌、refresh_token、登录会话和用户。
 //	@Tags			认证
 //	@Param			body	body		loginVerifyRequest	true	"登录流程的 flow_token 和验证码"
 //	@Success		200		{object}	common.ApiResponse{data=loginResult}

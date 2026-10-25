@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/internal/module/payment/internal/gateway"
 	"github.com/QuantumNous/new-api/internal/module/payment/internal/store"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/bytedance/gopkg/util/gopool"
 )
 
@@ -313,7 +314,7 @@ func startCheckout(ctx context.Context, order *entity.PaymentOrder, invoice *ent
 	checkout := gateway.Checkout{
 		Order:     view,
 		Charge:    gateway.Charge{Amount: invoice.PaymentAmount, Currency: invoice.PaymentCurrency},
-		ReturnURL: siteAddress() + "/user/wallet?payment_order=" + url.QueryEscape(order.OrderNo),
+		ReturnURL: service.ConsoleURL("/user/wallet?payment_order=" + url.QueryEscape(order.OrderNo)),
 		Subject:   order.Subject,
 		Claim: func(_ context.Context, tradeNo string) (string, error) {
 			return store.ClaimInvoiceTrade(invoice, tradeNo)

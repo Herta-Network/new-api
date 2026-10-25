@@ -66,8 +66,8 @@ func openGateway(method *entity.PaymentMethod) (gateway.Gateway, error) {
 	return gatewayRegistry().Open(methodView(method))
 }
 
-// siteAddress is the public address of the site, which callbacks fall back
-// to and return URLs are built on.
+// siteAddress is the public address of the backend, which callbacks fall back
+// to. Return URLs lead to the console instead (service.ConsoleURL).
 func siteAddress() string {
 	return strings.TrimRight(strings.TrimSpace(system_setting.ServerAddress), "/")
 }

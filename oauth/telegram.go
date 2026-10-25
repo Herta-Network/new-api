@@ -54,7 +54,7 @@ func NewTelegramOAuthFlow() (*TelegramOAuthFlow, error) {
 	if err := TelegramConfigurationError(); err != nil {
 		return nil, err
 	}
-	redirectURI := strings.TrimRight(system_setting.ServerAddress, "/") + "/oauth/telegram"
+	redirectURI := strings.TrimRight(system_setting.ConsoleAddress(), "/") + "/oauth/telegram"
 	parsed, err := url.Parse(redirectURI)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
 		return nil, ErrTelegramOAuthNotConfigured
@@ -113,7 +113,7 @@ func (p *TelegramProvider) ExchangeToken(ctx context.Context, code string, c *gi
 	settings := system_setting.GetTelegramSettings()
 	if !ok || flow == nil || flow.CodeVerifier == "" || code == "" ||
 		flow.ClientID != strings.TrimSpace(settings.ClientID) ||
-		flow.RedirectURI != strings.TrimRight(system_setting.ServerAddress, "/")+"/oauth/telegram" {
+		flow.RedirectURI != strings.TrimRight(system_setting.ConsoleAddress(), "/")+"/oauth/telegram" {
 		return nil, ErrTelegramOAuthFailed
 	}
 	values := url.Values{

@@ -403,7 +403,7 @@ func SendPasswordResetEmail(c *gin.Context) {
 		common.RegisterVerificationCodeWithKey(email, code, common.PasswordResetPurpose)
 		// OWASP Forgot Password Cheat Sheet: the link starts from the
 		// configured server address, never from the request's Host header.
-		link := strings.TrimRight(system_setting.ServerAddress, "/") + "/user/reset?" + url.Values{"email": {email}, "token": {code}}.Encode()
+		link := strings.TrimRight(system_setting.ConsoleAddress(), "/") + "/user/reset?" + url.Values{"email": {email}, "token": {code}}.Encode()
 		lang := user.GetSetting().Language
 		if lang == "" {
 			lang = i18n.StatedLang(c)

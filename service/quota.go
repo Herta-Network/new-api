@@ -555,7 +555,7 @@ func quotaReminderDue(userSetting dto.UserSetting, before int64, after int64) bo
 func quotaLowEmail(title string, remaining string) common.TemplateEmail {
 	return common.TemplateEmail{
 		Kind: common.EmailKindQuotaLow,
-		Vars: map[string]string{"Title": title, "Quota": remaining, "Link": PaymentReturnURL("/user/wallet")},
+		Vars: map[string]string{"Title": title, "Quota": remaining, "Link": ConsoleURL("/user/wallet")},
 	}
 }
 
@@ -571,7 +571,7 @@ func quotaNotifyContent(lang string, notifyType string, prompt string, remaining
 	case dto.NotifyTypeGotify:
 		return i18n.Translate(lang, i18n.MsgNotifyQuotaLowGotify, map[string]any{"Prompt": prompt, "Quota": remaining}), []any{prompt, remaining}
 	default:
-		topUpLink := PaymentReturnURL("/user/wallet")
+		topUpLink := ConsoleURL("/user/wallet")
 		return i18n.Translate(lang, i18n.MsgNotifyQuotaLowEmail, map[string]any{"Prompt": prompt, "Quota": remaining, "Link": topUpLink}), []any{prompt, remaining, topUpLink, topUpLink}
 	}
 }

@@ -11,8 +11,6 @@ build
 *.db-shm
 *.db-wal
 logs
-web/dist
-web/node_modules
 .env
 one-api
 new-api

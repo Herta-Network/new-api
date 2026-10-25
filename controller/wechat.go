@@ -57,7 +57,7 @@ func getWeChatIdByCode(code string) (string, error) {
 }
 
 // @Summary		微信登录
-// @Description	用公众号验证码登录，未绑定的微信在开放注册时自动注册。成功时 data 为访问令牌、登录会话和用户，并写入 new_api_refresh Cookie；账户需要二次登录验证时 data 改为 {require_verification: true, flow_token, expires_at, methods}。
+// @Description	用公众号验证码登录，未绑定的微信在开放注册时自动注册。成功时 data 为访问令牌、refresh_token、登录会话和用户；账户需要二次登录验证时 data 改为 {require_verification: true, flow_token, expires_at, methods}。
 // @Tags			第三方登录
 // @Param			code	query		string	true	"微信公众号返回的验证码"
 // @Success		200		{object}	common.ApiResponse{data=loginResult}

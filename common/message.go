@@ -8,7 +8,8 @@ import (
 )
 
 // Message is text shown in the web console. Key is the English source text and
-// also its key in web/src/i18n/locales; Params fill its {{name}} placeholders.
+// also its key in new-api-frontend's src/i18n/locales; Params fill its
+// {{name}} placeholders.
 // The web console translates Key with Params, so the backend only renders the
 // English text, for API callers and log fallbacks. Params carry display-ready
 // values: format quota with logger.FormatQuota before passing it.

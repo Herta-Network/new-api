@@ -21,7 +21,7 @@ type loginVerifyRequest struct {
 }
 
 // @Summary		完成二次登录验证
-// @Description	提交登录返回的 flow_token 和 TOTP 验证码或备用码；method 只能为 2fa 或留空。成功后 data 为访问令牌、登录会话和用户，并写入 new_api_refresh Cookie。
+// @Description	提交登录返回的 flow_token 和 TOTP 验证码或备用码；method 只能为 2fa 或留空。成功后 data 为访问令牌、refresh_token、登录会话和用户。
 // @Tags			认证
 // @Param			body	body		loginVerifyRequest	true	"登录流程的 flow_token 和验证码"
 // @Success		200		{object}	common.ApiResponse{data=loginResult}
@@ -109,7 +109,7 @@ type loginPasskeyFinishRequest struct {
 }
 
 // @Summary		完成 Passkey 二次登录验证
-// @Description	成功后 data 为访问令牌、登录会话和用户，并写入 new_api_refresh Cookie。
+// @Description	成功后 data 为访问令牌、refresh_token、登录会话和用户。
 // @Tags			认证
 // @Param			body	body		loginPasskeyFinishRequest	true	"两个 flow_token 和 navigator.credentials.get 的结果"
 // @Success		200		{object}	common.ApiResponse{data=loginResult}

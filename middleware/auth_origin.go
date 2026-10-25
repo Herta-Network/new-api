@@ -1,37 +1,38 @@
 package middleware
 
 import (
-	"crypto/subtle"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/gin-gonic/gin"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 )
 
-// SessionCookieOriginGuard protects cookie-authenticated refresh/logout
-// endpoints when secure cookie mode is enabled. In insecure local development
-// mode it preserves the legacy behavior and intentionally performs no Origin
-// validation. It never adds CORS response headers and must not be installed on
-// relay routes.
-func SessionCookieOriginGuard() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if !common.SessionCookieSecure {
-			c.Next()
-			return
-		}
-		origin, ok := requestBrowserOrigin(c.Request)
-		if !ok || !isAllowedSessionOrigin(c.Request, origin) {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"success": false,
-				"code":    "AUTH_ORIGIN_FORBIDDEN",
-				"message": "request origin is not allowed",
-			})
-			return
-		}
-		c.Next()
+// IsConsoleOrigin reports whether a browser request comes from the console:
+// its Origin, or its Referer when it has no Origin, is on the backend's own
+// host or is a frontend origin. Refresh and logout accept the legacy refresh
+// cookie only from the console, as the cookie's origin check did.
+func IsConsoleOrigin(request *http.Request) bool {
+	origin, ok := requestBrowserOrigin(request)
+	if !ok {
+		return false
 	}
+	if parsed, err := url.Parse(origin); err == nil && strings.EqualFold(parsed.Host, request.Host) {
+		return true
+	}
+	return isFrontendOrigin(origin)
+}
+
+// isFrontendOrigin reports whether a normalized origin serves the console
+// frontend: it is in FRONTEND_ORIGINS or is the frontend address setting.
+func isFrontendOrigin(origin string) bool {
+	if slices.Contains(common.FrontendOrigins, origin) {
+		return true
+	}
+	frontend, err := common.NormalizeOrigin(system_setting.FrontendAddress)
+	return err == nil && frontend == origin
 }
 
 func requestBrowserOrigin(request *http.Request) (string, bool) {
@@ -56,21 +57,4 @@ func requestBrowserOrigin(request *http.Request) (string, bool) {
 	}
 	origin, err := common.NormalizeOrigin(referer.Scheme + "://" + referer.Host)
 	return origin, err == nil
-}
-
-func isAllowedSessionOrigin(request *http.Request, origin string) bool {
-	requestScheme := "http"
-	if request.TLS != nil {
-		requestScheme = "https"
-	}
-	requestOrigin, err := common.NormalizeOrigin(requestScheme + "://" + request.Host)
-	if err == nil && subtle.ConstantTimeCompare([]byte(origin), []byte(requestOrigin)) == 1 {
-		return true
-	}
-	for _, trustedOrigin := range common.SessionCookieTrustedURLs {
-		if subtle.ConstantTimeCompare([]byte(origin), []byte(trustedOrigin)) == 1 {
-			return true
-		}
-	}
-	return false
 }

@@ -9,7 +9,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
-	"github.com/gin-contrib/static"
 	"github.com/gin-gonic/gin"
 )
 
@@ -158,26 +157,13 @@ func rateLimitFactory(maxRequestNum int, duration int64, mark string) func(c *gi
 	}
 }
 
-// GlobalWebRateLimit limits dashboard pages and other fallback paths per IP.
-// Files that exist in the frontend build count against a separate static
-// limiter instead, so lazy-loaded chunks and icons do not use up the page
-// budget. The static limiter is disabled by default.
-func GlobalWebRateLimit(frontendFS static.ServeFileSystem) func(c *gin.Context) {
-	webLimit := defNext
+// GlobalWebRateLimit limits, per IP, the fallback paths no API or plugin
+// route claims.
+func GlobalWebRateLimit() func(c *gin.Context) {
 	if common.GlobalWebRateLimitEnable {
-		webLimit = rateLimitFactory(common.GlobalWebRateLimitNum, common.GlobalWebRateLimitDuration, "GW")
+		return rateLimitFactory(common.GlobalWebRateLimitNum, common.GlobalWebRateLimitDuration, "GW")
 	}
-	staticLimit := defNext
-	if common.GlobalStaticRateLimitEnable {
-		staticLimit = rateLimitFactory(common.GlobalStaticRateLimitNum, common.GlobalStaticRateLimitDuration, "GS")
-	}
-	return func(c *gin.Context) {
-		if frontendFS.Exists("/", c.Request.URL.Path) {
-			staticLimit(c)
-			return
-		}
-		webLimit(c)
-	}
+	return defNext
 }
 
 func GlobalAPIRateLimit() func(c *gin.Context) {

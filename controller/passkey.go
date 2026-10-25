@@ -358,7 +358,7 @@ func PasskeyLoginBegin(c *gin.Context) {
 }
 
 // @Summary		完成 Passkey 登录
-// @Description	成功后直接签发会话，不再要求二次登录验证：data 为访问令牌、登录会话和用户，并写入 new_api_refresh Cookie。
+// @Description	成功后直接签发会话，不再要求二次登录验证：data 为访问令牌、refresh_token、登录会话和用户。
 // @Tags			认证
 // @Param			body	body		passkeyFinishRequest	true	"开始登录返回的 flow_token 和 navigator.credentials.get 的结果"
 // @Success		200		{object}	common.ApiResponse{data=loginResult}

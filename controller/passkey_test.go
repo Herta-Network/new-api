@@ -243,7 +243,7 @@ func TestPasskeyDomainsRejectInvalidAssertions(t *testing.T) {
 			var result securityEnrollmentResponse
 			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
 			assert.False(t, result.Success, response.Body.String())
-			assert.Empty(t, response.Header().Values("Set-Cookie"))
+			assert.NotContains(t, response.Body.String(), "refresh_token")
 			count, err := model.CountActiveUserSessions(user.Id, time.Now().Unix())
 			require.NoError(t, err)
 			assert.EqualValues(t, 1, count)
@@ -298,12 +298,12 @@ func setupPasskeyDomainOptions(t *testing.T) {
 	require.NoError(t, model.DB.Delete(&model.Option{Key: "LegacyAccessTokenRetireAt"}).Error)
 	common.OptionMapRWMutex.RLock()
 	previousOptions := maps.Clone(common.OptionMap)
-	previousAddress := system_setting.ServerAddress
+	previousAddress, previousFrontendAddress := system_setting.ServerAddress, system_setting.FrontendAddress
 	common.OptionMapRWMutex.RUnlock()
 	t.Cleanup(func() {
 		common.OptionMapRWMutex.Lock()
 		common.OptionMap = previousOptions
-		system_setting.ServerAddress = previousAddress
+		system_setting.ServerAddress, system_setting.FrontendAddress = previousAddress, previousFrontendAddress
 		common.OptionMapRWMutex.Unlock()
 	})
 }
@@ -482,6 +482,30 @@ func TestPasskeyImplicitDomainChangesRetainPreviousTrust(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, change.RemovedRPIDs)
 	assert.Equal(t, "example.com", change.LegacyRPIDs)
+}
+
+func TestPasskeyImplicitDomainFollowsFrontendAddress(t *testing.T) {
+	setupSecurityEnrollmentTest(t)
+	setupPasskeyDomainOptions(t)
+	settings := system_setting.GetPasskeySettings()
+	settings.RPID, settings.LegacyRPIDs, settings.Origins = "", "", ""
+	system_setting.ServerAddress, system_setting.FrontendAddress = "https://example.com", ""
+	assert.Equal(t, []string{"example.com"}, system_setting.PasskeySettingsSnapshot().RelyingPartyIDs())
+
+	// Deploying the console apart moves the implicit website to the frontend
+	// while the old one stays trusted, so existing Passkeys keep working.
+	require.NoError(t, model.UpdateOption("FrontendAddress", "https://app.example.com"))
+	assert.Equal(t, "https://app.example.com", system_setting.FrontendAddress)
+	assert.Equal(t, "https://example.com", system_setting.ServerAddress)
+	assert.Equal(t, []string{"app.example.com", "example.com"}, system_setting.PasskeySettingsSnapshot().RelyingPartyIDs())
+	assert.Equal(t, "https://example.com,https://app.example.com", settings.Origins)
+
+	// The backend address no longer decides the console's Passkey domain.
+	require.NoError(t, model.UpdateOption("ServerAddress", "https://api.example.net"))
+	assert.Equal(t, []string{"app.example.com", "example.com"}, system_setting.PasskeySettingsSnapshot().RelyingPartyIDs())
+
+	assert.Error(t, model.UpdateOption("FrontendAddress", "https://app.example.com/console"))
+	assert.Equal(t, "https://app.example.com", system_setting.FrontendAddress)
 }
 
 func TestPasskeyRegistrationAndDomainRemovalSerialize(t *testing.T) {

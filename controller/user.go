@@ -62,7 +62,7 @@ func GetPasswordEncryptionKey(c *gin.Context) {
 }
 
 // @Summary		密码登录
-// @Description	username 可以是用户名或邮箱；开启登录密码加密时提交 password_encrypted 和 encryption_key_id 代替 password。成功时 data 为访问令牌、登录会话和用户，并写入 new_api_refresh Cookie。
+// @Description	username 可以是用户名或邮箱；开启登录密码加密时提交 password_encrypted 和 encryption_key_id 代替 password。成功时 data 为访问令牌、refresh_token、登录会话和用户。
 // @Description	账户需要二次登录验证时 data 改为 {require_verification: true, flow_token, expires_at, methods}，再用 POST /api/user/login/verify 或 /api/user/login/passkey/* 完成登录。
 // @Tags			认证
 // @Param			turnstile	query		string			false	"Turnstile 令牌，开启 Turnstile 时必填"
@@ -215,8 +215,8 @@ func setupLoginAtAuthVersion(user *model.User, expectedAuthVersion int64, c *gin
 }
 
 // loginResult is the data of a completed login or refresh: the access token,
-// the login session and the signed-in user. The refresh token goes into the
-// new_api_refresh cookie.
+// the refresh token the console keeps, the login session and the signed-in
+// user.
 type loginResult struct {
 	*service.AuthBundle
 	User selfUserData `json:"user"`
@@ -225,7 +225,7 @@ type loginResult struct {
 func writeLoginResponse(c *gin.Context, user *model.User, bundle *service.AuthBundle) {
 	c.Set("login_method", bundle.Session.LoginMethod)
 	model.UpdateUserLastLoginAt(user.Id)
-	service.WriteRefreshCookie(c, bundle.RefreshToken)
+	service.ClearLegacyRefreshCookies(c)
 	setAuthNoStore(c)
 	recordLoginAudit(user, c)
 	common.ApiSuccess(c, loginResult{AuthBundle: bundle, User: buildSelfUserData(user)})
@@ -1086,7 +1086,7 @@ func DeleteUser(c *gin.Context) {
 }
 
 // @Summary		注销账户
-// @Description	删除当前账户并清除 Refresh Cookie，data 为空对象；需要 scope 为 account.delete 的 X-Security-Proof，超级管理员不能注销。
+// @Description	删除当前账户，data 为空对象，前端随后应删除自己保存的令牌；需要 scope 为 account.delete 的 X-Security-Proof，超级管理员不能注销。
 // @Tags			个人
 // @Success		200	{object}	common.ApiResponse{data=object}
 // @Security		UserAuth && SecurityProof
@@ -1116,7 +1116,7 @@ func DeleteSelf(c *gin.Context) {
 		return
 	}
 	succeeded = true
-	service.ClearRefreshCookie(c)
+	service.ClearLegacyRefreshCookies(c)
 	common.ApiSuccess(c, struct{}{})
 }
 

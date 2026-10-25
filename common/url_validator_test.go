@@ -122,100 +122,42 @@ func TestValidateRedirectURL(t *testing.T) {
 	}
 }
 
-func resetSessionCookieSettingsAfterTest(t *testing.T) {
+func useFrontendOriginEnv(t *testing.T, frontendOrigins, legacyTrustedURL string) {
 	t.Helper()
-	t.Cleanup(func() {
-		SessionCookieSecure = false
-		SessionCookieTrustedURLs = nil
-	})
-}
-
-func TestInitSessionCookieSettingsDefaultsToInsecure(t *testing.T) {
-	resetSessionCookieSettingsAfterTest(t)
+	t.Setenv("FRONTEND_ORIGINS", frontendOrigins)
+	t.Setenv("SESSION_COOKIE_TRUSTED_URL", legacyTrustedURL)
 	t.Setenv("SESSION_COOKIE_SECURE", "")
-	t.Setenv("SESSION_COOKIE_TRUSTED_URL", "")
-
-	require.NoError(t, InitSessionCookieSettings())
-	assert.False(t, SessionCookieSecure)
-	assert.Empty(t, SessionCookieTrustedURLs)
+	t.Cleanup(func() { FrontendOrigins = nil })
 }
 
-func TestInitSessionCookieSettingsRequiresBothEnvVars(t *testing.T) {
-	t.Run("secure without trusted url", func(t *testing.T) {
-		resetSessionCookieSettingsAfterTest(t)
-		t.Setenv("SESSION_COOKIE_SECURE", "true")
-		t.Setenv("SESSION_COOKIE_TRUSTED_URL", "")
-
-		require.Error(t, InitSessionCookieSettings())
-	})
-
-	t.Run("trusted url without secure", func(t *testing.T) {
-		resetSessionCookieSettingsAfterTest(t)
-		t.Setenv("SESSION_COOKIE_SECURE", "")
-		t.Setenv("SESSION_COOKIE_TRUSTED_URL", "https://example.com")
-
-		require.Error(t, InitSessionCookieSettings())
-	})
+func TestInitFrontendOriginsDefaultsToNone(t *testing.T) {
+	useFrontendOriginEnv(t, "", "")
+	require.NoError(t, InitFrontendOrigins())
+	assert.Empty(t, FrontendOrigins)
 }
 
-func TestInitSessionCookieSettingsRequiresHTTPSURL(t *testing.T) {
-	resetSessionCookieSettingsAfterTest(t)
-	t.Setenv("SESSION_COOKIE_SECURE", "true")
-	t.Setenv("SESSION_COOKIE_TRUSTED_URL", "http://example.com")
-
-	require.Error(t, InitSessionCookieSettings())
+func TestInitFrontendOriginsMergesTheDeprecatedTrustedURL(t *testing.T) {
+	useFrontendOriginEnv(t, "https://APP.example.com:443, http://localhost:5173/", "https://app.example.com,https://admin.example.com:8443")
+	require.NoError(t, InitFrontendOrigins())
+	assert.Equal(t, []string{"https://app.example.com", "http://localhost:5173", "https://admin.example.com:8443"}, FrontendOrigins)
 }
 
-func TestInitSessionCookieSettingsEnablesSecureCookie(t *testing.T) {
-	resetSessionCookieSettingsAfterTest(t)
-	t.Setenv("SESSION_COOKIE_SECURE", "true")
-	t.Setenv("SESSION_COOKIE_TRUSTED_URL", "https://example.com")
-
-	require.NoError(t, InitSessionCookieSettings())
-	assert.True(t, SessionCookieSecure)
-	assert.Equal(t, []string{"https://example.com"}, SessionCookieTrustedURLs)
-}
-
-func TestInitSessionCookieSettingsAllowsMultipleTrustedURLs(t *testing.T) {
-	resetSessionCookieSettingsAfterTest(t)
-	t.Setenv("SESSION_COOKIE_SECURE", "true")
-	t.Setenv("SESSION_COOKIE_TRUSTED_URL", "https://example.com, https://admin.example.com")
-
-	require.NoError(t, InitSessionCookieSettings())
-	assert.True(t, SessionCookieSecure)
-	assert.Equal(t, []string{"https://example.com", "https://admin.example.com"}, SessionCookieTrustedURLs)
-}
-
-func TestInitSessionCookieSettingsRejectsEmptyTrustedURLInList(t *testing.T) {
-	resetSessionCookieSettingsAfterTest(t)
-	t.Setenv("SESSION_COOKIE_SECURE", "true")
-	t.Setenv("SESSION_COOKIE_TRUSTED_URL", "https://example.com,")
-
-	require.Error(t, InitSessionCookieSettings())
-}
-
-func TestInitSessionCookieSettingsNormalizesExactOrigins(t *testing.T) {
-	resetSessionCookieSettingsAfterTest(t)
-	t.Setenv("SESSION_COOKIE_SECURE", "true")
-	t.Setenv("SESSION_COOKIE_TRUSTED_URL", "https://EXAMPLE.com:443,https://admin.example.com:8443/")
-
-	require.NoError(t, InitSessionCookieSettings())
-	assert.Equal(t, []string{"https://example.com", "https://admin.example.com:8443"}, SessionCookieTrustedURLs)
-}
-
-func TestInitSessionCookieSettingsRejectsNonOriginURLs(t *testing.T) {
-	for _, trustedURL := range []string{
+func TestInitFrontendOriginsRejectsNonOriginEntries(t *testing.T) {
+	for _, value := range []string{
+		"https://example.com,",
 		"https://*.example.com",
 		"https://user@example.com",
 		"https://example.com/admin",
 		"https://example.com?next=admin",
 		"https://example.com#admin",
+		"ftp://example.com",
+		"null",
 	} {
-		t.Run(trustedURL, func(t *testing.T) {
-			resetSessionCookieSettingsAfterTest(t)
-			t.Setenv("SESSION_COOKIE_SECURE", "true")
-			t.Setenv("SESSION_COOKIE_TRUSTED_URL", trustedURL)
-			require.Error(t, InitSessionCookieSettings())
+		t.Run(value, func(t *testing.T) {
+			useFrontendOriginEnv(t, value, "")
+			require.Error(t, InitFrontendOrigins())
 		})
 	}
+	useFrontendOriginEnv(t, "", "https://example.com/admin")
+	require.Error(t, InitFrontendOrigins(), "the deprecated variable is validated the same way")
 }

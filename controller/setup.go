@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -54,7 +55,7 @@ func GetSetup(c *gin.Context) {
 }
 
 //	@Summary		初始化系统
-//	@Description	只在系统未初始化时可用。尚无超级管理员时用 username、password 创建 root 账户（用户名最多 12 个字符），并保存自用模式和演示站点模式。
+//	@Description	只在系统未初始化时可用。尚无超级管理员时用 username、password 创建 root 账户（用户名最多 12 个字符），并保存自用模式和演示站点模式。浏览器发起的请求会把它的 Origin 记为「前端地址」（尚未设置时）。
 //	@Tags			系统
 //	@Param			body	body		SetupRequest	true	"超级管理员账户和运营模式"
 //	@Success		200		{object}	common.ApiResponse
@@ -135,6 +136,18 @@ func PostSetup(c *gin.Context) {
 	if err != nil {
 		common.ApiErrorT(c, "Failed to save the demo site mode setting: {{error}}", map[string]any{"error": err.Error()})
 		return
+	}
+
+	// The console calls the backend from its own origin: record it as the
+	// Frontend Address, which CORS and the links into the console use. A
+	// request without a browser Origin, such as curl, leaves the setting for
+	// the administrator.
+	if !rootExists && system_setting.FrontendAddress == "" {
+		if origin, err := common.NormalizeOrigin(c.GetHeader("Origin")); err == nil {
+			if err := model.SetFrontendAddressAtSetup(origin); err != nil {
+				common.SysError(common.LogText("failed to record the frontend address at setup: %s", err.Error()))
+			}
+		}
 	}
 
 	// Update setup status

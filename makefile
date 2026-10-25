@@ -1,6 +1,4 @@
-WEB_DIR = ./web
 API_DIR = .
-DEV_WEB_PORT ?= 5173
 DEV_COMPOSE_FILE = docker-compose.dev.yml
 DEV_POSTGRES_SERVICE = postgres
 DEV_API_SERVICE = new-api
@@ -9,16 +7,11 @@ DEV_POSTGRES_USER = root
 TEST_DB_CONTAINER = new-api-test-postgres
 TEST_DB_PORT ?= 55432
 
-.PHONY: all build-web build-all-web start-api dev dev-api dev-api-rebuild dev-web reset-setup test test-db migration openapi
+# The web console lives in the new-api-frontend repository; this repository
+# builds and runs the backend only.
+.PHONY: all start-api dev dev-api dev-api-rebuild reset-setup test test-db migration openapi lint-plugins format-plugins format-plugins-check
 
-all: build-all-web start-api
-
-build-web:
-	@echo "Building web frontend..."
-	@cd $(WEB_DIR) && bun install --frozen-lockfile
-	@cd $(WEB_DIR) && DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$$(cat ../VERSION) bun run build
-
-build-all-web: build-web
+all: start-api
 
 start-api:
 	@echo "Starting api dev server..."
@@ -32,15 +25,22 @@ dev-api-rebuild:
 	@echo "Rebuilding and starting api service (docker)..."
 	@docker compose -f $(DEV_COMPOSE_FILE) up -d --build $(DEV_API_SERVICE)
 
-dev-web:
-	@echo "Starting web frontend dev server..."
-	@echo "Web frontend: http://localhost:$(DEV_WEB_PORT)"
-	@cd $(WEB_DIR) && bun install
-	@cd $(WEB_DIR) && bun run dev -- --host 0.0.0.0 --port $(DEV_WEB_PORT)
+dev: dev-api
 
-dev: dev-api dev-web
+# JavaScript task plugins are linted and formatted with the oxlint and oxfmt
+# versions new-api-frontend locks.
+OXLINT_VERSION = 1.74.0
+OXFMT_VERSION = 0.72.0
 
-# The main package embeds the ignored web/dist output and is covered after build-web.
+lint-plugins:
+	@cd plugins && bunx oxlint@$(OXLINT_VERSION) -c .oxlintrc.json .
+
+format-plugins:
+	@cd plugins && bunx oxfmt@$(OXFMT_VERSION) -c .oxfmtrc.json --write .
+
+format-plugins-check:
+	@cd plugins && bunx oxfmt@$(OXFMT_VERSION) -c .oxfmtrc.json --check .
+
 # Database tests need a PostgreSQL 18 server: run `make test-db` and export the
 # TEST_POSTGRES_DSN it prints, or point it at any UTF8 database you can create
 # schemas in.
@@ -50,9 +50,7 @@ test:
 		exit 1; \
 	fi
 	@echo "Testing root Go module..."
-	@root_module=$$(GOWORK=off go list -m); \
-		root_packages=$$(GOWORK=off go list -e ./... | grep -vxF "$$root_module"); \
-		GOWORK=off go test -count=1 $$root_packages
+	@GOWORK=off go test -count=1 ./...
 	@echo "Testing relaykit Go module..."
 	@cd relaykit && GOWORK=off go test -count=1 ./...
 	@echo "Testing tokenkit Go module..."

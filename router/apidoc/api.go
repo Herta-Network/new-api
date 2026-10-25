@@ -16,7 +16,9 @@ import _ "github.com/QuantumNous/new-api/router"
 //	@description
 //	@description	响应：除另有说明外，响应体是 common.ApiResponse：success 表示是否成功，message 是提示文本，data 是数据。业务失败通常仍返回 HTTP 200，success 为 false；鉴权失败返回 401 或 403，并带 code（如 AUTH_UNAUTHORIZED）。
 //	@description
-//	@description	鉴权：Authorization: Bearer <访问令牌>。访问令牌是登录得到的 15 分钟 JWT（用 POST /api/user/auth/refresh 凭 new_api_refresh Cookie 续期），或在安全设置里创建的个人访问令牌（PAT）。UserAuth、AdminAuth、RootAuth 是同一个请求头，区别在要求的角色。删除账户、绑定账号等敏感操作还要带 X-Security-Proof，先用 POST /api/verify 完成二次验证取得。
+//	@description	鉴权：Authorization: Bearer <访问令牌>。访问令牌是登录得到的 15 分钟 JWT（用 POST /api/user/auth/refresh 凭登录时返回的 refresh_token 续期，每次续期都换发新的 refresh_token），或在安全设置里创建的个人访问令牌（PAT）。UserAuth、AdminAuth、RootAuth 是同一个请求头，区别在要求的角色。删除账户、绑定账号等敏感操作还要带 X-Security-Proof，先用 POST /api/verify 完成二次验证取得。
+//	@description
+//	@description	跨域：前后端分开部署时，/api 和 /pg 只对环境变量 FRONTEND_ORIGINS 和系统设置「前端地址」里的来源返回 CORS 头，不带凭证；/api/usage/token 和 /api/log/token 与 AI 接口一样允许任意来源。
 //	@BasePath		/
 //	@accept			json
 //	@produce		json
