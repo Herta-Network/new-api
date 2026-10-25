@@ -110,14 +110,17 @@ func (f *checkoutFailure) Unwrap() error { return f.err }
 
 // checkoutThrough starts the payment of a pending order through the first
 // of channels that can, invoicing the order anew through each; invoice, when
-// given, is the order's invoice through channels[0]. The invoice of a channel
-// that fails is closed without asking its gateway, since the buyer never got
-// it and a payment that arrives anyway still settles, and the next channel
-// whose checkout reaches its provider is tried: a channel that only
-// redirects is never switched to, because its failures cannot be seen. A
-// failure counts towards the channel's breaker unless the gateway words it
-// for the buyer, or it is the renewal of a checkout that started before
-// (countFirst false), which a gateway may refuse without being down.
+// given, is the order's invoice through channels[0]. When a channel fails,
+// the next channel whose checkout reaches its provider is tried: a channel
+// that only redirects is never switched to, because its failures cannot be
+// seen. The failed invoice is closed without asking its gateway when its
+// checkout started in this call, since the buyer never got it and a payment
+// that arrives anyway still settles; one whose checkout the buyer got before
+// stays pending, so the order's close still asks its gateway about it. A
+// failure counts towards the channel's breaker unless the provider refused
+// the request or worded it for the buyer, or it is the renewal of a checkout
+// that started before (countFirst false), which a gateway may refuse without
+// being down.
 func checkoutThrough(ctx context.Context, order *entity.PaymentOrder, invoice *entity.PaymentInvoice, channels []channel, countFirst bool) (*Checkout, error) {
 	failure := errCheckoutFailed
 	tried := 0
@@ -139,6 +142,7 @@ func checkoutThrough(ctx context.Context, order *entity.PaymentOrder, invoice *e
 			invoice = issued
 		}
 		tried++
+		handedOut := invoice.PaymentCurrency != ""
 		checkout, err := startCheckout(ctx, order, invoice, candidate.method)
 		var failed *checkoutFailure
 		if !errors.As(err, &failed) {
@@ -149,13 +153,17 @@ func checkoutThrough(ctx context.Context, order *entity.PaymentOrder, invoice *e
 		}
 		logger.LogWarn(ctx, common.LogText("payment channel %d could not start invoice %s: %v", candidate.method.Id, invoice.InvoiceNo, failed.err))
 		var message *common.Message
-		if errors.As(failed.err, &message) {
+		switch {
+		case errors.As(failed.err, &message):
 			failure = message
-		} else if i > 0 || countFirst {
+		case errors.Is(failed.err, gateway.ErrRefused):
+		case i > 0 || countFirst:
 			checkoutFailed(candidate.method.Id, failed.err)
 		}
-		if _, err := store.CloseInvoice(invoice, false, closeReasonFailed); err != nil {
-			return nil, err
+		if !handedOut {
+			if _, err := store.CloseInvoice(invoice, false, closeReasonFailed); err != nil {
+				return nil, err
+			}
 		}
 		invoice = nil
 	}
@@ -166,8 +174,10 @@ func checkoutThrough(ctx context.Context, order *entity.PaymentOrder, invoice *e
 // buyer who lost the payment page or did not get through it. Its latest
 // pending invoice is checked out again when its channel is enabled and not
 // tripped; otherwise the order is invoiced through its payment option's
-// channels, those it already tried last, and the replaced invoice is closed
-// through its gateway first so it takes no payment any more.
+// channels, those it already tried last. The replaced invoice is closed
+// through its gateway as the system would close it, so it takes no payment
+// any more; one the gateway cannot confirm stays pending, and the order's
+// close asks about it again.
 func ResumeCheckout(ctx context.Context, userId int, orderNo string) (*Checkout, error) {
 	order, err := UserOrder(userId, orderNo)
 	if err != nil {
@@ -210,7 +220,7 @@ func ResumeCheckout(ctx context.Context, userId int, orderNo string) (*Checkout,
 		return checkoutThrough(ctx, order, latest, channels, latest.PaymentCurrency == "")
 	}
 	if latest != nil {
-		settled, err := closeInvoice(ctx, order, latest, true, closeReasonReplaced)
+		settled, err := closeInvoice(ctx, order, latest, false, closeReasonReplaced)
 		if settled != nil {
 			return &Checkout{Type: CheckoutTypePaid, OrderNo: order.OrderNo}, nil
 		}

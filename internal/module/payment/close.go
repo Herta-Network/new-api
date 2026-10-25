@@ -108,7 +108,10 @@ func closeInvoice(ctx context.Context, order *entity.PaymentOrder, invoice *enti
 
 // SyncOrder asks the gateways whether an invoice of a pending or closed
 // order was paid and settles the order if so; nothing changes at the
-// gateways. It returns the order as it is afterwards.
+// gateways. An invoice whose channel failed to start it was never handed to
+// the buyer and is not asked about, and a gateway that cannot answer does
+// not keep the others from being asked; its error is returned only when no
+// gateway answered. It returns the order as it is afterwards.
 func SyncOrder(ctx context.Context, order *entity.PaymentOrder, clientIp string) (*entity.PaymentOrder, error) {
 	if (order.Status != entity.PaymentOrderPending && order.Status != entity.PaymentOrderClosed) || order.Platform == entity.PaymentPlatformBalance {
 		return order, nil
@@ -117,9 +120,12 @@ func SyncOrder(ctx context.Context, order *entity.PaymentOrder, clientIp string)
 	if err != nil {
 		return nil, err
 	}
+	var failure error
+	answered := false
 	for _, invoice := range invoices {
-		// Only a checkout that started can have been paid.
-		if invoice.Status == entity.PaymentInvoicePaid || invoice.PaymentCurrency == "" {
+		// Only a checkout that started and reached the buyer can have been
+		// paid.
+		if invoice.Status == entity.PaymentInvoicePaid || invoice.PaymentCurrency == "" || invoice.CloseReason == closeReasonFailed {
 			continue
 		}
 		method, err := store.GetMethodIncludingDeleted(invoice.PaymentMethodId)
@@ -127,16 +133,23 @@ func SyncOrder(ctx context.Context, order *entity.PaymentOrder, clientIp string)
 			return nil, err
 		}
 		gw, err := openGateway(method)
-		if err != nil {
-			return nil, fmt.Errorf("open the gateway of payment method %d: %w", method.Id, err)
+		if err == nil {
+			var tradeNo string
+			if tradeNo, err = gw.QueryPayment(ctx, invoiceView(order, invoice)); err == nil {
+				if tradeNo != "" {
+					return settleConfirmed(order, invoice, tradeNo, clientIp)
+				}
+				answered = true
+				continue
+			}
 		}
-		tradeNo, err := gw.QueryPayment(ctx, invoiceView(order, invoice))
-		if err != nil {
-			return nil, err
+		logger.LogDebug(ctx, "payment invoice %s could not be checked: %v", invoice.InvoiceNo, err)
+		if failure == nil {
+			failure = err
 		}
-		if tradeNo != "" {
-			return settleConfirmed(order, invoice, tradeNo, clientIp)
-		}
+	}
+	if failure != nil && !answered {
+		return nil, failure
 	}
 	return order, nil
 }

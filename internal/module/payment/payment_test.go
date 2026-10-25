@@ -387,8 +387,16 @@ func TestCheckoutSwitchesChannels(t *testing.T) {
 	healthNow = func() time.Time { return now }
 	useEPayAPI(t)
 	addChannel(t, 20, testEPayMethod, gateway.PlatformStripe, 0, 0, 1, 1)
-	f.epay.setPayment(http.StatusBadGateway, `bad gateway`)
 
+	// A gateway that refuses one order is switched away from but not held
+	// against the channel.
+	f.epay.setPayment(0, `{"code":-1,"msg":"amount below the minimum"}`)
+	_, checkout, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	require.NoError(t, err)
+	assert.Equal(t, gateway.ActionStripe, checkout.Type)
+	assert.Nil(t, channelHealth(testEPayMethod))
+
+	f.epay.setPayment(http.StatusBadGateway, `bad gateway`)
 	order, checkout, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
 	require.NoError(t, err)
 	assert.Equal(t, gateway.ActionStripe, checkout.Type)
@@ -438,7 +446,9 @@ func TestCheckoutNeverSwitchesToPaymentPages(t *testing.T) {
 
 // A buyer who pays again gets other channels first: a new order after one
 // that was not paid, and a resumed order whose channel can no longer take
-// it, which replaces its invoice and closes the old one at its gateway.
+// it, which gets a new invoice. The old invoice is closed only when its
+// gateway confirms it was not paid; a young EPay V1 order cannot be, so it
+// stays pending for the order's close to ask about again.
 func TestPayingAgainTriesOtherChannelsFirst(t *testing.T) {
 	f := setupPayment(t)
 	ctx := context.Background()
@@ -465,9 +475,69 @@ func TestPayingAgainTriesOtherChannelsFirst(t *testing.T) {
 	assert.Equal(t, gateway.ActionURL, resumed.Type)
 	assert.Equal(t, order.OrderNo, resumed.OrderNo)
 	assert.Equal(t, [][]any{
-		{order.OrderNo, testEPayMethod, entity.PaymentInvoiceClosed, "replaced"},
+		{order.OrderNo, testEPayMethod, entity.PaymentInvoicePending, ""},
 		{order.OrderNo + "R2", 22, entity.PaymentInvoicePending, ""},
 	}, invoiceStates(t, order.OrderNo))
+}
+
+// A renewed checkout that its gateway refuses hands the buyer another
+// channel, but the invoice the buyer already holds stays payable and is
+// still asked about: checking the order finds its payment.
+func TestRenewalKeepsTheInvoiceTheBuyerHolds(t *testing.T) {
+	f := setupPayment(t)
+	ctx := context.Background()
+	useEPayAPI(t)
+	addChannel(t, 20, testEPayMethod, gateway.PlatformStripe, 0, 0, 1, 1)
+	f.epay.setPayment(0, `{"code":1,"trade_no":"T1","payurl":"https://pay.example/pay/T1"}`)
+	order, _, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	require.NoError(t, err)
+
+	f.epay.setPayment(0, `{"code":-1,"msg":"order number exists"}`)
+	resumed, err := ResumeCheckout(ctx, testUser, order.OrderNo)
+	require.NoError(t, err)
+	assert.Equal(t, gateway.ActionStripe, resumed.Type)
+	assert.Equal(t, [][]any{
+		{order.OrderNo, testEPayMethod, entity.PaymentInvoicePending, ""},
+		{order.OrderNo + "R2", 20, entity.PaymentInvoicePending, ""},
+	}, invoiceStates(t, order.OrderNo))
+	assert.Nil(t, channelHealth(testEPayMethod), "a refused renewal says nothing of the channel")
+
+	stored, err := store.GetOrderByNo(order.OrderNo)
+	require.NoError(t, err)
+	invoice, err := store.GetInvoiceByNo(order.OrderNo)
+	require.NoError(t, err)
+	f.epay.set(0, `{"code":1,"pid":"1001","trade_no":"T1","out_trade_no":"`+order.OrderNo+`","type":"alipay","money":"`+gateway.FormatAmount(invoice.PaymentAmount)+`","status":1}`)
+	synced, err := SyncOrder(ctx, stored, "")
+	require.NoError(t, err)
+	assert.Equal(t, entity.PaymentOrderFinished, synced.Status)
+	assert.Equal(t, "T1", synced.TradeNo)
+}
+
+// Checking an order skips the invoices whose channel failed to start them,
+// which no buyer got and which their gateways may not know, and a gateway
+// that cannot answer keeps the others from nothing.
+func TestSyncAsksEveryInvoiceThatReachedTheBuyer(t *testing.T) {
+	f := setupPayment(t)
+	ctx := context.Background()
+	useEPayAPI(t)
+	addChannel(t, 20, testEPayMethod, gateway.PlatformStripe, 0, 0, 1, 1)
+	f.epay.setPayment(http.StatusBadGateway, `bad gateway`)
+	order, _, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	require.NoError(t, err)
+	f.epay.set(http.StatusInternalServerError, `{}`)
+
+	stored, err := store.GetOrderByNo(order.OrderNo)
+	require.NoError(t, err)
+	synced, err := SyncOrder(ctx, stored, "")
+	require.NoError(t, err, "the failed EPay invoice is not asked about")
+	assert.Equal(t, entity.PaymentOrderPending, synced.Status)
+	invoice, err := store.GetInvoiceByNo(order.OrderNo + "R2")
+	require.NoError(t, err)
+	f.stripe.Set(invoice.TradeNo, "status", "succeeded")
+	f.stripe.Set(invoice.TradeNo, "amount_received", invoice.PaymentAmount)
+	synced, err = SyncOrder(ctx, stored, "")
+	require.NoError(t, err)
+	assert.Equal(t, entity.PaymentOrderFinished, synced.Status)
 }
 
 // Buyers see payment options, the prices they take and their fees, never

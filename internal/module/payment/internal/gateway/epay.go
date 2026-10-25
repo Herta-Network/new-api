@@ -19,7 +19,8 @@
 // the buyer leaves and can answer with a QR code; answers read the code,
 // pid and status as numbers or strings; the order name is cut to what the
 // gateway keeps; transport failures of requests without the merchant key in
-// their URL keep their cause.
+// their URL keep their cause; a payment the gateway turns down is marked
+// refused.
 
 package gateway
 
@@ -306,7 +307,7 @@ func (g *epayGateway) createV1Payment(ctx context.Context, params map[string]str
 		return nil, fmt.Errorf("decode EPay payment answer: %w", err)
 	}
 	if response.Code != "1" {
-		return nil, fmt.Errorf("EPay refused the payment of order %s: code=%s msg=%q", params["out_trade_no"], response.Code, response.Msg)
+		return nil, Refused(fmt.Errorf("EPay refused the payment of order %s: code=%s msg=%q", params["out_trade_no"], response.Code, response.Msg))
 	}
 	if response.TradeNo == "" {
 		return nil, fmt.Errorf("EPay payment answer of order %s has no trade number", params["out_trade_no"])
