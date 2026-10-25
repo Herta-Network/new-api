@@ -658,9 +658,10 @@ describe('payment methods', () => {
       await screen.findByRole('row', { name: /Stripe account/ })
     )
     expect(tripped.getByText(/^Tripped until /)).toBeVisible()
+    // Hovering shows the innermost title, so the badge itself names the error.
     expect(
-      tripped.getByTitle('EPay payment returned HTTP 502')
-    ).toHaveTextContent(/^Tripped until /)
+      tripped.getByText(/^Tripped until /).closest('[title]')
+    ).toHaveAttribute('title', 'EPay payment returned HTTP 502')
     const page = within(screen.getByRole('row', { name: /EPay merchant A/ }))
     expect(page.getByText('Payment page, not switched to')).toBeVisible()
     expect(page.queryByText(/^Tripped until /)).not.toBeInTheDocument()

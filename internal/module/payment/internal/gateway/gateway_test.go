@@ -750,15 +750,17 @@ func epayV2Config(checkout, paymentType string) string {
 		`","private_key":"` + epayV2PrivateDER() + `","platform_public_key":"` + epayV2PlatformPublicKey() + `"}`
 }
 
-// signEPayV2 signs params with key, adding the current timestamp unless
-// params carry one.
+// signEPayV2 signs params with key, adding the current timestamp and the
+// RSA sign_type unless params carry them.
 func signEPayV2(t *testing.T, key *rsa.PrivateKey, params map[string]string) map[string]string {
 	t.Helper()
 	signed := maps.Clone(params)
 	if _, ok := signed["timestamp"]; !ok {
 		signed["timestamp"] = strconv.FormatInt(time.Now().Unix(), 10)
 	}
-	signed["sign_type"] = "RSA"
+	if _, ok := signed["sign_type"]; !ok {
+		signed["sign_type"] = "RSA"
+	}
 	canonical, err := epayV2Canonical(signed)
 	require.NoError(t, err)
 	digest := sha256.Sum256([]byte(canonical))
@@ -782,7 +784,8 @@ func verifiesEPayV2(t *testing.T, key *rsa.PublicKey, params map[string]string) 
 // epayV2Server is an EPay V2 gateway that checks every request's merchant
 // signature and answers with what answer returns for its API path, signed
 // with the platform's key when sign is set. Integer values are sent as JSON
-// numbers.
+// numbers, and a blank sign_type is left out, as gateways that default it to
+// RSA answer.
 func epayV2Server(t *testing.T, config string, answer func(path string, params map[string]string) (fields map[string]string, sign bool)) Gateway {
 	t.Helper()
 	keys := epayV2TestKeys()
@@ -796,6 +799,9 @@ func epayV2Server(t *testing.T, config string, answer func(path string, params m
 		}
 		body := map[string]any{}
 		for key, value := range fields {
+			if key == "sign_type" && value == "" {
+				continue
+			}
 			if number, err := strconv.Atoi(value); err == nil && key != "trade_no" && key != "out_trade_no" && key != "timestamp" {
 				body[key] = number
 				continue
@@ -821,7 +827,8 @@ func TestEPayV2Canonical(t *testing.T) {
 }
 
 // The payment page and an API order are signed with the merchant's key; the
-// gateway's answer must carry its own valid, fresh signature.
+// gateway's answer must carry its own valid, fresh signature. Its sign_type
+// defaults to RSA: gateways such as NiuNiu Pay leave it out.
 func TestEPayV2Checkout(t *testing.T) {
 	keys := epayV2TestKeys()
 	order := &Order{OrderNo: "order-1", PaymentAmount: 1990, PaymentCurrency: "CNY", ClientIP: "203.0.113.9"}
@@ -852,6 +859,8 @@ func TestEPayV2Checkout(t *testing.T) {
 	}{
 		{"payment page", created, true, &Action{Type: ActionURL, URL: "https://pay.example/pay/T1"}},
 		{"QR code", withField(created, "pay_type", "qrcode", "pay_info", "https://qr.alipay.com/abc"), true, &Action{Type: ActionQRCode, QRCode: "https://qr.alipay.com/abc"}},
+		{"no signature type", withField(created, "sign_type", ""), true, &Action{Type: ActionURL, URL: "https://pay.example/pay/T1"}},
+		{"another signature type", withField(created, "sign_type", "MD5"), true, nil},
 		{"unsigned success", created, false, nil},
 		{"stale signature", withField(created, "timestamp", strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10)), true, nil},
 		{"another merchant", withField(created, "pid", "2002"), true, nil},
@@ -909,6 +918,10 @@ func TestEPayV2Callback(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, Notice{OrderNo: "order-1", TradeNo: "T1", Amount: 1990, Currency: "CNY", Paid: true, Status: "TRADE_SUCCESS",
 		Details: map[string]string{"type": "alipay"}}, *notice)
+	unlabelled := signEPayV2(t, platform, callback)
+	delete(unlabelled, "sign_type")
+	_, err = gw.ParseCallback(ctx, Notification{Params: unlabelled})
+	require.NoError(t, err, "sign_type defaults to RSA")
 
 	tampered := signEPayV2(t, platform, callback)
 	tampered["money"] = "0.01"
@@ -919,6 +932,7 @@ func TestEPayV2Callback(t *testing.T) {
 		"stale":            signEPayV2(t, platform, stale),
 		"merchant key":     signEPayV2(t, epayV2TestKeys()[0], callback),
 		"MD5":              md5Signed,
+		"MD5 sign_type":    signEPayV2(t, platform, withField(callback, "sign_type", "MD5")),
 		"another merchant": signEPayV2(t, platform, withField(callback, "pid", "2002")),
 		"another type":     signEPayV2(t, platform, withField(callback, "type", "wxpay")),
 		"not paid":         signEPayV2(t, platform, withField(callback, "trade_status", "WAIT_BUYER_PAY")),

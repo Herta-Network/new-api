@@ -155,10 +155,15 @@ func (g *epayGateway) signV2(params map[string]string) (url.Values, error) {
 }
 
 // verifyV2 checks a message the gateway signed: its signature, a timestamp
-// within epayV2ClockSkew, and the merchant id when it names one.
+// within epayV2ClockSkew, and the merchant id when it names one. The
+// sign_type defaults to RSA, and gateways such as NiuNiu Pay leave it out;
+// the signature does not cover it.
 func (g *epayGateway) verifyV2(params map[string]string) error {
-	if params["sign_type"] != "RSA" {
-		return errors.New("unsupported signature type")
+	if signType := params["sign_type"]; signType != "" && !strings.EqualFold(signType, "RSA") {
+		return fmt.Errorf("unsupported signature type %q", signType)
+	}
+	if params["sign"] == "" {
+		return errors.New("the message is not signed")
 	}
 	signature, err := base64.StdEncoding.Strict().DecodeString(params["sign"])
 	if err != nil || len(signature) == 0 {
