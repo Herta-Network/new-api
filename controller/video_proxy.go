@@ -60,6 +60,16 @@ func videoProxyError(c *gin.Context, status int, errType, message string) {
 	})
 }
 
+// @Summary		下载视频内容
+// @Description	任务成功后由网关代为拉取视频并原样转发，支持 Range 续传和 HEAD；上游状态 200、206、304、416 会原样返回。任务未完成时返回 400，内容已失效时返回 410。
+// @Tags			视频
+// @Produce		octet-stream
+// @Param			task_id	path		string	true	"任务 ID"
+// @Param			Range	header		string	false	"字节范围；If-Range、If-None-Match、If-Modified-Since 也会转发给上游"
+// @Success		200		{file}		file	"视频内容"
+// @Security		TokenAuth
+// @Router			/v1/videos/{task_id}/content [get]
+// @Router			/v1/videos/{task_id}/content [head]
 func VideoProxy(c *gin.Context) {
 	taskID := c.Param("task_id")
 	if taskID == "" {

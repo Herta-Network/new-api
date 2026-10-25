@@ -213,6 +213,28 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 	}, nil
 }
 
+// openAIModelListResponse is the model list in the OpenAI format.
+type openAIModelListResponse struct {
+	Success bool               `json:"success"`
+	Data    []dto.OpenAIModels `json:"data"`
+	Object  string             `json:"object"`
+}
+
+// anthropicModelListResponse is the model list in the Anthropic format.
+type anthropicModelListResponse struct {
+	Data    []dto.AnthropicModel `json:"data"`
+	FirstID string               `json:"first_id"`
+	HasMore bool                 `json:"has_more"`
+	LastID  string               `json:"last_id"`
+}
+
+// geminiModelListResponse is the model list in the Gemini format; the list
+// is never paged, so nextPageToken is always null.
+type geminiModelListResponse struct {
+	Models        []dto.GeminiModel `json:"models"`
+	NextPageToken *string           `json:"nextPageToken"`
+}
+
 func ListModels(c *gin.Context, modelType int) {
 	userModelNames := make([]string, 0)
 	groups, err := getModelListGroups(c)
@@ -271,11 +293,11 @@ func ListModels(c *gin.Context, modelType int) {
 			firstID = useranthropicModels[0].ID
 			lastID = useranthropicModels[len(useranthropicModels)-1].ID
 		}
-		c.JSON(200, gin.H{
-			"data":     useranthropicModels,
-			"first_id": firstID,
-			"has_more": false,
-			"last_id":  lastID,
+		c.JSON(200, anthropicModelListResponse{
+			Data:    useranthropicModels,
+			FirstID: firstID,
+			HasMore: false,
+			LastID:  lastID,
 		})
 	case constant.ChannelTypeGemini:
 		userGeminiModels := make([]dto.GeminiModel, len(userOpenAiModels))
@@ -285,15 +307,15 @@ func ListModels(c *gin.Context, modelType int) {
 				DisplayName: model.Id,
 			}
 		}
-		c.JSON(200, gin.H{
-			"models":        userGeminiModels,
-			"nextPageToken": nil,
+		c.JSON(200, geminiModelListResponse{
+			Models:        userGeminiModels,
+			NextPageToken: nil,
 		})
 	default:
-		c.JSON(200, gin.H{
-			"success": true,
-			"data":    userOpenAiModels,
-			"object":  "list",
+		c.JSON(200, openAIModelListResponse{
+			Success: true,
+			Data:    userOpenAiModels,
+			Object:  "list",
 		})
 	}
 }
@@ -386,8 +408,6 @@ func RetrieveModel(c *gin.Context, modelType int) {
 			Param:   "model",
 			Code:    "model_not_found",
 		}
-		c.JSON(200, gin.H{
-			"error": openAIError,
-		})
+		c.JSON(200, OpenAIErrorResponse{Error: openAIError})
 	}
 }

@@ -69,6 +69,18 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
 	return err
 }
 
+// OpenAIErrorResponse is the error body of the relay routes outside the
+// Claude and Midjourney protocols.
+type OpenAIErrorResponse struct {
+	Error types.OpenAIError `json:"error"`
+}
+
+// ClaudeErrorResponse is the error body of the Claude protocol routes.
+type ClaudeErrorResponse struct {
+	Type  string            `json:"type"`
+	Error types.ClaudeError `json:"error"`
+}
+
 func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	requestId := c.GetString(common.RequestIdKey)
@@ -108,13 +120,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			case types.RelayFormatOpenAIRealtime:
 				helper.WssError(c, ws, newAPIError.ToOpenAIError(upstreamURLs...))
 			case types.RelayFormatClaude:
-				c.JSON(newAPIError.StatusCode, gin.H{
-					"type":  "error",
-					"error": newAPIError.ToClaudeError(upstreamURLs...),
+				c.JSON(newAPIError.StatusCode, ClaudeErrorResponse{
+					Type:  "error",
+					Error: newAPIError.ToClaudeError(upstreamURLs...),
 				})
 			default:
-				c.JSON(newAPIError.StatusCode, gin.H{
-					"error": newAPIError.ToOpenAIError(upstreamURLs...),
+				c.JSON(newAPIError.StatusCode, OpenAIErrorResponse{
+					Error: newAPIError.ToOpenAIError(upstreamURLs...),
 				})
 			}
 		}
@@ -252,7 +264,7 @@ func writeRelayStreamError(c *gin.Context, format types.RelayFormat, apiError *t
 		_ = helper.ClaudeData(c, dto.ClaudeResponse{Type: "error", Error: apiError.ToClaudeError(upstreamURLs...)})
 		return
 	}
-	_ = helper.ObjectData(c, gin.H{"error": apiError.ToOpenAIError(upstreamURLs...)})
+	_ = helper.ObjectData(c, OpenAIErrorResponse{Error: apiError.ToOpenAIError(upstreamURLs...)})
 	helper.Done(c)
 }
 
@@ -262,11 +274,11 @@ func writeRelayStreamError(c *gin.Context, format types.RelayFormat, apiError *t
 func CountClaudeTokens(c *gin.Context) {
 	request, err := helper.GetAndValidateClaudeRequest(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"type": "error",
-			"error": gin.H{
-				"type":    "invalid_request_error",
-				"message": common.MessageWithRequestId(err.Error(), c.GetString(common.RequestIdKey)),
+		c.JSON(http.StatusBadRequest, ClaudeErrorResponse{
+			Type: "error",
+			Error: types.ClaudeError{
+				Type:    "invalid_request_error",
+				Message: common.MessageWithRequestId(err.Error(), c.GetString(common.RequestIdKey)),
 			},
 		})
 		return
@@ -275,11 +287,11 @@ func CountClaudeTokens(c *gin.Context) {
 	info := relaycommon.GenRelayInfoClaude(c, request)
 	inputTokens, err := service.CountRequestToken(c, request.GetTokenCountMeta(), info)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"type": "error",
-			"error": gin.H{
-				"type":    "api_error",
-				"message": common.MessageWithRequestId(err.Error(), c.GetString(common.RequestIdKey)),
+		c.JSON(http.StatusInternalServerError, ClaudeErrorResponse{
+			Type: "error",
+			Error: types.ClaudeError{
+				Type:    "api_error",
+				Message: common.MessageWithRequestId(err.Error(), c.GetString(common.RequestIdKey)),
 			},
 		})
 		return
@@ -333,6 +345,14 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	service.ProcessChannelError(c, channelError, err, relayInfo)
 }
 
+// MidjourneyErrorResponse is the error body of the Midjourney routes; code is
+// the midjourney-proxy result code.
+type MidjourneyErrorResponse struct {
+	Description string `json:"description"`
+	Type        string `json:"type"`
+	Code        int    `json:"code"`
+}
+
 func RelayMidjourney(c *gin.Context) {
 	policy := service.RequestPolicy(c)
 	defer func() {
@@ -343,10 +363,10 @@ func RelayMidjourney(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatMjProxy, nil, nil)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"description": fmt.Sprintf("failed to generate relay info: %s", err.Error()),
-			"type":        "upstream_error",
-			"code":        4,
+		c.JSON(http.StatusInternalServerError, MidjourneyErrorResponse{
+			Description: fmt.Sprintf("failed to generate relay info: %s", err.Error()),
+			Type:        "upstream_error",
+			Code:        4,
 		})
 		return
 	}
@@ -373,10 +393,10 @@ func RelayMidjourney(c *gin.Context) {
 			mjErr.Result = i18n.T(c, i18n.MsgRelayGroupSaturated)
 			statusCode = http.StatusTooManyRequests
 		}
-		c.JSON(statusCode, gin.H{
-			"description": fmt.Sprintf("%s %s", mjErr.Description, mjErr.Result),
-			"type":        "upstream_error",
-			"code":        mjErr.Code,
+		c.JSON(statusCode, MidjourneyErrorResponse{
+			Description: fmt.Sprintf("%s %s", mjErr.Description, mjErr.Result),
+			Type:        "upstream_error",
+			Code:        mjErr.Code,
 		})
 		channelId := c.GetInt("channel_id")
 		logger.LogError(c, common.LogText("relay error (channel #%d, status code %d): %s", channelId, statusCode, fmt.Sprintf("%s %s", mjErr.Description, mjErr.Result)))
@@ -390,9 +410,7 @@ func RelayNotImplemented(c *gin.Context) {
 		Param:   "",
 		Code:    "api_not_implemented",
 	}
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"error": err,
-	})
+	c.JSON(http.StatusNotImplemented, OpenAIErrorResponse{Error: err})
 }
 
 func RelayNotFound(c *gin.Context) {
@@ -407,9 +425,20 @@ func RelayNotFound(c *gin.Context) {
 		Param:   "",
 		Code:    "",
 	}
-	c.JSON(http.StatusNotFound, gin.H{
-		"error": err,
-	})
+	c.JSON(http.StatusNotFound, OpenAIErrorResponse{Error: err})
+}
+
+// TaskProtocolErrorResponse is the error body the task plugin protocol bridge
+// writes itself: an OpenAI error without param.
+type TaskProtocolErrorResponse struct {
+	Error TaskProtocolError `json:"error"`
+}
+
+// TaskProtocolError is the error object of TaskProtocolErrorResponse.
+type TaskProtocolError struct {
+	Message string `json:"message"`
+	Type    string `json:"type"`
+	Code    string `json:"code"`
 }
 
 // RelayTaskPluginEndpoint keeps unclaimed shared-endpoint traffic on its
@@ -423,13 +452,11 @@ func RelayTaskPluginEndpoint(c *gin.Context, fallback gin.HandlerFunc) {
 	}
 	pinned, ok := pinnedValue.(pluginruntime.PinnedEndpoint)
 	if !ok || pinned.Plugin == nil || pinned.Generation == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": gin.H{
-				"message": "Task protocol request failed",
-				"type":    "new_api_error",
-				"code":    "task_protocol_error",
-			},
-		})
+		c.JSON(http.StatusInternalServerError, TaskProtocolErrorResponse{Error: TaskProtocolError{
+			Message: "Task protocol request failed",
+			Type:    "new_api_error",
+			Code:    "task_protocol_error",
+		}})
 		return
 	}
 	switch pinned.Protocol {
@@ -743,6 +770,16 @@ func executeTaskSubmissionWith(
 	return &taskSubmissionOutcome{Result: result, Task: task, RelayInfo: relayInfo}, nil
 }
 
+// taskSubmissionResponse is the host's answer to a task submission that no
+// plugin presenter renders.
+type taskSubmissionResponse struct {
+	ID        string `json:"id"`
+	TaskID    string `json:"task_id"`
+	Status    string `json:"status"`
+	Model     string `json:"model"`
+	CreatedAt int64  `json:"created_at"`
+}
+
 func presentTaskSubmission(c *gin.Context, outcome *taskSubmissionOutcome) {
 	diagnostics := newTaskPluginSubmitDiagnostics(c)
 	otherRatios := outcome.RelayInfo.PriceData.OtherRatios()
@@ -787,12 +824,12 @@ func presentTaskSubmission(c *gin.Context, outcome *taskSubmissionOutcome) {
 		createdAt = outcome.Task.SubmitTime
 	}
 	diagnostics.present(outcome.Task, "host_fallback")
-	c.JSON(http.StatusOK, map[string]any{
-		"id":         outcome.Task.TaskID,
-		"task_id":    outcome.Task.TaskID,
-		"status":     "queued",
-		"model":      outcome.RelayInfo.OriginModelName,
-		"created_at": createdAt,
+	c.JSON(http.StatusOK, taskSubmissionResponse{
+		ID:        outcome.Task.TaskID,
+		TaskID:    outcome.Task.TaskID,
+		Status:    "queued",
+		Model:     outcome.RelayInfo.OriginModelName,
+		CreatedAt: createdAt,
 	})
 }
 

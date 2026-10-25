@@ -36,6 +36,23 @@ var (
 	errTaskArtifactPlugin            = errors.New("task artifact plugin error")
 )
 
+// taskStatusResponse is the status of a task submitted through a task plugin.
+type taskStatusResponse struct {
+	TaskID     string                `json:"task_id"`
+	Platform   constant.TaskPlatform `json:"platform"`
+	Status     model.TaskStatus      `json:"status"`
+	Progress   string                `json:"progress"`
+	FailReason string                `json:"fail_reason"`
+	CreatedAt  int64                 `json:"created_at"`
+	FinishedAt int64                 `json:"finished_at"`
+}
+
+// @Summary	查询任务状态
+// @Tags		异步任务
+// @Param		key	path		string	true	"任务 ID"
+// @Success	200	{object}	taskStatusResponse
+// @Security	TokenAuth
+// @Router		/v1/tasks/{key} [get]
 func GetTask(c *gin.Context) {
 	task, exists, err := model.GetByTaskId(c.GetInt("id"), c.Param("key"))
 	if err != nil {
@@ -54,17 +71,24 @@ func GetTask(c *gin.Context) {
 	if task.Status == model.TaskStatusSuccess && taskFailReasonIsLegacyResultURL(task.FailReason) {
 		failReason = ""
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"task_id":     task.TaskID,
-		"platform":    task.Platform,
-		"status":      task.Status,
-		"progress":    task.Progress,
-		"fail_reason": failReason,
-		"created_at":  createdAt,
-		"finished_at": task.FinishTime,
+	c.JSON(http.StatusOK, taskStatusResponse{
+		TaskID:     task.TaskID,
+		Platform:   task.Platform,
+		Status:     task.Status,
+		Progress:   task.Progress,
+		FailReason: failReason,
+		CreatedAt:  createdAt,
+		FinishedAt: task.FinishTime,
 	})
 }
 
+// @Summary		列出任务产物
+// @Description	任务成功后才有产物。content_url 带签名的 access 参数，可直接下载，不需要 API 密钥。
+// @Tags			异步任务
+// @Param			key	path		string	true	"任务 ID"
+// @Success		200	{object}	taskArtifactsResponse
+// @Security		TokenAuth
+// @Router			/v1/tasks/{key}/artifacts [get]
 func GetTaskArtifacts(c *gin.Context) {
 	task, exists, err := model.GetByTaskId(c.GetInt("id"), c.Param("key"))
 	if err != nil {
@@ -78,6 +102,14 @@ func GetTaskArtifacts(c *gin.Context) {
 	writeTaskArtifacts(c, task, false)
 }
 
+// @Summary		列出任务产物
+// @Description	管理员可查看任意任务，其他用户只能查看自己的任务。失败时返回非 200 状态码，code 如 artifact_not_found。
+// @Tags			任务
+// @Param			task_id	path		string	true	"任务 ID"
+// @Success		200		{object}	common.ApiResponse{data=taskArtifactsResponse}
+// @Failure		404		{object}	common.ApiResponse
+// @Security		UserAuth
+// @Router			/api/task/{task_id}/artifacts [get]
 func GetDashboardTaskArtifacts(c *gin.Context) {
 	task, exists, err := getTaskForArtifactRequest(c, c.Param("task_id"))
 	if err != nil {
@@ -89,6 +121,17 @@ func GetDashboardTaskArtifacts(c *gin.Context) {
 		return
 	}
 	writeTaskArtifacts(c, task, true)
+}
+
+// taskArtifactsResponse lists a task's artifacts with their content URLs.
+type taskArtifactsResponse struct {
+	TaskID    string                 `json:"task_id"`
+	Artifacts []taskArtifactResponse `json:"artifacts"`
+	// LegacyAudioClips are the audio clips of a successful pre-plugin Suno
+	// task, listed for the web console only.
+	LegacyAudioClips *[]map[string]any `json:"legacy_audio_clips,omitempty"`
+	// LegacyContentURL is the video of a successful pre-plugin video task.
+	LegacyContentURL string `json:"legacy_content_url,omitempty"`
 }
 
 func writeTaskArtifacts(c *gin.Context, task *model.Task, dashboard bool) {
@@ -112,9 +155,10 @@ func writeTaskArtifacts(c *gin.Context, task *model.Task, dashboard bool) {
 			ContentURL: contentURL,
 		})
 	}
-	response := gin.H{"task_id": task.TaskID, "artifacts": items}
+	response := taskArtifactsResponse{TaskID: task.TaskID, Artifacts: items}
 	if dashboard && task.Status == model.TaskStatusSuccess && task.Platform == constant.TaskPlatformSuno {
-		response["legacy_audio_clips"] = legacySunoAudioClips(task.Data)
+		clips := legacySunoAudioClips(task.Data)
+		response.LegacyAudioClips = &clips
 	}
 	if legacyVideoAvailable(task) {
 		legacyContentURL, buildErr := service.BuildTaskArtifactContentURL(task.TaskID, "video")
@@ -122,7 +166,7 @@ func writeTaskArtifacts(c *gin.Context, task *model.Task, dashboard bool) {
 			writeTaskArtifactError(c, http.StatusInternalServerError, "artifact_url_error", "Failed to build artifact content URL")
 			return
 		}
-		response["legacy_content_url"] = legacyContentURL
+		response.LegacyContentURL = legacyContentURL
 	}
 	if dashboard {
 		common.ApiSuccess(c, response)
@@ -315,6 +359,18 @@ func writeTaskArtifactError(c *gin.Context, status int, code, message string) {
 	})
 }
 
+// @Summary		下载任务产物
+// @Description	用 API 密钥访问时只能下载自己的任务产物。也可以不带 API 密钥，改用产物列表 content_url 里的 access 签名参数访问：签名绑定任务和产物，有并发和错误次数限制，签名无效时返回 404。支持 Range 续传和 HEAD。
+// @Tags			异步任务
+// @Produce		octet-stream
+// @Param			key				path		string	true	"任务 ID"
+// @Param			artifact_key	path		string	true	"产物 key"
+// @Param			access			query		string	false	"签名访问凭证，产物列表的 content_url 自带"
+// @Param			Range			header		string	false	"字节范围；If-Range、If-None-Match、If-Modified-Since 也会转发给上游"
+// @Success		200				{file}		file	"产物内容"
+// @Security		TokenAuth
+// @Router			/v1/tasks/{key}/artifacts/{artifact_key}/content [get]
+// @Router			/v1/tasks/{key}/artifacts/{artifact_key}/content [head]
 func TaskArtifactContent(c *gin.Context) {
 	task, exists, err := getTaskForArtifactRequest(c, c.Param("key"))
 	if err != nil {
@@ -413,6 +469,20 @@ func taskArtifactClientHeaders(headers http.Header) map[string]string {
 	Artifact projection is confined to the explicit endpoints above.
 */
 
+// @Summary	列出全部任务
+// @Tags		任务
+// @Param		p				query		int		false	"页码，从 1 开始"
+// @Param		page_size		query		int		false	"每页条数"
+// @Param		platform		query		string	false	"平台"
+// @Param		task_id			query		string	false	"任务 ID"
+// @Param		status			query		string	false	"状态"
+// @Param		action			query		string	false	"任务类型"
+// @Param		start_timestamp	query		int		false	"提交时间下限，Unix 秒"
+// @Param		end_timestamp	query		int		false	"提交时间上限，Unix 秒"
+// @Param		channel_id		query		string	false	"渠道 ID"
+// @Success	200				{object}	common.ApiResponse{data=common.PageInfo{items=[]dto.TaskDto}}
+// @Security	AdminAuth
+// @Router		/api/task [get]
 func GetAllTask(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
@@ -424,6 +494,19 @@ func GetAllTask(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
+// @Summary	列出我的任务
+// @Tags		任务
+// @Param		p				query		int		false	"页码，从 1 开始"
+// @Param		page_size		query		int		false	"每页条数"
+// @Param		platform		query		string	false	"平台"
+// @Param		task_id			query		string	false	"任务 ID"
+// @Param		status			query		string	false	"状态"
+// @Param		action			query		string	false	"任务类型"
+// @Param		start_timestamp	query		int		false	"提交时间下限，Unix 秒"
+// @Param		end_timestamp	query		int		false	"提交时间上限，Unix 秒"
+// @Success	200				{object}	common.ApiResponse{data=common.PageInfo{items=[]dto.TaskDto}}
+// @Security	UserAuth
+// @Router		/api/task/self [get]
 func GetUserTask(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	userID := c.GetInt("id")
