@@ -18,6 +18,14 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 )
 
+// @Summary		获取可用的验证方式
+// @Description	列出当前用户完成某个 scope 的二次验证可以使用的方式；当前登录方式不支持二次验证时返回 401。
+// @Tags			安全验证
+// @Param			scope	query		string	false	"操作的 scope，如 passkey.register、account.delete、admin.user.update"
+// @Success		200		{object}	common.ApiResponse{data=service.VerificationRequirements}
+// @Failure		401		{object}	common.ApiResponse
+// @Security		UserAuth
+// @Router			/api/verify/methods [get]
 func GetVerificationMethods(c *gin.Context) {
 	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
@@ -154,6 +162,14 @@ func requireAdminUserProof(c *gin.Context, scope string, context any) *model.Aut
 	return middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: scope, Context: payload})
 }
 
+// @Summary		完成安全验证
+// @Description	用密码（method 为 password，开启登录密码加密时提交 password_encrypted 和 encryption_key_id）或两步验证码（method 为 2fa）为某个 scope 的操作做二次验证；data 中的 proof_token 用作该操作的 X-Security-Proof 请求头。Passkey 和 OAuth 验证另有接口。
+// @Tags			安全验证
+// @Param			body	body		service.VerificationInput	true	"验证方式、scope、操作的 context 和凭据"
+// @Success		200		{object}	common.ApiResponse{data=service.SecurityProof}
+// @Failure		401		{object}	common.ApiResponse
+// @Security		UserAuth
+// @Router			/api/verify [post]
 func UniversalVerify(c *gin.Context) {
 	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {

@@ -2,13 +2,13 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/console_setting"
 
 	"github.com/gin-gonic/gin"
@@ -51,7 +51,7 @@ func getAndDecode(ctx context.Context, client *http.Client, url string, dest any
 		return errors.New("non-200 status")
 	}
 
-	return json.NewDecoder(resp.Body).Decode(dest)
+	return common.DecodeJson(resp.Body, dest)
 }
 
 func fetchGroupData(ctx context.Context, client *http.Client, groupConfig map[string]any) UptimeGroupResult {
@@ -128,10 +128,15 @@ func fetchGroupData(ctx context.Context, client *http.Client, groupConfig map[st
 	return result
 }
 
+// @Summary		获取服务状态监控
+// @Description	从设置中配置的 Uptime Kuma 状态页读取各分组的监控项；读取失败的分组 monitors 为空。
+// @Tags			系统
+// @Success		200	{object}	common.ApiResponse{data=[]UptimeGroupResult}
+// @Router			/api/uptime/status [get]
 func GetUptimeKumaStatus(c *gin.Context) {
 	groups := console_setting.GetUptimeKumaGroups()
 	if len(groups) == 0 {
-		c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": []UptimeGroupResult{}})
+		common.ApiSuccess(c, []UptimeGroupResult{})
 		return
 	}
 
@@ -150,5 +155,5 @@ func GetUptimeKumaStatus(c *gin.Context) {
 	}
 
 	g.Wait()
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": results})
+	common.ApiSuccess(c, results)
 }

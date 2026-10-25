@@ -2,7 +2,6 @@ package controller
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -25,17 +24,29 @@ func getIoAPIKey(c *gin.Context) (string, bool) {
 	return apiKey, true
 }
 
+type modelDeploymentSettings struct {
+	Provider   string `json:"provider"`
+	Enabled    bool   `json:"enabled"`
+	Configured bool   `json:"configured"`
+	CanConnect bool   `json:"can_connect"`
+}
+
+// @Summary	获取部署设置状态
+// @Tags		部署
+// @Success	200	{object}	common.ApiResponse{data=modelDeploymentSettings}
+// @Security	AdminAuth
+// @Router		/api/deployments/settings [get]
 func GetModelDeploymentSettings(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
 	enabled := common.OptionMap["model_deployment.ionet.enabled"] == "true"
 	hasAPIKey := strings.TrimSpace(common.OptionMap["model_deployment.ionet.api_key"]) != ""
 	common.OptionMapRWMutex.RUnlock()
 
-	common.ApiSuccess(c, gin.H{
-		"provider":    "io.net",
-		"enabled":     enabled,
-		"configured":  hasAPIKey,
-		"can_connect": enabled && hasAPIKey,
+	common.ApiSuccess(c, modelDeploymentSettings{
+		Provider:   "io.net",
+		Enabled:    enabled,
+		Configured: hasAPIKey,
+		CanConnect: enabled && hasAPIKey,
 	})
 }
 
@@ -55,10 +66,25 @@ func getIoEnterpriseClient(c *gin.Context) (*ionet.Client, bool) {
 	return ionet.NewEnterpriseClient(apiKey), true
 }
 
+type ioNetConnectionTestRequest struct {
+	APIKey string `json:"api_key"`
+}
+
+type ioNetConnectionTestResult struct {
+	HardwareCount  int `json:"hardware_count"`
+	TotalAvailable int `json:"total_available"`
+}
+
+// @Summary		测试 io.net 连接
+// @Description	用 api_key（不传时用已保存的 API Key）查询 io.net 的可用硬件，不要求已启用部署。
+// @Tags			部署
+// @Param			body	body		ioNetConnectionTestRequest	false	"要测试的 API Key，可省略请求体"
+// @Success		200		{object}	common.ApiResponse{data=ioNetConnectionTestResult}
+// @Security		AdminAuth
+// @Router			/api/deployments/settings/test-connection [post]
+// @Router			/api/deployments/test-connection [post]
 func TestIoNetConnection(c *gin.Context) {
-	var req struct {
-		APIKey string `json:"api_key"`
-	}
+	var req ioNetConnectionTestRequest
 
 	rawBody, err := c.GetRawData()
 	if err != nil {
@@ -66,7 +92,7 @@ func TestIoNetConnection(c *gin.Context) {
 		return
 	}
 	if len(bytes.TrimSpace(rawBody)) > 0 {
-		if err := json.Unmarshal(rawBody, &req); err != nil {
+		if err := common.Unmarshal(rawBody, &req); err != nil {
 			common.ApiErrorMsg(c, "invalid request payload")
 			return
 		}
@@ -111,9 +137,9 @@ func TestIoNetConnection(c *gin.Context) {
 		}
 	}
 
-	common.ApiSuccess(c, gin.H{
-		"hardware_count":  totalHardware,
-		"total_available": totalAvailable,
+	common.ApiSuccess(c, ioNetConnectionTestResult{
+		HardwareCount:  totalHardware,
+		TotalAvailable: totalAvailable,
 	})
 }
 
@@ -135,7 +161,38 @@ func requireContainerID(c *gin.Context) (string, bool) {
 	return containerID, true
 }
 
-func mapIoNetDeployment(d ionet.Deployment) map[string]any {
+type deploymentResourceConfig struct {
+	CPU    string `json:"cpu"`
+	Memory string `json:"memory"`
+	GPU    string `json:"gpu"`
+}
+
+type ioNetDeploymentSummary struct {
+	ID                      string                   `json:"id"`
+	DeploymentName          string                   `json:"deployment_name"`
+	ContainerName           string                   `json:"container_name"`
+	Status                  string                   `json:"status"`
+	Type                    string                   `json:"type"`
+	TimeRemaining           string                   `json:"time_remaining"`
+	TimeRemainingMinutes    int                      `json:"time_remaining_minutes"`
+	HardwareInfo            string                   `json:"hardware_info"`
+	HardwareName            string                   `json:"hardware_name"`
+	BrandName               string                   `json:"brand_name"`
+	HardwareQuantity        int                      `json:"hardware_quantity"`
+	CompletedPercent        float64                  `json:"completed_percent"`
+	ComputeMinutesServed    int                      `json:"compute_minutes_served"`
+	ComputeMinutesRemaining int                      `json:"compute_minutes_remaining"`
+	CreatedAt               int64                    `json:"created_at"`
+	UpdatedAt               int64                    `json:"updated_at"`
+	ModelName               string                   `json:"model_name"`
+	ModelVersion            string                   `json:"model_version"`
+	InstanceCount           int                      `json:"instance_count"`
+	ResourceConfig          deploymentResourceConfig `json:"resource_config"`
+	Description             string                   `json:"description"`
+	Provider                string                   `json:"provider"`
+}
+
+func mapIoNetDeployment(d ionet.Deployment) ioNetDeploymentSummary {
 	var created int64
 	if d.CreatedAt.IsZero() {
 		created = time.Now().Unix()
@@ -156,33 +213,33 @@ func mapIoNetDeployment(d ionet.Deployment) map[string]any {
 
 	hardwareInfo := fmt.Sprintf("%s %s x%d", d.BrandName, d.HardwareName, d.HardwareQuantity)
 
-	return map[string]any{
-		"id":                        d.ID,
-		"deployment_name":           d.Name,
-		"container_name":            d.Name,
-		"status":                    strings.ToLower(d.Status),
-		"type":                      "Container",
-		"time_remaining":            timeRemaining,
-		"time_remaining_minutes":    d.ComputeMinutesRemaining,
-		"hardware_info":             hardwareInfo,
-		"hardware_name":             d.HardwareName,
-		"brand_name":                d.BrandName,
-		"hardware_quantity":         d.HardwareQuantity,
-		"completed_percent":         d.CompletedPercent,
-		"compute_minutes_served":    d.ComputeMinutesServed,
-		"compute_minutes_remaining": d.ComputeMinutesRemaining,
-		"created_at":                created,
-		"updated_at":                created,
-		"model_name":                "",
-		"model_version":             "",
-		"instance_count":            d.HardwareQuantity,
-		"resource_config": map[string]any{
-			"cpu":    "",
-			"memory": "",
-			"gpu":    strconv.Itoa(d.HardwareQuantity),
+	return ioNetDeploymentSummary{
+		ID:                      d.ID,
+		DeploymentName:          d.Name,
+		ContainerName:           d.Name,
+		Status:                  strings.ToLower(d.Status),
+		Type:                    "Container",
+		TimeRemaining:           timeRemaining,
+		TimeRemainingMinutes:    d.ComputeMinutesRemaining,
+		HardwareInfo:            hardwareInfo,
+		HardwareName:            d.HardwareName,
+		BrandName:               d.BrandName,
+		HardwareQuantity:        d.HardwareQuantity,
+		CompletedPercent:        d.CompletedPercent,
+		ComputeMinutesServed:    d.ComputeMinutesServed,
+		ComputeMinutesRemaining: d.ComputeMinutesRemaining,
+		CreatedAt:               created,
+		UpdatedAt:               created,
+		ModelName:               "",
+		ModelVersion:            "",
+		InstanceCount:           d.HardwareQuantity,
+		ResourceConfig: deploymentResourceConfig{
+			CPU:    "",
+			Memory: "",
+			GPU:    strconv.Itoa(d.HardwareQuantity),
 		},
-		"description": "",
-		"provider":    "io.net",
+		Description: "",
+		Provider:    "io.net",
 	}
 }
 
@@ -203,6 +260,25 @@ func computeStatusCounts(total int, deployments []ionet.Deployment) map[string]i
 	return counts
 }
 
+type deploymentListPage struct {
+	Page     int                      `json:"page"`
+	PageSize int                      `json:"page_size"`
+	Total    int                      `json:"total"`
+	Items    []ioNetDeploymentSummary `json:"items"`
+	// StatusCounts counts this page's deployments by status, plus "all",
+	// the total of every page.
+	StatusCounts map[string]int64 `json:"status_counts"`
+}
+
+// @Summary		列出部署
+// @Description	需已启用 io.net 部署并配置 API Key。
+// @Tags			部署
+// @Param			p			query		int		false	"页码，从 1 开始"
+// @Param			page_size	query		int		false	"每页条数"
+// @Param			status		query		string	false	"按状态筛选，如 running、completed、failed"
+// @Success		200			{object}	common.ApiResponse{data=deploymentListPage}
+// @Security		AdminAuth
+// @Router			/api/deployments/ [get]
 func GetAllDeployments(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	client, ok := getIoEnterpriseClient(c)
@@ -225,21 +301,38 @@ func GetAllDeployments(c *gin.Context) {
 		return
 	}
 
-	items := make([]map[string]any, 0, len(dl.Deployments))
+	items := make([]ioNetDeploymentSummary, 0, len(dl.Deployments))
 	for _, d := range dl.Deployments {
 		items = append(items, mapIoNetDeployment(d))
 	}
 
-	data := gin.H{
-		"page":          pageInfo.GetPage(),
-		"page_size":     pageInfo.GetPageSize(),
-		"total":         dl.Total,
-		"items":         items,
-		"status_counts": computeStatusCounts(dl.Total, dl.Deployments),
+	data := deploymentListPage{
+		Page:         pageInfo.GetPage(),
+		PageSize:     pageInfo.GetPageSize(),
+		Total:        dl.Total,
+		Items:        items,
+		StatusCounts: computeStatusCounts(dl.Total, dl.Deployments),
 	}
 	common.ApiSuccess(c, data)
 }
 
+type deploymentSearchPage struct {
+	Page     int                      `json:"page"`
+	PageSize int                      `json:"page_size"`
+	Total    int                      `json:"total"`
+	Items    []ioNetDeploymentSummary `json:"items"`
+}
+
+// @Summary		搜索部署
+// @Description	需已启用 io.net 部署并配置 API Key。keyword 只在当前页内按名称筛选，此时 total 是筛选后的条数。
+// @Tags			部署
+// @Param			p			query		int		false	"页码，从 1 开始"
+// @Param			page_size	query		int		false	"每页条数"
+// @Param			status		query		string	false	"按状态筛选"
+// @Param			keyword		query		string	false	"名称关键字，不区分大小写"
+// @Success		200			{object}	common.ApiResponse{data=deploymentSearchPage}
+// @Security		AdminAuth
+// @Router			/api/deployments/search [get]
 func SearchDeployments(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	client, ok := getIoEnterpriseClient(c)
@@ -274,7 +367,7 @@ func SearchDeployments(c *gin.Context) {
 		}
 	}
 
-	items := make([]map[string]any, 0, len(filtered))
+	items := make([]ioNetDeploymentSummary, 0, len(filtered))
 	for _, d := range filtered {
 		items = append(items, mapIoNetDeployment(d))
 	}
@@ -284,15 +377,47 @@ func SearchDeployments(c *gin.Context) {
 		total = len(filtered)
 	}
 
-	data := gin.H{
-		"page":      pageInfo.GetPage(),
-		"page_size": pageInfo.GetPageSize(),
-		"total":     total,
-		"items":     items,
+	data := deploymentSearchPage{
+		Page:     pageInfo.GetPage(),
+		PageSize: pageInfo.GetPageSize(),
+		Total:    total,
+		Items:    items,
 	}
 	common.ApiSuccess(c, data)
 }
 
+type ioNetDeploymentDetail struct {
+	ID                      string                          `json:"id"`
+	DeploymentName          string                          `json:"deployment_name"`
+	ModelName               string                          `json:"model_name"`
+	ModelVersion            string                          `json:"model_version"`
+	Status                  string                          `json:"status"`
+	InstanceCount           int                             `json:"instance_count"`
+	HardwareID              int                             `json:"hardware_id"`
+	ResourceConfig          deploymentResourceConfig        `json:"resource_config"`
+	CreatedAt               int64                           `json:"created_at"`
+	UpdatedAt               int64                           `json:"updated_at"`
+	Description             string                          `json:"description"`
+	AmountPaid              float64                         `json:"amount_paid"`
+	CompletedPercent        float64                         `json:"completed_percent"`
+	GPUsPerContainer        int                             `json:"gpus_per_container"`
+	TotalGPUs               int                             `json:"total_gpus"`
+	TotalContainers         int                             `json:"total_containers"`
+	HardwareName            string                          `json:"hardware_name"`
+	BrandName               string                          `json:"brand_name"`
+	ComputeMinutesServed    int                             `json:"compute_minutes_served"`
+	ComputeMinutesRemaining int                             `json:"compute_minutes_remaining"`
+	Locations               []ionet.DeploymentLocation      `json:"locations"`
+	ContainerConfig         ionet.DeploymentContainerConfig `json:"container_config"`
+}
+
+// @Summary		获取部署详情
+// @Description	需已启用 io.net 部署并配置 API Key。locations 和 container_config 原样来自 io.net。
+// @Tags			部署
+// @Param			id	path		string	true	"部署 ID"
+// @Success		200	{object}	common.ApiResponse{data=ioNetDeploymentDetail}
+// @Security		AdminAuth
+// @Router			/api/deployments/{id} [get]
 func GetDeployment(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -310,38 +435,58 @@ func GetDeployment(c *gin.Context) {
 		return
 	}
 
-	data := map[string]any{
-		"id":              details.ID,
-		"deployment_name": details.ID,
-		"model_name":      "",
-		"model_version":   "",
-		"status":          strings.ToLower(details.Status),
-		"instance_count":  details.TotalContainers,
-		"hardware_id":     details.HardwareID,
-		"resource_config": map[string]any{
-			"cpu":    "",
-			"memory": "",
-			"gpu":    strconv.Itoa(details.TotalGPUs),
+	data := ioNetDeploymentDetail{
+		ID:             details.ID,
+		DeploymentName: details.ID,
+		ModelName:      "",
+		ModelVersion:   "",
+		Status:         strings.ToLower(details.Status),
+		InstanceCount:  details.TotalContainers,
+		HardwareID:     details.HardwareID,
+		ResourceConfig: deploymentResourceConfig{
+			CPU:    "",
+			Memory: "",
+			GPU:    strconv.Itoa(details.TotalGPUs),
 		},
-		"created_at":                details.CreatedAt.Unix(),
-		"updated_at":                details.CreatedAt.Unix(),
-		"description":               "",
-		"amount_paid":               details.AmountPaid,
-		"completed_percent":         details.CompletedPercent,
-		"gpus_per_container":        details.GPUsPerContainer,
-		"total_gpus":                details.TotalGPUs,
-		"total_containers":          details.TotalContainers,
-		"hardware_name":             details.HardwareName,
-		"brand_name":                details.BrandName,
-		"compute_minutes_served":    details.ComputeMinutesServed,
-		"compute_minutes_remaining": details.ComputeMinutesRemaining,
-		"locations":                 details.Locations,
-		"container_config":          details.ContainerConfig,
+		CreatedAt:               details.CreatedAt.Unix(),
+		UpdatedAt:               details.CreatedAt.Unix(),
+		Description:             "",
+		AmountPaid:              details.AmountPaid,
+		CompletedPercent:        details.CompletedPercent,
+		GPUsPerContainer:        details.GPUsPerContainer,
+		TotalGPUs:               details.TotalGPUs,
+		TotalContainers:         details.TotalContainers,
+		HardwareName:            details.HardwareName,
+		BrandName:               details.BrandName,
+		ComputeMinutesServed:    details.ComputeMinutesServed,
+		ComputeMinutesRemaining: details.ComputeMinutesRemaining,
+		Locations:               details.Locations,
+		ContainerConfig:         details.ContainerConfig,
 	}
 
 	common.ApiSuccess(c, data)
 }
 
+type updateDeploymentNameRequest struct {
+	Name string `json:"name" binding:"required"`
+}
+
+type deploymentRename struct {
+	// Status and Message are io.net's answer.
+	Status  string `json:"status"`
+	Message string `json:"message"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+}
+
+// @Summary		重命名部署
+// @Description	需已启用 io.net 部署并配置 API Key。名称已被占用时返回 success=false。
+// @Tags			部署
+// @Param			id		path		string						true	"部署 ID"
+// @Param			body	body		updateDeploymentNameRequest	true	"新名称"
+// @Success		200		{object}	common.ApiResponse{data=deploymentRename}
+// @Security		AdminAuth
+// @Router			/api/deployments/{id}/name [put]
 func UpdateDeploymentName(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -353,9 +498,7 @@ func UpdateDeploymentName(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		Name string `json:"name" binding:"required"`
-	}
+	var req updateDeploymentNameRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiError(c, err)
@@ -388,15 +531,23 @@ func UpdateDeploymentName(c *gin.Context) {
 		return
 	}
 
-	data := gin.H{
-		"status":  resp.Status,
-		"message": resp.Message,
-		"id":      deploymentID,
-		"name":    updateReq.Name,
+	data := deploymentRename{
+		Status:  resp.Status,
+		Message: resp.Message,
+		ID:      deploymentID,
+		Name:    updateReq.Name,
 	}
 	common.ApiSuccess(c, data)
 }
 
+// @Summary		更新部署配置
+// @Description	需已启用 io.net 部署并配置 API Key。请求转发给 io.net，data 是 io.net 返回的状态。
+// @Tags			部署
+// @Param			id		path		string							true	"部署 ID"
+// @Param			body	body		ionet.UpdateDeploymentRequest	true	"要更新的容器配置"
+// @Success		200		{object}	common.ApiResponse{data=ionet.UpdateDeploymentResponse}
+// @Security		AdminAuth
+// @Router			/api/deployments/{id} [put]
 func UpdateDeployment(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -420,13 +571,21 @@ func UpdateDeployment(c *gin.Context) {
 		return
 	}
 
-	data := gin.H{
-		"status":        resp.Status,
-		"deployment_id": resp.DeploymentID,
+	data := ionet.UpdateDeploymentResponse{
+		Status:       resp.Status,
+		DeploymentID: resp.DeploymentID,
 	}
 	common.ApiSuccess(c, data)
 }
 
+// @Summary		延长部署时长
+// @Description	需已启用 io.net 部署并配置 API Key。
+// @Tags			部署
+// @Param			id		path		string						true	"部署 ID"
+// @Param			body	body		ionet.ExtendDurationRequest	true	"延长的小时数"
+// @Success		200		{object}	common.ApiResponse{data=ioNetDeploymentSummary}
+// @Security		AdminAuth
+// @Router			/api/deployments/{id}/extend [post]
 func ExtendDeployment(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -466,6 +625,20 @@ func ExtendDeployment(c *gin.Context) {
 	common.ApiSuccess(c, data)
 }
 
+type deploymentRequestResult struct {
+	DeploymentID string `json:"deployment_id"`
+	// Status is io.net's answer.
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// @Summary		终止部署
+// @Description	需已启用 io.net 部署并配置 API Key。向 io.net 申请终止。
+// @Tags			部署
+// @Param			id	path		string	true	"部署 ID"
+// @Success		200	{object}	common.ApiResponse{data=deploymentRequestResult}
+// @Security		AdminAuth
+// @Router			/api/deployments/{id} [delete]
 func DeleteDeployment(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -483,14 +656,21 @@ func DeleteDeployment(c *gin.Context) {
 		return
 	}
 
-	data := gin.H{
-		"status":        resp.Status,
-		"deployment_id": resp.DeploymentID,
-		"message":       "Deployment termination requested successfully",
+	data := deploymentRequestResult{
+		Status:       resp.Status,
+		DeploymentID: resp.DeploymentID,
+		Message:      "Deployment termination requested successfully",
 	}
 	common.ApiSuccess(c, data)
 }
 
+// @Summary		创建部署
+// @Description	需已启用 io.net 部署并配置 API Key。请求转发给 io.net 部署容器。
+// @Tags			部署
+// @Param			body	body		ionet.DeploymentRequest	true	"部署配置"
+// @Success		200		{object}	common.ApiResponse{data=deploymentRequestResult}
+// @Security		AdminAuth
+// @Router			/api/deployments/ [post]
 func CreateDeployment(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -509,14 +689,26 @@ func CreateDeployment(c *gin.Context) {
 		return
 	}
 
-	data := gin.H{
-		"deployment_id": resp.DeploymentID,
-		"status":        resp.Status,
-		"message":       "Deployment created successfully",
+	data := deploymentRequestResult{
+		DeploymentID: resp.DeploymentID,
+		Status:       resp.Status,
+		Message:      "Deployment created successfully",
 	}
 	common.ApiSuccess(c, data)
 }
 
+type hardwareTypeList struct {
+	HardwareTypes  []ionet.HardwareType `json:"hardware_types"`
+	Total          int                  `json:"total"`
+	TotalAvailable int                  `json:"total_available"`
+}
+
+// @Summary		列出硬件类型
+// @Description	需已启用 io.net 部署并配置 API Key。
+// @Tags			部署
+// @Success		200	{object}	common.ApiResponse{data=hardwareTypeList}
+// @Security		AdminAuth
+// @Router			/api/deployments/hardware-types [get]
 func GetHardwareTypes(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -529,14 +721,20 @@ func GetHardwareTypes(c *gin.Context) {
 		return
 	}
 
-	data := gin.H{
-		"hardware_types":  hardwareTypes,
-		"total":           len(hardwareTypes),
-		"total_available": totalAvailable,
+	data := hardwareTypeList{
+		HardwareTypes:  hardwareTypes,
+		Total:          len(hardwareTypes),
+		TotalAvailable: totalAvailable,
 	}
 	common.ApiSuccess(c, data)
 }
 
+// @Summary		列出部署地区
+// @Description	需已启用 io.net 部署并配置 API Key。locations 原样来自 io.net（iso2 转为大写）。
+// @Tags			部署
+// @Success		200	{object}	common.ApiResponse{data=ionet.LocationsResponse}
+// @Security		AdminAuth
+// @Router			/api/deployments/locations [get]
 func GetLocations(c *gin.Context) {
 	client, ok := getIoClient(c)
 	if !ok {
@@ -554,13 +752,21 @@ func GetLocations(c *gin.Context) {
 		total = len(locationsResp.Locations)
 	}
 
-	data := gin.H{
-		"locations": locationsResp.Locations,
-		"total":     total,
+	data := ionet.LocationsResponse{
+		Locations: locationsResp.Locations,
+		Total:     total,
 	}
 	common.ApiSuccess(c, data)
 }
 
+// @Summary		查询可用副本数
+// @Description	需已启用 io.net 部署并配置 API Key。
+// @Tags			部署
+// @Param			hardware_id	query		int	true	"硬件 ID"
+// @Param			gpu_count	query		int	false	"每个容器的 GPU 数，默认 1"
+// @Success		200			{object}	common.ApiResponse{data=ionet.AvailableReplicasResponse}
+// @Security		AdminAuth
+// @Router			/api/deployments/available-replicas [get]
 func GetAvailableReplicas(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -597,6 +803,13 @@ func GetAvailableReplicas(c *gin.Context) {
 	common.ApiSuccess(c, replicas)
 }
 
+// @Summary		估算部署价格
+// @Description	需已启用 io.net 部署并配置 API Key。请求转发给 io.net，data 是 io.net 的估价。
+// @Tags			部署
+// @Param			body	body		ionet.PriceEstimationRequest	true	"部署规格"
+// @Success		200		{object}	common.ApiResponse{data=ionet.PriceEstimationResponse}
+// @Security		AdminAuth
+// @Router			/api/deployments/price-estimation [post]
 func GetPriceEstimation(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -618,6 +831,18 @@ func GetPriceEstimation(c *gin.Context) {
 	common.ApiSuccess(c, priceResp)
 }
 
+type deploymentNameAvailability struct {
+	Available bool   `json:"available"`
+	Name      string `json:"name"`
+}
+
+// @Summary		检查部署名称
+// @Description	需已启用 io.net 部署并配置 API Key。
+// @Tags			部署
+// @Param			name	query		string	true	"部署名称"
+// @Success		200		{object}	common.ApiResponse{data=deploymentNameAvailability}
+// @Security		AdminAuth
+// @Router			/api/deployments/check-name [get]
 func CheckClusterNameAvailability(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -636,13 +861,28 @@ func CheckClusterNameAvailability(c *gin.Context) {
 		return
 	}
 
-	data := gin.H{
-		"available": available,
-		"name":      clusterName,
+	data := deploymentNameAvailability{
+		Available: available,
+		Name:      clusterName,
 	}
 	common.ApiSuccess(c, data)
 }
 
+// @Summary		获取容器日志
+// @Description	需已启用 io.net 部署并配置 API Key。data 是 io.net 返回的原始日志文本。
+// @Tags			部署
+// @Param			id				path		string	true	"部署 ID"
+// @Param			container_id	query		string	true	"容器 ID"
+// @Param			level			query		string	false	"日志级别"
+// @Param			stream			query		string	false	"stdout 或 stderr"
+// @Param			cursor			query		string	false	"分页游标"
+// @Param			limit			query		int		false	"条数，默认 100，最大 1000"
+// @Param			follow			query		bool	false	"持续跟随"
+// @Param			start_time		query		string	false	"开始时间，RFC 3339"
+// @Param			end_time		query		string	false	"结束时间，RFC 3339"
+// @Success		200				{object}	common.ApiResponse{data=string}
+// @Security		AdminAuth
+// @Router			/api/deployments/{id}/logs [get]
 func GetDeploymentLogs(c *gin.Context) {
 	client, ok := getIoClient(c)
 	if !ok {
@@ -700,6 +940,36 @@ func GetDeploymentLogs(c *gin.Context) {
 	common.ApiSuccess(c, rawLogs)
 }
 
+type deploymentContainerEvent struct {
+	Time    int64  `json:"time"`
+	Message string `json:"message"`
+}
+
+type deploymentContainer struct {
+	ContainerID      string                     `json:"container_id"`
+	DeviceID         string                     `json:"device_id"`
+	Status           string                     `json:"status"`
+	Hardware         string                     `json:"hardware"`
+	BrandName        string                     `json:"brand_name"`
+	CreatedAt        int64                      `json:"created_at"`
+	UptimePercent    int                        `json:"uptime_percent"`
+	GPUsPerContainer int                        `json:"gpus_per_container"`
+	PublicURL        string                     `json:"public_url"`
+	Events           []deploymentContainerEvent `json:"events"`
+}
+
+type deploymentContainerList struct {
+	Total      int                   `json:"total"`
+	Containers []deploymentContainer `json:"containers"`
+}
+
+// @Summary		列出部署的容器
+// @Description	需已启用 io.net 部署并配置 API Key。
+// @Tags			部署
+// @Param			id	path		string	true	"部署 ID"
+// @Success		200	{object}	common.ApiResponse{data=deploymentContainerList}
+// @Security		AdminAuth
+// @Router			/api/deployments/{id}/containers [get]
 func ListDeploymentContainers(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -717,44 +987,57 @@ func ListDeploymentContainers(c *gin.Context) {
 		return
 	}
 
-	items := make([]map[string]any, 0)
+	items := make([]deploymentContainer, 0)
 	if containers != nil {
-		items = make([]map[string]any, 0, len(containers.Workers))
+		items = make([]deploymentContainer, 0, len(containers.Workers))
 		for _, ctr := range containers.Workers {
-			events := make([]map[string]any, 0, len(ctr.ContainerEvents))
+			events := make([]deploymentContainerEvent, 0, len(ctr.ContainerEvents))
 			for _, event := range ctr.ContainerEvents {
-				events = append(events, map[string]any{
-					"time":    event.Time.Unix(),
-					"message": event.Message,
+				events = append(events, deploymentContainerEvent{
+					Time:    event.Time.Unix(),
+					Message: event.Message,
 				})
 			}
 
-			items = append(items, map[string]any{
-				"container_id":       ctr.ContainerID,
-				"device_id":          ctr.DeviceID,
-				"status":             strings.ToLower(strings.TrimSpace(ctr.Status)),
-				"hardware":           ctr.Hardware,
-				"brand_name":         ctr.BrandName,
-				"created_at":         ctr.CreatedAt.Unix(),
-				"uptime_percent":     ctr.UptimePercent,
-				"gpus_per_container": ctr.GPUsPerContainer,
-				"public_url":         ctr.PublicURL,
-				"events":             events,
+			items = append(items, deploymentContainer{
+				ContainerID:      ctr.ContainerID,
+				DeviceID:         ctr.DeviceID,
+				Status:           strings.ToLower(strings.TrimSpace(ctr.Status)),
+				Hardware:         ctr.Hardware,
+				BrandName:        ctr.BrandName,
+				CreatedAt:        ctr.CreatedAt.Unix(),
+				UptimePercent:    ctr.UptimePercent,
+				GPUsPerContainer: ctr.GPUsPerContainer,
+				PublicURL:        ctr.PublicURL,
+				Events:           events,
 			})
 		}
 	}
 
-	response := gin.H{
-		"total":      0,
-		"containers": items,
+	response := deploymentContainerList{
+		Total:      0,
+		Containers: items,
 	}
 	if containers != nil {
-		response["total"] = containers.Total
+		response.Total = containers.Total
 	}
 
 	common.ApiSuccess(c, response)
 }
 
+type deploymentContainerDetail struct {
+	DeploymentID string `json:"deployment_id"`
+	deploymentContainer
+}
+
+// @Summary		获取容器详情
+// @Description	需已启用 io.net 部署并配置 API Key。
+// @Tags			部署
+// @Param			id				path		string	true	"部署 ID"
+// @Param			container_id	path		string	true	"容器 ID"
+// @Success		200				{object}	common.ApiResponse{data=deploymentContainerDetail}
+// @Security		AdminAuth
+// @Router			/api/deployments/{id}/containers/{container_id} [get]
 func GetContainerDetails(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -781,26 +1064,28 @@ func GetContainerDetails(c *gin.Context) {
 		return
 	}
 
-	events := make([]map[string]any, 0, len(details.ContainerEvents))
+	events := make([]deploymentContainerEvent, 0, len(details.ContainerEvents))
 	for _, event := range details.ContainerEvents {
-		events = append(events, map[string]any{
-			"time":    event.Time.Unix(),
-			"message": event.Message,
+		events = append(events, deploymentContainerEvent{
+			Time:    event.Time.Unix(),
+			Message: event.Message,
 		})
 	}
 
-	data := gin.H{
-		"deployment_id":      deploymentID,
-		"container_id":       details.ContainerID,
-		"device_id":          details.DeviceID,
-		"status":             strings.ToLower(strings.TrimSpace(details.Status)),
-		"hardware":           details.Hardware,
-		"brand_name":         details.BrandName,
-		"created_at":         details.CreatedAt.Unix(),
-		"uptime_percent":     details.UptimePercent,
-		"gpus_per_container": details.GPUsPerContainer,
-		"public_url":         details.PublicURL,
-		"events":             events,
+	data := deploymentContainerDetail{
+		DeploymentID: deploymentID,
+		deploymentContainer: deploymentContainer{
+			ContainerID:      details.ContainerID,
+			DeviceID:         details.DeviceID,
+			Status:           strings.ToLower(strings.TrimSpace(details.Status)),
+			Hardware:         details.Hardware,
+			BrandName:        details.BrandName,
+			CreatedAt:        details.CreatedAt.Unix(),
+			UptimePercent:    details.UptimePercent,
+			GPUsPerContainer: details.GPUsPerContainer,
+			PublicURL:        details.PublicURL,
+			Events:           events,
+		},
 	}
 
 	common.ApiSuccess(c, data)

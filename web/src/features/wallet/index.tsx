@@ -150,7 +150,6 @@ export function Wallet(props: WalletProps) {
                   onRedemptionCodeChange={setRedemptionCode}
                   onRedeem={handleRedeem}
                   redeeming={redeeming}
-                  redemptionEnabled={redemptionInfo.data?.enable_redemption}
                   topupLink={redemptionInfo.data?.topup_link}
                   onOpenBilling={() => setBillingDialogOpen(true)}
                 />
@@ -169,9 +168,6 @@ export function Wallet(props: WalletProps) {
               user={user}
               affiliateLink={affiliateLink}
               onTransfer={() => setTransferDialogOpen(true)}
-              complianceConfirmed={
-                paymentInfo.data?.payment_compliance_confirmed !== false
-              }
               loading={affiliateLoading}
             />
           </div>

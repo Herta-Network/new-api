@@ -30,7 +30,7 @@ import type { PaymentPurpose, PurchaseRequest } from '../types'
 // Payment Queries
 // ============================================================================
 
-/** Site currency, top-up presets and the compliance state. */
+/** Site currency and top-up presets. */
 export function usePaymentInfo() {
   return useQuery(paymentInfoQueryOptions)
 }

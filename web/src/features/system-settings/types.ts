@@ -65,17 +65,6 @@ export interface UpdatePasskeyDomainsResponse extends UpdateOptionResponse {
   data: PasskeyDomainChange
 }
 
-export type ConfirmPaymentComplianceResponse = {
-  success: boolean
-  message: string
-  data?: {
-    confirmed: boolean
-    terms_version: string
-    confirmed_at: number
-    confirmed_by: number
-  }
-}
-
 export type SystemTaskStatus = 'pending' | 'running' | 'succeeded' | 'failed'
 
 export type SystemTask<
@@ -308,11 +297,6 @@ export type BillingSettings = {
   'payment_setting.amount_discount': string
   // Pinned rates by pair, e.g. {"USD/CNY":"7.2"}: one USD in CNY.
   'payment_setting.exchange_rate_overrides': string
-  'payment_setting.compliance_confirmed': boolean
-  'payment_setting.compliance_terms_version': string
-  'payment_setting.compliance_confirmed_at': number
-  'payment_setting.compliance_confirmed_by': number
-  'payment_setting.compliance_confirmed_ip': string
   // The stored key is never returned; this reports whether one is set.
   PaymentExchangeRateKeyConfigured: boolean
   'checkin_setting.enabled': boolean

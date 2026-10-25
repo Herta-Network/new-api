@@ -78,7 +78,18 @@ type PerformanceConfig struct {
 	MonitorDiskThreshold int `json:"monitor_disk_threshold"`
 }
 
+type performanceStatsResponse struct {
+	Success bool             `json:"success"`
+	Data    PerformanceStats `json:"data"`
+}
+
 // GetPerformanceStats 获取性能统计信息
+//
+//	@Summary	获取性能统计
+//	@Tags		系统信息
+//	@Success	200	{object}	performanceStatsResponse
+//	@Security	RootAuth
+//	@Router		/api/performance/stats [get]
 func GetPerformanceStats(c *gin.Context) {
 	// 不再每次获取统计都全量扫描磁盘，依赖原子计数器保证性能
 	// 仅在系统启动或显式清理时同步
@@ -132,13 +143,20 @@ func GetPerformanceStats(c *gin.Context) {
 		Config:        config,
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    stats,
+	c.JSON(http.StatusOK, performanceStatsResponse{
+		Success: true,
+		Data:    stats,
 	})
 }
 
 // ClearDiskCache 清理不活跃的磁盘缓存
+//
+//	@Summary		清理磁盘缓存
+//	@Description	删除超过 10 分钟未使用的磁盘缓存文件。
+//	@Tags			系统信息
+//	@Success		200	{object}	common.ApiResponse
+//	@Security		RootAuth
+//	@Router			/api/performance/disk_cache [delete]
 func ClearDiskCache(c *gin.Context) {
 	// 清理超过 10 分钟未使用的缓存文件
 	// 10 分钟是一个安全的阈值，确保正在进行的请求不会被误删
@@ -152,6 +170,13 @@ func ClearDiskCache(c *gin.Context) {
 }
 
 // ResetPerformanceStats 重置性能统计
+//
+//	@Summary		重置性能统计
+//	@Description	把磁盘缓存和内存缓存的命中次数清零。
+//	@Tags			系统信息
+//	@Success		200	{object}	common.ApiResponse
+//	@Security		RootAuth
+//	@Router			/api/performance/reset_stats [post]
 func ResetPerformanceStats(c *gin.Context) {
 	common.ResetDiskCacheStats()
 
@@ -159,6 +184,12 @@ func ResetPerformanceStats(c *gin.Context) {
 }
 
 // ForceGC 强制执行 GC
+//
+//	@Summary	执行垃圾回收
+//	@Tags		系统信息
+//	@Success	200	{object}	common.ApiResponse
+//	@Security	RootAuth
+//	@Router		/api/performance/gc [post]
 func ForceGC(c *gin.Context) {
 	runtime.GC()
 
@@ -219,6 +250,13 @@ func getLogFiles() ([]LogFileInfo, error) {
 }
 
 // GetLogFiles 获取日志文件列表
+//
+//	@Summary		列出日志文件
+//	@Description	未配置日志目录时 enabled 为 false。
+//	@Tags			系统信息
+//	@Success		200	{object}	common.ApiResponse{data=LogFilesResponse}
+//	@Security		RootAuth
+//	@Router			/api/performance/logs [get]
 func GetLogFiles(c *gin.Context) {
 	if *common.LogDir == "" {
 		common.ApiSuccess(c, LogFilesResponse{Enabled: false})
@@ -254,7 +292,22 @@ func GetLogFiles(c *gin.Context) {
 	common.ApiSuccess(c, resp)
 }
 
+type logFileCleanupResult struct {
+	DeletedCount int      `json:"deleted_count"`
+	FreedBytes   int64    `json:"freed_bytes"`
+	FailedFiles  []string `json:"failed_files"`
+}
+
 // CleanupLogFiles 清理过期日志文件
+//
+//	@Summary		清理日志文件
+//	@Description	不删除正在写入的日志文件。有文件删除失败时 success 为 false，data 仍是清理结果。
+//	@Tags			系统信息
+//	@Param			mode	query		string	true	"by_count（保留最新的 value 个文件）或 by_days（删除 value 天前的文件）"
+//	@Param			value	query		int		true	"文件数或天数，正整数"
+//	@Success		200		{object}	common.ApiResponse{data=logFileCleanupResult}
+//	@Security		RootAuth
+//	@Router			/api/performance/logs [delete]
 func CleanupLogFiles(c *gin.Context) {
 	mode := c.Query("mode")
 	valueStr := c.Query("value")
@@ -320,10 +373,10 @@ func CleanupLogFiles(c *gin.Context) {
 		freedBytes += f.Size
 	}
 
-	result := gin.H{
-		"deleted_count": deletedCount,
-		"freed_bytes":   freedBytes,
-		"failed_files":  failedFiles,
+	result := logFileCleanupResult{
+		DeletedCount: deletedCount,
+		FreedBytes:   freedBytes,
+		FailedFiles:  failedFiles,
 	}
 
 	if len(failedFiles) > 0 {
@@ -335,11 +388,7 @@ func CleanupLogFiles(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    result,
-	})
+	common.ApiSuccess(c, result)
 }
 
 // getDiskCacheInfo 获取磁盘缓存目录信息

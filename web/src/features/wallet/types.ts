@@ -37,8 +37,6 @@ export type AffiliateTransferResponse = ApiResponse
  * Redemption settings (GET /api/user/topup/info)
  */
 export interface RedemptionInfo {
-  /** Codes can be redeemed once the compliance terms are confirmed */
-  enable_redemption: boolean
   /** Where to buy redemption codes */
   topup_link?: string
 }
@@ -102,8 +100,6 @@ export interface PaymentInfo {
   amount_options: number[]
   /** Discount factor (0-1) by preset amount */
   amount_discount: Record<string, number>
-  payment_compliance_confirmed: boolean
-  payment_compliance_terms_version: string
 }
 
 /** Prices a payment method takes, in hundredths; a max of 0 is open-ended. */

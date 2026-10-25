@@ -170,6 +170,12 @@ Tasks that touch none of these (for example unrelated frontend work, authenticat
 - Avoid hand-written assertion helpers unless they encode a reusable project-specific invariant.
 - When cleaning tests, preserve meaningful regression coverage. If a deleted test covered a real contract indirectly, replace it with a smaller test that asserts that contract directly.
 
+**API documentation:** `docs/openapi/api.json` (routes under `/api`) and `docs/openapi/relay.json` (the AI API) are Swagger 2.0 documents that `make openapi` generates from swag annotations with the swag version pinned in `go.mod`; never edit them by hand.
+
+- Every route the router registers has an annotation block: in its handler's doc comment, or, for a closure or a handler shared by routes that differ, in a comment directly above the registration in `router/`. A block has a Chinese `@Summary`, one `@Tags` declared in `router/apidoc/api.go` or `relay.go`, every path, query and body parameter the handler reads, the response (`common.ApiResponse{data=T}` for the `Api*` helpers), the `@Security` scheme matching the route's auth middleware, and one `@Router` line per route.
+- Request bodies and responses are named types, not `gin.H` or anonymous structs, so the documents follow the code.
+- When adding or changing a route, its parameters, body, or response, update the annotation and run `make openapi`. The `router/apidoc` test fails when the documents are out of date or when the documented operations and the registered routes differ.
+
 **Documentation files:**
 
 - Do NOT add new files under `docs/` or any of its subdirectories unless the user explicitly requests it.

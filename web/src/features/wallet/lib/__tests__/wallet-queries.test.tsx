@@ -43,7 +43,7 @@ const RESPONSES: Record<string, unknown> = {
   '/api/user/self': { id: 1, quota: 500 },
   '/api/payment/info': { currency: 'USD', min_topup: 1 },
   '/api/payment/methods': [],
-  '/api/user/topup/info': { enable_redemption: true, topup_link: '' },
+  '/api/user/topup/info': { topup_link: '' },
   '/api/subscription/plans': [],
 }
 

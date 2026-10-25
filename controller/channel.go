@@ -155,6 +155,23 @@ func buildChannelListQuery(group string, statusFilter int, typeFilter int) *gorm
 	return query
 }
 
+type channelOpsRequestPolicy struct {
+	AutomaticDisable bool   `json:"automatic_disable"`
+	Source           string `json:"source"`
+}
+
+type channelOps struct {
+	RetryTimes    int                     `json:"retry_times"`
+	RequestPolicy channelOpsRequestPolicy `json:"request_policy"`
+}
+
+// @Summary		获取渠道运行策略
+// @Description	需要 channel.read 权限。request_policy.source 为 global、channel 或 global_and_channel。
+// @Tags			渠道
+// @Param			auto_ban	query		bool	false	"渠道自己的自动禁用开关；传入时返回该渠道实际生效的策略"
+// @Success		200			{object}	common.ApiResponse{data=channelOps}
+// @Security		AdminAuth
+// @Router			/api/channel/ops [get]
 func GetChannelOps(c *gin.Context) {
 	snapshot := model.CurrentRequestPolicy()
 	automaticDisable, source := snapshot.AutoDisable, "global"
@@ -172,12 +189,18 @@ func GetChannelOps(c *gin.Context) {
 			}
 		}
 	}
-	common.ApiSuccess(c, gin.H{
-		"retry_times":    snapshot.RetryTimes,
-		"request_policy": gin.H{"automatic_disable": automaticDisable, "source": source},
+	common.ApiSuccess(c, channelOps{
+		RetryTimes:    snapshot.RetryTimes,
+		RequestPolicy: channelOpsRequestPolicy{AutomaticDisable: automaticDisable, Source: source},
 	})
 }
 
+// @Summary		获取渠道默认地址
+// @Description	需要 channel.read 权限。data 的键是渠道类型。
+// @Tags			渠道
+// @Success		200	{object}	common.ApiResponse{data=map[string]string}
+// @Security		AdminAuth
+// @Router			/api/channel/default_base_urls [get]
 func GetChannelDefaultBaseURLs(c *gin.Context) {
 	baseURLs := make(map[int]string)
 	for channelType, baseURL := range constant.ChannelBaseURLs {
@@ -188,6 +211,29 @@ func GetChannelDefaultBaseURLs(c *gin.Context) {
 	common.ApiSuccess(c, baseURLs)
 }
 
+type channelListPage struct {
+	Items      []*model.Channel `json:"items"`
+	Total      int64            `json:"total"`
+	Page       int              `json:"page"`
+	PageSize   int              `json:"page_size"`
+	TypeCounts map[int64]int64  `json:"type_counts"`
+}
+
+// @Summary		列出渠道
+// @Description	需要 channel.read 权限。不返回密钥。tag_mode 为 true 时按标签分页，items 是这一页标签下的全部渠道，total 是标签数。type_counts 是不按类型筛选时各渠道类型的数量。
+// @Tags			渠道
+// @Param			p			query		int		false	"页码，从 1 开始"
+// @Param			page_size	query		int		false	"每页数量"
+// @Param			group		query		string	false	"分组，空、all 或 null 表示全部"
+// @Param			status		query		string	false	"状态：enabled 或 1 为启用，disabled 或 0 为未启用（含手动和自动禁用），其他为全部"
+// @Param			type		query		int		false	"渠道类型"
+// @Param			tag_mode	query		bool	false	"按标签分组"
+// @Param			sort_by		query		string	false	"排序字段：id、name、priority、balance、response_time、test_time"
+// @Param			sort_order	query		string	false	"排序方向：asc 或 desc，默认 desc"
+// @Param			id_sort		query		bool	false	"未指定 sort_by 时按 ID 排序，否则按优先级排序"
+// @Success		200			{object}	common.ApiResponse{data=channelListPage}
+// @Security		AdminAuth
+// @Router			/api/channel/ [get]
 func GetAllChannels(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	channelData := make([]*model.Channel, 0)
@@ -274,12 +320,12 @@ func GetAllChannels(c *gin.Context) {
 	for _, r := range results {
 		typeCounts[r.Type] = r.Count
 	}
-	common.ApiSuccess(c, gin.H{
-		"items":       channelData,
-		"total":       total,
-		"page":        pageInfo.GetPage(),
-		"page_size":   pageInfo.GetPageSize(),
-		"type_counts": typeCounts,
+	common.ApiSuccess(c, channelListPage{
+		Items:      channelData,
+		Total:      total,
+		Page:       pageInfo.GetPage(),
+		PageSize:   pageInfo.GetPageSize(),
+		TypeCounts: typeCounts,
 	})
 	return
 }
@@ -318,6 +364,13 @@ func applyFetchModelsHeaderOverrides(channel *model.Channel, key string, headers
 	return nil
 }
 
+// @Summary		获取渠道上游模型
+// @Description	需要 channel.operate 权限。用渠道保存的地址和密钥向上游请求模型列表，不修改渠道。
+// @Tags			渠道
+// @Param			id	path		int	true	"渠道 ID"
+// @Success		200	{object}	common.ApiResponse{data=[]string}
+// @Security		AdminAuth
+// @Router			/api/channel/fetch_models/{id} [get]
 func FetchUpstreamModels(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -337,29 +390,55 @@ func FetchUpstreamModels(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    ids,
-	})
+	common.ApiSuccess(c, ids)
 }
 
+type fixChannelAbilitiesResult struct {
+	Success int `json:"success"`
+	Fails   int `json:"fails"`
+}
+
+// @Summary		修复渠道能力表
+// @Description	需要 channel.operate 权限。按渠道重建模型路由能力表，data 是成功和失败的渠道数；已有修复在进行时失败。
+// @Tags			渠道
+// @Success		200	{object}	common.ApiResponse{data=fixChannelAbilitiesResult}
+// @Security		AdminAuth
+// @Router			/api/channel/fix [post]
 func FixChannelsAbilities(c *gin.Context) {
 	success, fails, err := model.FixAbility()
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data": gin.H{
-			"success": success,
-			"fails":   fails,
-		},
+	common.ApiSuccess(c, fixChannelAbilitiesResult{
+		Success: success,
+		Fails:   fails,
 	})
 }
 
+type channelSearchPage struct {
+	Items      []*model.Channel `json:"items"`
+	Total      int              `json:"total"`
+	TypeCounts map[int64]int64  `json:"type_counts"`
+}
+
+// @Summary		搜索渠道
+// @Description	需要 channel.read 权限。不返回密钥。keyword 匹配 ID、名称、完整密钥或地址；type_counts 是按类型筛选前各渠道类型的数量。tag_mode 为 true 时返回含有匹配渠道的标签下的全部渠道。
+// @Tags			渠道
+// @Param			keyword		query		string	false	"关键词"
+// @Param			group		query		string	false	"分组"
+// @Param			model		query		string	false	"模型名包含的文本"
+// @Param			status		query		string	false	"状态：enabled 或 1 为启用，disabled 或 0 为未启用，其他为全部"
+// @Param			type		query		int		false	"渠道类型"
+// @Param			tag_mode	query		bool	false	"按标签分组"
+// @Param			sort_by		query		string	false	"排序字段：id、name、priority、balance、response_time、test_time"
+// @Param			sort_order	query		string	false	"排序方向：asc 或 desc，默认 desc"
+// @Param			id_sort		query		bool	false	"未指定 sort_by 时按 ID 排序，否则按优先级排序"
+// @Param			p			query		int		false	"页码，从 1 开始"
+// @Param			page_size	query		int		false	"每页数量，默认 20"
+// @Success		200			{object}	common.ApiResponse{data=channelSearchPage}
+// @Security		AdminAuth
+// @Router			/api/channel/search [get]
 func SearchChannels(c *gin.Context) {
 	keyword := c.Query("keyword")
 	group := c.Query("group")
@@ -455,18 +534,21 @@ func SearchChannels(c *gin.Context) {
 		clearChannelInfo(datum)
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data": gin.H{
-			"items":       pagedData,
-			"total":       total,
-			"type_counts": typeCounts,
-		},
+	common.ApiSuccess(c, channelSearchPage{
+		Items:      pagedData,
+		Total:      total,
+		TypeCounts: typeCounts,
 	})
 	return
 }
 
+// @Summary		获取渠道
+// @Description	需要 channel.read 权限。不返回密钥。
+// @Tags			渠道
+// @Param			id	path		int	true	"渠道 ID"
+// @Success		200	{object}	common.ApiResponse{data=model.Channel}
+// @Security		AdminAuth
+// @Router			/api/channel/{id} [get]
 func GetChannel(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -481,16 +563,24 @@ func GetChannel(c *gin.Context) {
 	if channel != nil {
 		clearChannelInfo(channel)
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    channel,
-	})
+	common.ApiSuccess(c, channel)
 	return
+}
+
+type channelKeyResponse struct {
+	Key string `json:"key"`
 }
 
 // GetChannelKey 获取渠道密钥（需要通过安全验证中间件）
 // 此函数依赖 SecureVerificationRequired 中间件，确保用户已通过安全验证
+//
+//	@Summary		查看渠道密钥
+//	@Description	返回完整密钥并记入审计日志。受严格限流。
+//	@Tags			渠道
+//	@Param			id	path		int	true	"渠道 ID"
+//	@Success		200	{object}	common.ApiResponse{data=channelKeyResponse}
+//	@Security		RootAuth && SecurityProof
+//	@Router			/api/channel/{id}/key [post]
 func GetChannelKey(c *gin.Context) {
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil || channelId <= 0 {
@@ -516,8 +606,8 @@ func GetChannelKey(c *gin.Context) {
 	})
 
 	// 返回渠道密钥
-	common.ApiSuccessT(c, "Fetched successfully", map[string]any{
-		"key": channel.Key,
+	common.ApiSuccessT(c, "Fetched successfully", channelKeyResponse{
+		Key: channel.Key,
 	})
 }
 
@@ -658,6 +748,23 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	return nil
 }
 
+type codexCredentialRefreshResult struct {
+	ExpiresAt   string `json:"expires_at"`
+	LastRefresh string `json:"last_refresh"`
+	AccountID   string `json:"account_id"`
+	Email       string `json:"email"`
+	ChannelID   int    `json:"channel_id"`
+	ChannelType int    `json:"channel_type"`
+	ChannelName string `json:"channel_name"`
+}
+
+// @Summary		刷新 Codex 渠道凭证
+// @Description	需要 channel.sensitive_write 权限。用渠道保存的 refresh_token 换取新的访问令牌并保存；成功时 message 为 refreshed。
+// @Tags			渠道
+// @Param			id	path		int	true	"渠道 ID"
+// @Success		200	{object}	common.ApiResponse{data=codexCredentialRefreshResult}
+// @Security		AdminAuth
+// @Router			/api/channel/{id}/codex/refresh [post]
 func RefreshCodexChannelCredential(c *gin.Context) {
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -675,17 +782,17 @@ func RefreshCodexChannelCredential(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "refreshed",
-		"data": gin.H{
-			"expires_at":   oauthKey.Expired,
-			"last_refresh": oauthKey.LastRefresh,
-			"account_id":   oauthKey.AccountID,
-			"email":        oauthKey.Email,
-			"channel_id":   ch.Id,
-			"channel_type": ch.Type,
-			"channel_name": ch.Name,
+	c.JSON(http.StatusOK, common.ApiResponse{
+		Success: true,
+		Message: "refreshed",
+		Data: codexCredentialRefreshResult{
+			ExpiresAt:   oauthKey.Expired,
+			LastRefresh: oauthKey.LastRefresh,
+			AccountID:   oauthKey.AccountID,
+			Email:       oauthKey.Email,
+			ChannelID:   ch.Id,
+			ChannelType: ch.Type,
+			ChannelName: ch.Name,
 		},
 	})
 }
@@ -729,6 +836,13 @@ func getVertexArrayKeys(keys string) ([]string, error) {
 	return cleanKeys, nil
 }
 
+// @Summary		创建渠道
+// @Description	需要 channel.sensitive_write 权限；创建任务插件渠道或绑定任务插件还需要 task_plugin.bind 权限。mode 为 single（单个）、batch（每行一个密钥，各建一个渠道）或 multi_to_single（多个密钥合成一个多密钥渠道）。
+// @Tags			渠道
+// @Param			body	body		AddChannelRequest	true	"创建方式和渠道"
+// @Success		200		{object}	common.ApiResponse
+// @Security		AdminAuth
+// @Router			/api/channel/ [post]
 func AddChannel(c *gin.Context) {
 	addChannelRequest := AddChannelRequest{}
 	err := c.ShouldBindJSON(&addChannelRequest)
@@ -833,13 +947,17 @@ func AddChannel(c *gin.Context) {
 		createAudit["base_url_source"] = "plugin_default"
 	}
 	recordManageAudit(c, "channel.create", createAudit)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 	return
 }
 
+// @Summary		删除渠道
+// @Description	需要 channel.sensitive_write 权限。断开该渠道正在使用的 WebSocket 连接。
+// @Tags			渠道
+// @Param			id	path		int	true	"渠道 ID"
+// @Success		200	{object}	common.ApiResponse
+// @Security		AdminAuth
+// @Router			/api/channel/{id} [delete]
 func DeleteChannel(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	channelName := ""
@@ -868,13 +986,16 @@ func DeleteChannel(c *gin.Context) {
 		"name": channelName,
 	})
 	closeActiveChannelWebSockets([]int{id})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 	return
 }
 
+// @Summary		删除已禁用渠道
+// @Description	需要 channel.sensitive_write 权限。删除所有手动和自动禁用的渠道，data 是删除数量。
+// @Tags			渠道
+// @Success		200	{object}	common.ApiResponse{data=int}
+// @Security		AdminAuth
+// @Router			/api/channel/disabled [delete]
 func DeleteDisabledChannel(c *gin.Context) {
 	var ids []int
 	if err := model.DB.Model(&model.Channel{}).
@@ -896,11 +1017,7 @@ func DeleteDisabledChannel(c *gin.Context) {
 		"count": rows,
 	})
 	closeActiveChannelWebSockets(ids)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    rows,
-	})
+	common.ApiSuccess(c, rows)
 	return
 }
 
@@ -916,6 +1033,13 @@ type ChannelTag struct {
 	HeaderOverride *string `json:"header_override"`
 }
 
+// @Summary		禁用标签下的渠道
+// @Description	需要 channel.operate 权限。断开这些渠道正在使用的 WebSocket 连接。
+// @Tags			渠道
+// @Param			body	body		ChannelTag	true	"只读取 tag"
+// @Success		200		{object}	common.ApiResponse
+// @Security		AdminAuth
+// @Router			/api/channel/tag/disabled [post]
 func DisableTagChannels(c *gin.Context) {
 	channelTag := ChannelTag{}
 	err := c.ShouldBindJSON(&channelTag)
@@ -939,13 +1063,17 @@ func DisableTagChannels(c *gin.Context) {
 		"tag": channelTag.Tag,
 	})
 	closeActiveChannelWebSockets(ids)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 	return
 }
 
+// @Summary		启用标签下的渠道
+// @Description	需要 channel.operate 权限。
+// @Tags			渠道
+// @Param			body	body		ChannelTag	true	"只读取 tag"
+// @Success		200		{object}	common.ApiResponse
+// @Security		AdminAuth
+// @Router			/api/channel/tag/enabled [post]
 func EnableTagChannels(c *gin.Context) {
 	channelTag := ChannelTag{}
 	err := c.ShouldBindJSON(&channelTag)
@@ -962,13 +1090,17 @@ func EnableTagChannels(c *gin.Context) {
 	recordManageAudit(c, "channel.tag_enable", map[string]any{
 		"tag": channelTag.Tag,
 	})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 	return
 }
 
+// @Summary		编辑标签下的渠道
+// @Description	需要 channel.write 权限；修改 param_override 或 header_override 还需要 channel.sensitive_write 权限。只修改请求中非 null 的字段，new_tag 用于重命名标签。
+// @Tags			渠道
+// @Param			body	body		ChannelTag	true	"标签和要修改的字段"
+// @Success		200		{object}	common.ApiResponse
+// @Security		AdminAuth
+// @Router			/api/channel/tag [put]
 func EditTagChannels(c *gin.Context) {
 	channelTag := ChannelTag{}
 	err := c.ShouldBindJSON(&channelTag)
@@ -1010,10 +1142,7 @@ func EditTagChannels(c *gin.Context) {
 	recordManageAudit(c, "channel.tag_edit", map[string]any{
 		"tag": channelTag.Tag,
 	})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 	return
 }
 
@@ -1022,6 +1151,13 @@ type ChannelBatch struct {
 	Tag *string `json:"tag"`
 }
 
+// @Summary		批量删除渠道
+// @Description	需要 channel.sensitive_write 权限。data 是删除数量；断开这些渠道正在使用的 WebSocket 连接。
+// @Tags			渠道
+// @Param			body	body		ChannelBatch	true	"只读取 ids"
+// @Success		200		{object}	common.ApiResponse{data=int}
+// @Security		AdminAuth
+// @Router			/api/channel/batch [post]
 func DeleteChannelBatch(c *gin.Context) {
 	channelBatch := ChannelBatch{}
 	err := c.ShouldBindJSON(&channelBatch)
@@ -1042,11 +1178,7 @@ func DeleteChannelBatch(c *gin.Context) {
 		"count": deletedCount,
 	})
 	closeActiveChannelWebSockets(channelBatch.Ids)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    deletedCount,
-	})
+	common.ApiSuccess(c, deletedCount)
 	return
 }
 
@@ -1065,6 +1197,13 @@ type ChannelStatusBatchRequest struct {
 	Status int   `json:"status"`
 }
 
+// @Summary		更新渠道
+// @Description	需要 channel.write 权限；修改类型、密钥、地址、组织、覆盖、设置等敏感字段还需要 channel.sensitive_write 权限。请求不能带 status。key_mode 为 append 时把 key 追加到多密钥渠道的现有密钥后。data 是更新后的渠道，不含密钥。
+// @Tags			渠道
+// @Param			body	body		PatchChannel	true	"渠道，按 id 定位"
+// @Success		200		{object}	common.ApiResponse{data=PatchChannel}
+// @Security		AdminAuth
+// @Router			/api/channel/ [put]
 func UpdateChannel(c *gin.Context) {
 	channel := PatchChannel{}
 	rawBody, err := c.GetRawData()
@@ -1157,7 +1296,7 @@ func UpdateChannel(c *gin.Context) {
 				if strings.HasPrefix(strings.TrimSpace(originChannel.Key), "[") {
 					// JSON数组格式
 					var arr []json.RawMessage
-					if err := json.Unmarshal([]byte(strings.TrimSpace(originChannel.Key)), &arr); err == nil {
+					if err := common.Unmarshal([]byte(strings.TrimSpace(originChannel.Key)), &arr); err == nil {
 						existingKeys = make([]string, len(arr))
 						for i, v := range arr {
 							existingKeys[i] = string(v)
@@ -1258,14 +1397,18 @@ func UpdateChannel(c *gin.Context) {
 	recordManageAudit(c, "channel.update", updateAudit)
 	channel.Key = ""
 	clearChannelInfo(&channel.Channel)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    channel,
-	})
+	common.ApiSuccess(c, channel)
 	return
 }
 
+// @Summary		更新渠道状态
+// @Description	需要 channel.operate 权限。data 表示状态是否改变；禁用时断开该渠道正在使用的 WebSocket 连接。
+// @Tags			渠道
+// @Param			id		path		int						true	"渠道 ID"
+// @Param			body	body		ChannelStatusRequest	true	"status：1 启用，2 手动禁用"
+// @Success		200		{object}	common.ApiResponse{data=bool}
+// @Security		AdminAuth
+// @Router			/api/channel/{id}/status [post]
 func UpdateChannelStatus(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -1289,13 +1432,16 @@ func UpdateChannelStatus(c *gin.Context) {
 		"status":  req.Status,
 		"changed": changed,
 	})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    changed,
-	})
+	common.ApiSuccess(c, changed)
 }
 
+// @Summary		批量更新渠道状态
+// @Description	需要 channel.operate 权限。data 是状态改变的渠道数；禁用时断开这些渠道正在使用的 WebSocket 连接。
+// @Tags			渠道
+// @Param			body	body		ChannelStatusBatchRequest	true	"status：1 启用，2 手动禁用"
+// @Success		200		{object}	common.ApiResponse{data=int}
+// @Security		AdminAuth
+// @Router			/api/channel/status/batch [post]
 func BatchUpdateChannelStatus(c *gin.Context) {
 	req := ChannelStatusBatchRequest{}
 	if err := c.ShouldBindJSON(&req); err != nil || len(req.Ids) == 0 || !isManageableChannelStatus(req.Status) {
@@ -1323,11 +1469,7 @@ func BatchUpdateChannelStatus(c *gin.Context) {
 		"total":  len(req.Ids),
 		"status": req.Status,
 	})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    changedCount,
-	})
+	common.ApiSuccess(c, changedCount)
 }
 
 func isManageableChannelStatus(status int) bool {
@@ -1423,6 +1565,14 @@ func buildAdvancedCustomModelPreviewChannel(req fetchModelsRequest) (*model.Chan
 	return channel, nil
 }
 
+// @Summary		获取上游模型列表
+// @Description	需要 channel.sensitive_write 权限。用请求中的类型、地址和密钥（多行取第一行，Codex 除外）向上游请求模型列表，不保存。高级自定义渠道还读取 advanced_custom、header_override、proxy；带 channel_id 时以该已保存的高级自定义渠道为基础。
+// @Tags			渠道
+// @Param			body	body		fetchModelsRequest	true	"渠道类型、地址和密钥"
+// @Success		200		{object}	common.ApiResponse{data=[]string}
+// @Failure		400		{object}	common.ApiResponse	"请求体不是合法 JSON"
+// @Security		AdminAuth
+// @Router			/api/channel/fetch_models [post]
 func FetchModels(c *gin.Context) {
 	var req fetchModelsRequest
 
@@ -1467,13 +1617,16 @@ func FetchModels(c *gin.Context) {
 		common.ApiErrorT(c, "Failed to fetch models: {{error}}", map[string]any{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    models,
-	})
+	common.ApiSuccess(c, models)
 }
 
+// @Summary		批量设置渠道标签
+// @Description	需要 channel.write 权限。tag 为 null 时清除标签；data 是请求中的渠道数。
+// @Tags			渠道
+// @Param			body	body		ChannelBatch	true	"渠道 ID 和标签"
+// @Success		200		{object}	common.ApiResponse{data=int}
+// @Security		AdminAuth
+// @Router			/api/channel/batch/tag [post]
 func BatchSetChannelTag(c *gin.Context) {
 	channelBatch := ChannelBatch{}
 	err := c.ShouldBindJSON(&channelBatch)
@@ -1490,14 +1643,19 @@ func BatchSetChannelTag(c *gin.Context) {
 	recordManageAudit(c, "channel.tag_batch_set", map[string]any{
 		"count": len(channelBatch.Ids),
 	})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    len(channelBatch.Ids),
-	})
+	common.ApiSuccess(c, len(channelBatch.Ids))
 	return
 }
 
+// @Summary		获取标签的模型
+// @Description	需要 channel.read 权限。data 是该标签下模型最多的渠道的模型列表（逗号分隔）。
+// @Tags			渠道
+// @Param			tag	query		string	true	"标签"
+// @Success		200	{object}	common.ApiResponse{data=string}
+// @Failure		400	{object}	common.ApiResponse	"缺少 tag"
+// @Failure		500	{object}	common.ApiResponse	"查询失败"
+// @Security		AdminAuth
+// @Router			/api/channel/tag/models [get]
 func GetTagModels(c *gin.Context) {
 	tag := c.Query("tag")
 	if tag == "" {
@@ -1528,12 +1686,12 @@ func GetTagModels(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    longestModels,
-	})
+	common.ApiSuccess(c, longestModels)
 	return
+}
+
+type copyChannelResult struct {
+	ID int `json:"id"`
 }
 
 // CopyChannel handles cloning an existing channel with its key.
@@ -1542,6 +1700,16 @@ func GetTagModels(c *gin.Context) {
 //
 //	suffix         - string appended to the original name (default "_copy")
 //	reset_balance  - bool, when true will reset balance & used_quota to 0 (default true)
+//
+//	@Summary		复制渠道
+//	@Description	需要 channel.sensitive_write 权限；复制任务插件渠道或绑定了任务插件的渠道还需要 task_plugin.bind 权限。连同密钥一起复制，data.id 是新渠道 ID。
+//	@Tags			渠道
+//	@Param			id				path		int		true	"源渠道 ID"
+//	@Param			suffix			query		string	false	"追加到名称后的后缀，默认 _copy"
+//	@Param			reset_balance	query		bool	false	"是否把余额和已用额度清零，默认 true"
+//	@Success		200				{object}	common.ApiResponse{data=copyChannelResult}
+//	@Security		AdminAuth
+//	@Router			/api/channel/copy/{id} [post]
 func CopyChannel(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -1601,13 +1769,13 @@ func CopyChannel(c *gin.Context) {
 		"name":     clone.Name,
 	})
 	// success
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{"id": clone.Id}})
+	common.ApiSuccess(c, copyChannelResult{ID: clone.Id})
 }
 
 // MultiKeyManageRequest represents the request for multi-key management operations
 type MultiKeyManageRequest struct {
 	ChannelId int    `json:"channel_id"`
-	Action    string `json:"action"`              // "disable_key", "enable_key", "delete_key", "delete_disabled_keys", "get_key_status"
+	Action    string `json:"action"`              // "disable_key", "enable_key", "enable_all_keys", "disable_all_keys", "delete_key", "delete_disabled_keys", "get_key_status"
 	KeyIndex  *int   `json:"key_index,omitempty"` // for disable_key, enable_key, and delete_key actions
 	Page      int    `json:"page,omitempty"`      // for get_key_status pagination
 	PageSize  int    `json:"page_size,omitempty"` // for get_key_status pagination
@@ -1636,6 +1804,14 @@ type KeyStatus struct {
 }
 
 // ManageMultiKeys handles multi-key management operations
+//
+//	@Summary		管理多密钥渠道的密钥
+//	@Description	需要 channel.operate 权限；delete_key 和 delete_disabled_keys 还需要 channel.sensitive_write 权限。action 为 get_key_status、disable_key、enable_key、enable_all_keys、disable_all_keys、delete_key 或 delete_disabled_keys（删除自动禁用的密钥）。get_key_status 时 data 是密钥状态分页，delete_disabled_keys 时 data 是删除数量，其余 data 为空。
+//	@Tags			渠道
+//	@Param			body	body		MultiKeyManageRequest	true	"渠道 ID、操作和参数"
+//	@Success		200		{object}	common.ApiResponse{data=MultiKeyStatusResponse}
+//	@Security		AdminAuth
+//	@Router			/api/channel/multi_key/manage [post]
 func ManageMultiKeys(c *gin.Context) {
 	request := MultiKeyManageRequest{}
 	err := c.ShouldBindJSON(&request)
@@ -1770,19 +1946,15 @@ func ManageMultiKeys(c *gin.Context) {
 			pageKeyStatusList = filteredKeyStatusList[start:end]
 		}
 
-		c.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"message": "",
-			"data": MultiKeyStatusResponse{
-				Keys:                pageKeyStatusList,
-				Total:               filteredTotal, // Total of filtered results
-				Page:                page,
-				PageSize:            pageSize,
-				TotalPages:          totalPages,
-				EnabledCount:        enabledCount,        // Overall statistics
-				ManualDisabledCount: manualDisabledCount, // Overall statistics
-				AutoDisabledCount:   autoDisabledCount,   // Overall statistics
-			},
+		common.ApiSuccess(c, MultiKeyStatusResponse{
+			Keys:                pageKeyStatusList,
+			Total:               filteredTotal, // Total of filtered results
+			Page:                page,
+			PageSize:            pageSize,
+			TotalPages:          totalPages,
+			EnabledCount:        enabledCount,        // Overall statistics
+			ManualDisabledCount: manualDisabledCount, // Overall statistics
+			AutoDisabledCount:   autoDisabledCount,   // Overall statistics
 		})
 		return
 
@@ -2069,12 +2241,25 @@ func multiKeyActionRequiresSensitiveWrite(action string) bool {
 	return action == "delete_key" || action == "delete_disabled_keys"
 }
 
+type ollamaModelRequest struct {
+	ChannelID int    `json:"channel_id"`
+	ModelName string `json:"model_name"`
+}
+
 // OllamaPullModel 拉取 Ollama 模型
+//
+//	@Summary		拉取 Ollama 模型
+//	@Description	需要 channel.sensitive_write 权限。让 Ollama 渠道的服务端下载模型，下载完成后才返回。
+//	@Tags			渠道
+//	@Param			body	body		ollamaModelRequest	true	"Ollama 渠道 ID 和模型名"
+//	@Success		200		{object}	common.ApiResponse
+//	@Failure		400		{object}	common.ApiResponse	"参数无效或不是 Ollama 渠道"
+//	@Failure		404		{object}	common.ApiResponse	"渠道不存在"
+//	@Failure		500		{object}	common.ApiResponse	"拉取失败"
+//	@Security		AdminAuth
+//	@Router			/api/channel/ollama/pull [post]
 func OllamaPullModel(c *gin.Context) {
-	var req struct {
-		ChannelID int    `json:"channel_id"`
-		ModelName string `json:"model_name"`
-	}
+	var req ollamaModelRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -2126,18 +2311,23 @@ func OllamaPullModel(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": fmt.Sprintf("Model %s pulled successfully", req.ModelName),
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true, Message: fmt.Sprintf("Model %s pulled successfully", req.ModelName)})
 }
 
 // OllamaPullModelStream 流式拉取 Ollama 模型
+//
+//	@Summary		流式拉取 Ollama 模型
+//	@Description	需要 channel.sensitive_write 权限。以 SSE 推送下载进度：每个 data 是一条 Ollama 进度；结束时推送一条带 message（成功）或 error（失败）的 JSON，最后是 [DONE]。参数错误时返回 JSON。
+//	@Tags			渠道
+//	@Produce		json,event-stream
+//	@Param			body	body		ollamaModelRequest			true	"Ollama 渠道 ID 和模型名"
+//	@Success		200		{object}	ollama.OllamaPullResponse	"SSE 进度事件"
+//	@Failure		400		{object}	common.ApiResponse			"参数无效或不是 Ollama 渠道"
+//	@Failure		404		{object}	common.ApiResponse			"渠道不存在"
+//	@Security		AdminAuth
+//	@Router			/api/channel/ollama/pull/stream [post]
 func OllamaPullModelStream(c *gin.Context) {
-	var req struct {
-		ChannelID int    `json:"channel_id"`
-		ModelName string `json:"model_name"`
-	}
+	var req ollamaModelRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -2189,7 +2379,7 @@ func OllamaPullModelStream(c *gin.Context) {
 
 	// 创建进度回调函数
 	progressCallback := func(progress ollama.OllamaPullResponse) {
-		data, _ := json.Marshal(progress)
+		data, _ := common.Marshal(progress)
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(data))
 		c.Writer.Flush()
 	}
@@ -2198,12 +2388,12 @@ func OllamaPullModelStream(c *gin.Context) {
 	err = ollama.PullOllamaModelStream(baseURL, key, req.ModelName, progressCallback)
 
 	if err != nil {
-		errorData, _ := json.Marshal(gin.H{
+		errorData, _ := common.Marshal(gin.H{
 			"error": err.Error(),
 		})
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(errorData))
 	} else {
-		successData, _ := json.Marshal(gin.H{
+		successData, _ := common.Marshal(gin.H{
 			"message": fmt.Sprintf("Model %s pulled successfully", req.ModelName),
 		})
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(successData))
@@ -2215,11 +2405,19 @@ func OllamaPullModelStream(c *gin.Context) {
 }
 
 // OllamaDeleteModel 删除 Ollama 模型
+//
+//	@Summary		删除 Ollama 模型
+//	@Description	需要 channel.sensitive_write 权限。删除 Ollama 渠道服务端上的模型。
+//	@Tags			渠道
+//	@Param			body	body		ollamaModelRequest	true	"Ollama 渠道 ID 和模型名"
+//	@Success		200		{object}	common.ApiResponse
+//	@Failure		400		{object}	common.ApiResponse	"参数无效或不是 Ollama 渠道"
+//	@Failure		404		{object}	common.ApiResponse	"渠道不存在"
+//	@Failure		500		{object}	common.ApiResponse	"删除失败"
+//	@Security		AdminAuth
+//	@Router			/api/channel/ollama/delete [delete]
 func OllamaDeleteModel(c *gin.Context) {
-	var req struct {
-		ChannelID int    `json:"channel_id"`
-		ModelName string `json:"model_name"`
-	}
+	var req ollamaModelRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -2271,13 +2469,30 @@ func OllamaDeleteModel(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": fmt.Sprintf("Model %s deleted successfully", req.ModelName),
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true, Message: fmt.Sprintf("Model %s deleted successfully", req.ModelName)})
+}
+
+type ollamaVersion struct {
+	Version string `json:"version"`
+}
+
+// ollamaVersionResponse is OllamaVersion's body, which has no message.
+type ollamaVersionResponse struct {
+	Success bool          `json:"success"`
+	Data    ollamaVersion `json:"data"`
 }
 
 // OllamaVersion 获取 Ollama 服务版本信息
+//
+//	@Summary		获取 Ollama 版本
+//	@Description	需要 channel.sensitive_write 权限。成功时响应体没有 message。
+//	@Tags			渠道
+//	@Param			id	path		int	true	"Ollama 渠道 ID"
+//	@Success		200	{object}	ollamaVersionResponse
+//	@Failure		400	{object}	common.ApiResponse	"ID 无效或不是 Ollama 渠道"
+//	@Failure		404	{object}	common.ApiResponse	"渠道不存在"
+//	@Security		AdminAuth
+//	@Router			/api/channel/ollama/version/{id} [get]
 func OllamaVersion(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -2317,10 +2532,8 @@ func OllamaVersion(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data": gin.H{
-			"version": version,
-		},
+	c.JSON(http.StatusOK, ollamaVersionResponse{
+		Success: true,
+		Data:    ollamaVersion{Version: version},
 	})
 }

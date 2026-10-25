@@ -14,13 +14,52 @@ import (
 )
 
 // GetAllModelsMeta 获取模型列表（分页）
+//
+//	@Summary	列出模型元数据
+//	@Tags		模型
+//	@Param		status					query		string	false	"上架状态：enabled（或 1）、disabled（或 0），默认全部"
+//	@Param		sync_official			query		string	false	"是否同步官方元数据：yes（或 1）、no（或 0），默认全部"
+//	@Param		square_state			query		string	false	"模型广场状态：visible、unavailable、unpriced、hidden、partial"
+//	@Param		pricing_mode			query		string	false	"计价方式：expression、task、legacy、unpriced；只含精确名称的模型"
+//	@Param		include_channel_models	query		bool	false	"为 true 时还列出渠道里有、但没有元数据的模型"
+//	@Param		p						query		int		false	"页码，从 1 开始"
+//	@Param		page_size				query		int		false	"每页条数，最多 100"
+//	@Success	200						{object}	common.ApiResponse{data=modelMetaPage}
+//	@Failure	400						{object}	common.ApiResponse	"square_state、pricing_mode 或分页参数无效"
+//	@Security	AdminAuth
+//	@Router		/api/models/ [get]
 func GetAllModelsMeta(c *gin.Context) {
 	listModelsMeta(c, "", "")
 }
 
 // SearchModelsMeta 搜索模型列表
+//
+//	@Summary	搜索模型元数据
+//	@Tags		模型
+//	@Param		keyword					query		string	false	"在模型名、描述和标签中搜索"
+//	@Param		vendor					query		string	false	"供应商 ID，或供应商名称的一部分"
+//	@Param		status					query		string	false	"上架状态：enabled（或 1）、disabled（或 0），默认全部"
+//	@Param		sync_official			query		string	false	"是否同步官方元数据：yes（或 1）、no（或 0），默认全部"
+//	@Param		square_state			query		string	false	"模型广场状态：visible、unavailable、unpriced、hidden、partial"
+//	@Param		pricing_mode			query		string	false	"计价方式：expression、task、legacy、unpriced；只含精确名称的模型"
+//	@Param		include_channel_models	query		bool	false	"为 true 时还列出渠道里有、但没有元数据的模型"
+//	@Param		p						query		int		false	"页码，从 1 开始"
+//	@Param		page_size				query		int		false	"每页条数，最多 100"
+//	@Success	200						{object}	common.ApiResponse{data=modelMetaPage}
+//	@Failure	400						{object}	common.ApiResponse	"square_state、pricing_mode 或分页参数无效"
+//	@Security	AdminAuth
+//	@Router		/api/models/search [get]
 func SearchModelsMeta(c *gin.Context) {
 	listModelsMeta(c, c.Query("keyword"), c.Query("vendor"))
+}
+
+type modelMetaPage struct {
+	Items    []*model.Model `json:"items"`
+	Total    int64          `json:"total"`
+	Page     int            `json:"page"`
+	PageSize int            `json:"page_size"`
+	// VendorCounts maps vendor IDs to their model counts over all models.
+	VendorCounts map[int64]int64 `json:"vendor_counts"`
 }
 
 func listModelsMeta(c *gin.Context, keyword, vendor string) {
@@ -99,16 +138,23 @@ func listModelsMeta(c *gin.Context, keyword, vendor string) {
 	vendorCounts, _ := model.GetVendorModelCounts()
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(modelsMeta)
-	common.ApiSuccess(c, gin.H{
-		"items":         modelsMeta,
-		"total":         total,
-		"page":          pageInfo.GetPage(),
-		"page_size":     pageInfo.GetPageSize(),
-		"vendor_counts": vendorCounts,
+	common.ApiSuccess(c, modelMetaPage{
+		Items:        modelsMeta,
+		Total:        total,
+		Page:         pageInfo.GetPage(),
+		PageSize:     pageInfo.GetPageSize(),
+		VendorCounts: vendorCounts,
 	})
 }
 
 // GetModelMeta 根据 ID 获取单条模型信息
+//
+//	@Summary	获取模型元数据
+//	@Tags		模型
+//	@Param		id	path		int	true	"模型元数据 ID"
+//	@Success	200	{object}	common.ApiResponse{data=model.Model}
+//	@Security	AdminAuth
+//	@Router		/api/models/{id} [get]
 func GetModelMeta(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -129,6 +175,13 @@ func GetModelMeta(c *gin.Context) {
 }
 
 // CreateModelMeta 新建模型
+//
+//	@Summary	创建模型元数据
+//	@Tags		模型
+//	@Param		body	body		model.Model	true	"模型元数据；model_name 必填且不能重复"
+//	@Success	200		{object}	common.ApiResponse{data=model.Model}
+//	@Security	AdminAuth
+//	@Router		/api/models/ [post]
 func CreateModelMeta(c *gin.Context) {
 	var m model.Model
 	if err := c.ShouldBindJSON(&m); err != nil {
@@ -162,6 +215,14 @@ func CreateModelMeta(c *gin.Context) {
 }
 
 // UpdateModelMeta 更新模型
+//
+//	@Summary	更新模型元数据
+//	@Tags		模型
+//	@Param		status_only	query		bool		false	"为 true 时只更新 status（0 或 1）"
+//	@Param		body		body		model.Model	true	"模型元数据；按 id 更新"
+//	@Success	200			{object}	common.ApiResponse{data=model.Model}
+//	@Security	AdminAuth
+//	@Router		/api/models/ [put]
 func UpdateModelMeta(c *gin.Context) {
 	statusOnly := c.Query("status_only") == "true"
 
@@ -214,6 +275,16 @@ func UpdateModelMeta(c *gin.Context) {
 }
 
 // DeleteModelMeta 删除模型
+//
+//	@Summary	删除模型元数据
+//	@Tags		模型
+//	@Param		id						path		int		true	"模型元数据 ID"
+//	@Param		remove_from_channels	query		bool	false	"同时从所有渠道移除此模型名（仅精确名称）"
+//	@Param		remove_pricing			query		bool	false	"同时清除此模型的价格，只有超级管理员能用"
+//	@Success	200						{object}	common.ApiResponse{data=model.ModelDeleteResult}
+//	@Failure	403						{object}	common.ApiResponse	"非超级管理员要求 remove_pricing"
+//	@Security	AdminAuth
+//	@Router		/api/models/{id} [delete]
 func DeleteModelMeta(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -244,12 +315,21 @@ func DeleteModelMeta(c *gin.Context) {
 	common.ApiSuccess(c, result)
 }
 
+type batchDeleteModelMetaRequest struct {
+	ModelIDs           []int `json:"model_ids"`
+	RemoveFromChannels bool  `json:"remove_from_channels"`
+	RemovePricing      bool  `json:"remove_pricing"`
+}
+
+// @Summary	批量删除模型元数据
+// @Tags		模型
+// @Param		body	body		batchDeleteModelMetaRequest	true	"模型元数据 ID（1 到 1000 个）；remove_pricing 只有超级管理员能用"
+// @Success	200		{object}	common.ApiResponse{data=model.ModelDeleteResult}
+// @Failure	403		{object}	common.ApiResponse	"非超级管理员要求 remove_pricing"
+// @Security	AdminAuth
+// @Router		/api/models/delete [post]
 func BatchDeleteModelMeta(c *gin.Context) {
-	var request struct {
-		ModelIDs           []int `json:"model_ids"`
-		RemoveFromChannels bool  `json:"remove_from_channels"`
-		RemovePricing      bool  `json:"remove_pricing"`
-	}
+	var request batchDeleteModelMetaRequest
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
 		common.ApiError(c, err)
 		return
@@ -270,12 +350,21 @@ func BatchDeleteModelMeta(c *gin.Context) {
 // maxCatalogStatusModels bounds one channel editor lookup.
 const maxCatalogStatusModels = 5000
 
+type modelCatalogStatusRequest struct {
+	Models []string `json:"models"`
+}
+
 // GetModelCatalogStatus tells the channel editor which supplied models users
 // will not see because they are unpriced or unlisted.
+//
+//	@Summary	查询模型的目录状态
+//	@Tags		模型
+//	@Param		body	body		modelCatalogStatusRequest										true	"模型名，最多 5000 个"
+//	@Success	200		{object}	common.ApiResponse{data=map[string]model.ModelCatalogStatus}	"键为模型名"
+//	@Security	AdminAuth
+//	@Router		/api/models/catalog_status [post]
 func GetModelCatalogStatus(c *gin.Context) {
-	var request struct {
-		Models []string `json:"models"`
-	}
+	var request modelCatalogStatusRequest
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
 		common.ApiError(c, err)
 		return

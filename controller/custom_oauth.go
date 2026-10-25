@@ -73,6 +73,12 @@ func toCustomOAuthProviderResponse(p *model.CustomOAuthProvider) *CustomOAuthPro
 }
 
 // GetCustomOAuthProviders returns all custom OAuth providers
+//
+//	@Summary	获取自定义 OAuth 提供方列表
+//	@Tags		自定义 OAuth
+//	@Success	200	{object}	common.ApiResponse{data=[]CustomOAuthProviderResponse}
+//	@Security	RootAuth
+//	@Router		/api/custom-oauth-provider/ [get]
 func GetCustomOAuthProviders(c *gin.Context) {
 	providers, err := model.GetAllCustomOAuthProviders()
 	if err != nil {
@@ -85,14 +91,17 @@ func GetCustomOAuthProviders(c *gin.Context) {
 		response[i] = toCustomOAuthProviderResponse(p)
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    response,
-	})
+	common.ApiSuccess(c, response)
 }
 
 // GetCustomOAuthProvider returns a single custom OAuth provider by ID
+//
+//	@Summary	获取自定义 OAuth 提供方
+//	@Tags		自定义 OAuth
+//	@Param		id	path		int	true	"提供方 ID"
+//	@Success	200	{object}	common.ApiResponse{data=CustomOAuthProviderResponse}
+//	@Security	RootAuth
+//	@Router		/api/custom-oauth-provider/{id} [get]
 func GetCustomOAuthProvider(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -107,11 +116,7 @@ func GetCustomOAuthProvider(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    toCustomOAuthProviderResponse(provider),
-	})
+	common.ApiSuccess(c, toCustomOAuthProviderResponse(provider))
 }
 
 // CreateCustomOAuthProviderRequest is the request structure for creating a custom OAuth provider
@@ -141,7 +146,20 @@ type FetchCustomOAuthDiscoveryRequest struct {
 	IssuerURL    string `json:"issuer_url"`
 }
 
+type customOAuthDiscoveryResult struct {
+	WellKnownURL string         `json:"well_known_url"`
+	Discovery    map[string]any `json:"discovery"`
+}
+
 // FetchCustomOAuthDiscovery fetches OIDC discovery document via backend (root-only route)
+//
+//	@Summary		获取 OIDC Discovery 配置
+//	@Description	由服务端请求 well_known_url，未填时请求 issuer_url 下的 /.well-known/openid-configuration，返回解析后的文档。
+//	@Tags			自定义 OAuth
+//	@Param			body	body		FetchCustomOAuthDiscoveryRequest	true	"Discovery URL 或 Issuer URL"
+//	@Success		200		{object}	common.ApiResponse{data=customOAuthDiscoveryResult}
+//	@Security		RootAuth
+//	@Router			/api/custom-oauth-provider/discovery [post]
 func FetchCustomOAuthDiscovery(c *gin.Context) {
 	var req FetchCustomOAuthDiscoveryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -203,17 +221,21 @@ func FetchCustomOAuthDiscovery(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data": gin.H{
-			"well_known_url": targetURL,
-			"discovery":      discovery,
-		},
+	common.ApiSuccess(c, customOAuthDiscoveryResult{
+		WellKnownURL: targetURL,
+		Discovery:    discovery,
 	})
 }
 
 // CreateCustomOAuthProvider creates a new custom OAuth provider
+//
+//	@Summary		创建自定义 OAuth 提供方
+//	@Description	slug 不能与其他提供方或内置提供方重复。
+//	@Tags			自定义 OAuth
+//	@Param			body	body		CreateCustomOAuthProviderRequest	true	"提供方配置"
+//	@Success		200		{object}	common.ApiResponse{data=CustomOAuthProviderResponse}
+//	@Security		RootAuth
+//	@Router			/api/custom-oauth-provider/ [post]
 func CreateCustomOAuthProvider(c *gin.Context) {
 	var req CreateCustomOAuthProviderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -288,6 +310,15 @@ type UpdateCustomOAuthProviderRequest struct {
 }
 
 // UpdateCustomOAuthProvider updates an existing custom OAuth provider
+//
+//	@Summary		更新自定义 OAuth 提供方
+//	@Description	字符串字段为空时不修改（包括 client_secret）；icon、enabled、well_known、auth_style、access_policy、access_denied_message 只在缺省时不修改。
+//	@Tags			自定义 OAuth
+//	@Param			id		path		int									true	"提供方 ID"
+//	@Param			body	body		UpdateCustomOAuthProviderRequest	true	"要修改的字段"
+//	@Success		200		{object}	common.ApiResponse{data=CustomOAuthProviderResponse}
+//	@Security		RootAuth
+//	@Router			/api/custom-oauth-provider/{id} [put]
 func UpdateCustomOAuthProvider(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -395,6 +426,14 @@ func UpdateCustomOAuthProvider(c *gin.Context) {
 }
 
 // DeleteCustomOAuthProvider deletes a custom OAuth provider
+//
+//	@Summary		删除自定义 OAuth 提供方
+//	@Description	还有用户绑定该提供方时不能删除。
+//	@Tags			自定义 OAuth
+//	@Param			id	path		int	true	"提供方 ID"
+//	@Success		200	{object}	common.ApiResponse
+//	@Security		RootAuth
+//	@Router			/api/custom-oauth-provider/{id} [delete]
 func DeleteCustomOAuthProvider(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -458,6 +497,12 @@ func buildUserOAuthBindingsResponse(userId int) ([]UserOAuthBindingResponse, err
 }
 
 // GetUserOAuthBindings returns all OAuth bindings for the current user
+//
+//	@Summary	获取自定义 OAuth 绑定
+//	@Tags		第三方登录
+//	@Success	200	{object}	common.ApiResponse{data=[]UserOAuthBindingResponse}
+//	@Security	UserAuth
+//	@Router		/api/user/oauth/bindings [get]
 func GetUserOAuthBindings(c *gin.Context) {
 	userId := c.GetInt("id")
 	if userId == 0 {
@@ -471,13 +516,16 @@ func GetUserOAuthBindings(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    response,
-	})
+	common.ApiSuccess(c, response)
 }
 
+// @Summary		获取用户的自定义 OAuth 绑定
+// @Description	只能查看角色低于自己的用户，超级管理员不受此限。
+// @Tags			用户管理
+// @Param			id	path		int	true	"用户 ID"
+// @Success		200	{object}	common.ApiResponse{data=[]UserOAuthBindingResponse}
+// @Security		AdminAuth
+// @Router			/api/user/{id}/oauth/bindings [get]
 func GetUserOAuthBindingsByAdmin(c *gin.Context) {
 	userIdStr := c.Param("id")
 	userId, err := strconv.Atoi(userIdStr)
@@ -504,14 +552,18 @@ func GetUserOAuthBindingsByAdmin(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    response,
-	})
+	common.ApiSuccess(c, response)
 }
 
 // UnbindCustomOAuth unbinds a custom OAuth provider from the current user
+//
+//	@Summary		解绑自定义 OAuth
+//	@Description	需要 scope 为 account.binding.unbind 的 X-Security-Proof，其 context 为 {provider_id}；不能解绑最后一种登录方式。
+//	@Tags			第三方登录
+//	@Param			provider_id	path		int	true	"提供方 ID"
+//	@Success		200			{object}	common.ApiResponse{data=bindingNotificationResult}
+//	@Security		UserAuth && SecurityProof
+//	@Router			/api/user/oauth/bindings/{provider_id} [delete]
 func UnbindCustomOAuth(c *gin.Context) {
 	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
@@ -550,9 +602,17 @@ func UnbindCustomOAuth(c *gin.Context) {
 	}
 	notificationFailed = service.NotifyAccountSecurityChange(service.AccountMailLanguage(c, user.Id), user.Email, i18n.MsgSecurityEventLoginUnlinked) != nil
 
-	common.ApiSuccessT(c, "Unbound successfully", gin.H{"notification_warning": notificationFailed})
+	common.ApiSuccessT(c, "Unbound successfully", bindingNotificationResult{NotificationWarning: notificationFailed})
 }
 
+// @Summary		解绑用户的自定义 OAuth
+// @Description	需要 scope 为 admin.user.binding.clear 的 X-Security-Proof，其 context 为 {user_id, provider_id}；只能操作角色低于自己的用户，超级管理员不受此限。
+// @Tags			用户管理
+// @Param			id			path		int	true	"用户 ID"
+// @Param			provider_id	path		int	true	"提供方 ID"
+// @Success		200			{object}	adminBindingClearResponse
+// @Security		AdminAuth && SecurityProof
+// @Router			/api/user/{id}/oauth/bindings/{provider_id} [delete]
 func UnbindCustomOAuthByAdmin(c *gin.Context) {
 	userIdStr := c.Param("id")
 	userId, err := strconv.Atoi(userIdStr)
@@ -595,8 +655,8 @@ func UnbindCustomOAuthByAdmin(c *gin.Context) {
 		"username":            targetUser.Username,
 		"verification_method": authorization.Method,
 	})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "success",
+	c.JSON(http.StatusOK, adminBindingClearResponse{
+		Success: true,
+		Message: "success",
 	})
 }

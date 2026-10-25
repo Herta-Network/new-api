@@ -39,19 +39,6 @@ var completionRatioMetaOptionKeys = []string{
 	"AudioCompletionRatio",
 }
 
-func isPaymentComplianceOptionKey(key string) bool {
-	return strings.HasPrefix(key, "payment_setting.compliance_")
-}
-
-func isPositiveOptionValue(value string) bool {
-	intValue, err := strconv.Atoi(strings.TrimSpace(value))
-	if err == nil {
-		return intValue > 0
-	}
-	floatValue, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-	return err == nil && floatValue > 0
-}
-
 func collectModelNamesFromOptionValue(raw string, modelNames map[string]struct{}) {
 	if strings.TrimSpace(raw) == "" {
 		return
@@ -85,6 +72,12 @@ func buildCompletionRatioMetaValue(optionValues map[string]string) string {
 	return string(jsonBytes)
 }
 
+// @Summary		列出系统设置
+// @Description	不返回键以 Token、Secret、Key、secret 或 api_key 结尾的敏感项，改为附带 ResendKeyConfigured 等是否已配置的派生项；计费表达式和计费模式返回含内置默认值的生效值。
+// @Tags			系统设置
+// @Success		200	{object}	common.ApiResponse{data=[]model.Option}
+// @Security		RootAuth
+// @Router			/api/option/ [get]
 func GetOptions(c *gin.Context) {
 	var options []*model.Option
 	optionValues := make(map[string]string)
@@ -138,11 +131,7 @@ func GetOptions(c *gin.Context) {
 		Key:   "CompletionRatioMeta",
 		Value: buildCompletionRatioMetaValue(optionValues),
 	})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    options,
-	})
+	common.ApiSuccess(c, options)
 }
 
 type OptionUpdateRequest struct {
@@ -150,14 +139,24 @@ type OptionUpdateRequest struct {
 	Value any    `json:"value"`
 }
 
+type updatePasskeyDomainsRequest struct {
+	RPID                *string `json:"rp_id"`
+	LegacyRPIDs         *string `json:"legacy_rp_ids"`
+	Origins             *string `json:"origins"`
+	Preview             bool    `json:"preview"`
+	RemovalConfirmation string  `json:"removal_confirmation"`
+}
+
+// @Summary		更新 Passkey 域名
+// @Description	rp_id、legacy_rp_ids、origins 必填。preview 为 true 时只返回变更影响不保存。移除的域名仍有 Passkey 时返回 409（code 为 PASSKEY_RP_ID_REMOVAL_CONFIRMATION_REQUIRED，data 是变更影响），需带上 data.removal_confirmation 重新提交。
+// @Tags			系统设置
+// @Param			body	body		updatePasskeyDomainsRequest	true	"Passkey 域名设置"
+// @Success		200		{object}	common.ApiResponse{data=model.PasskeyDomainChange}
+// @Failure		409		{object}	common.ApiResponse{data=model.PasskeyDomainChange}
+// @Security		RootAuth
+// @Router			/api/option/passkey/domains [put]
 func UpdatePasskeyDomains(c *gin.Context) {
-	var request struct {
-		RPID                *string `json:"rp_id"`
-		LegacyRPIDs         *string `json:"legacy_rp_ids"`
-		Origins             *string `json:"origins"`
-		Preview             bool    `json:"preview"`
-		RemovalConfirmation string  `json:"removal_confirmation"`
-	}
+	var request updatePasskeyDomainsRequest
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil || request.RPID == nil || request.LegacyRPIDs == nil || request.Origins == nil {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
@@ -194,6 +193,15 @@ func writePasskeyDomainSettingsError(c *gin.Context, err error) {
 	common.ApiError(c, err)
 }
 
+// @Summary		更新系统设置
+// @Description	一次更新一个设置项，value 可以是字符串、数字或布尔值，保存为字符串。Passkey 域名相关项（passkey.rp_id、passkey.legacy_rp_ids、passkey.origins、ServerAddress）成功时 data 是变更影响，移除的域名仍有 Passkey 时返回 409，需改用 PUT /api/option/passkey/domains 确认；其他项没有 data。
+// @Tags			系统设置
+// @Param			body	body		OptionUpdateRequest	true	"设置项"
+// @Success		200		{object}	common.ApiResponse{data=model.PasskeyDomainChange}
+// @Failure		400		{object}	common.ApiResponse
+// @Failure		409		{object}	common.ApiResponse{data=model.PasskeyDomainChange}
+// @Security		RootAuth
+// @Router			/api/option/ [put]
 func UpdateOption(c *gin.Context) {
 	var option OptionUpdateRequest
 	err := common.DecodeJson(c.Request.Body, &option)
@@ -210,18 +218,6 @@ func UpdateOption(c *gin.Context) {
 		option.Value = common.Interface2String(option.Value.(int))
 	default:
 		option.Value = fmt.Sprintf("%v", option.Value)
-	}
-	switch option.Key {
-	case "QuotaForInviter", "QuotaForInvitee":
-		if isPositiveOptionValue(option.Value.(string)) && !operation_setting.IsPaymentComplianceConfirmed() {
-			common.ApiErrorT(c, "Payment, redemption, subscription, and invitation reward features are disabled. The administrator must confirm compliance terms before enabling them.")
-			return
-		}
-	default:
-		if isPaymentComplianceOptionKey(option.Key) {
-			common.ApiErrorT(c, "Compliance confirmation fields cannot be changed through the general settings API")
-			return
-		}
 	}
 	if err := operation_setting.ValidatePaymentOption(option.Key, option.Value.(string)); err != nil {
 		common.ApiError(c, err)
@@ -429,6 +425,15 @@ func UpdateOption(c *gin.Context) {
 			return
 		}
 		recordPasskeyDomainAudit(c, change, false, nil)
+		if option.Key == "ServerAddress" {
+			// Stripe webhooks of methods without a callback domain point at
+			// the server address.
+			gopool.Go(func() {
+				if err := payment.SyncStripeWebhooks(context.Background()); err != nil {
+					common.SysError(common.LogText("sync Stripe webhooks after the server address changed: %v", err))
+				}
+			})
+		}
 		common.ApiSuccess(c, change)
 		return
 	}
@@ -445,22 +450,10 @@ func UpdateOption(c *gin.Context) {
 	recordManageAudit(c, "option.update", map[string]any{
 		"key": option.Key,
 	})
-	if option.Key == "ServerAddress" {
-		// Stripe webhooks of methods without a callback domain point at
-		// the server address.
-		gopool.Go(func() {
-			if err := payment.SyncStripeWebhooks(context.Background()); err != nil {
-				common.SysError(common.LogText("sync Stripe webhooks after the server address changed: %v", err))
-			}
-		})
-	}
 	if option.Key == "payment_setting.currency" || option.Key == "payment_setting.exchange_rate_overrides" {
 		// Amounts show at the new rate on this node now and on the others
 		// within a minute.
 		currency.PublishSiteCurrencyRate()
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 }

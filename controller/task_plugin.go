@@ -47,6 +47,14 @@ type taskPluginUploadRequest struct {
 	Icon string `json:"icon"`
 }
 
+// @Summary		上传任务插件
+// @Description	校验源码（不超过 8 MiB）并保存为覆盖层的一个版本；该插件尚无激活版本时自动激活。enabled 默认 true；启用时与已有插件的路由冲突会被拒绝，force 跳过此检查。同一版本重复上传时只更新 enabled、remark 和图标，源码不同则失败。
+// @Tags			任务插件
+// @Param			body	body		taskPluginUploadRequest	true	"插件源码及选项"
+// @Success		200		{object}	common.ApiResponse{data=taskPluginDetail}
+// @Security		RootAuth
+// @Router			/api/plugin/task [post]
+// @Router			/api/plugin/task [put]
 func UploadTaskPlugin(c *gin.Context) {
 	var request taskPluginUploadRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -107,6 +115,12 @@ func UploadTaskPlugin(c *gin.Context) {
 	common.ApiSuccess(c, taskPluginDetail{Plugin: &plugin, Meta: loaded.Meta, Source: string(plugin.Source), Layer: "override", HasIcon: plugin.HasIcon()})
 }
 
+// @Summary	列出任务插件版本
+// @Tags		任务插件
+// @Param		key	path		string	true	"插件 key"
+// @Success	200	{object}	common.ApiResponse{data=[]model.TaskPlugin}
+// @Security	RootAuth
+// @Router		/api/plugin/task/{key}/versions [get]
 func GetTaskPluginVersions(c *gin.Context) {
 	plugins, err := model.ListTaskPluginVersions(c.Param("key"))
 	if err != nil {
@@ -149,6 +163,12 @@ type taskPluginRuntimeStatus struct {
 	PluginErrors          map[string]string        `json:"plugin_errors"`
 }
 
+// @Summary		列出任务插件
+// @Description	合并内置插件和覆盖层插件；source 是 factory、override 或 override_over_factory，runtime_status 是 registered、compile_failed、not_registered、disabled_fallback 或 disabled。
+// @Tags			任务插件
+// @Success		200	{object}	common.ApiResponse{data=[]taskPluginListItem}
+// @Security		RootAuth
+// @Router			/api/plugin/task [get]
 func ListTaskPlugins(c *gin.Context) {
 	databasePlugins, err := model.ListTaskPlugins()
 	if err != nil {
@@ -253,6 +273,12 @@ func ListTaskPlugins(c *gin.Context) {
 	common.ApiSuccess(c, items)
 }
 
+// @Summary		获取任务插件运行状态
+// @Description	last_rebuild.status 是 success、partial、failed 或 never。
+// @Tags			任务插件
+// @Success		200	{object}	common.ApiResponse{data=taskPluginRuntimeStatus}
+// @Security		RootAuth
+// @Router			/api/plugin/task/runtime/status [get]
 func GetTaskPluginRuntime(c *gin.Context) {
 	routingStatus := jsplugin.DefaultRegistry.RoutingStatus()
 	pluginErrors := routingStatus.Errors
@@ -310,6 +336,16 @@ type taskPluginDetail struct {
 // (or the requested ?version=), then the factory sidecar. Data icons are only
 // ever drawn through <img>, and the nosniff header keeps a browser from
 // treating an SVG response as a document.
+//
+//	@Summary	获取任务插件图标
+//	@Tags		任务插件
+//	@Produce	png,image/svg+xml
+//	@Param		key		path	string	true	"插件 key"
+//	@Param		version	query	string	false	"覆盖层版本，不传时取激活版本，再取内置插件的图标"
+//	@Success	200		{file}	file
+//	@Failure	404		"没有图标"
+//	@Security	RootAuth
+//	@Router		/api/plugin/task/{key}/icon [get]
 func GetTaskPluginIcon(c *gin.Context) {
 	key := c.Param("key")
 	icon := ""
@@ -338,6 +374,14 @@ func GetTaskPluginIcon(c *gin.Context) {
 	c.Data(http.StatusOK, mediaType, data)
 }
 
+// @Summary		获取任务插件
+// @Description	不传 version 时返回激活的覆盖层版本，没有则返回内置插件（layer 为 factory，无 plugin）。
+// @Tags			任务插件
+// @Param			key		path		string	true	"插件 key"
+// @Param			version	query		string	false	"覆盖层版本"
+// @Success		200		{object}	common.ApiResponse{data=taskPluginDetail}
+// @Security		RootAuth
+// @Router			/api/plugin/task/{key} [get]
 func GetTaskPlugin(c *gin.Context) {
 	key := c.Param("key")
 	version := c.Query("version")
@@ -375,6 +419,14 @@ type taskPluginDryRunRequest struct {
 	Args   []json.RawMessage `json:"args"`
 }
 
+// @Summary		试运行任务插件钩子
+// @Description	用激活的覆盖层版本（没有则用内置插件）调用 hook（或 hook 的成员 member），data 是钩子的返回值。
+// @Tags			任务插件
+// @Param			key		path		string					true	"插件 key"
+// @Param			body	body		taskPluginDryRunRequest	true	"钩子名和参数"
+// @Success		200		{object}	common.ApiResponse
+// @Security		RootAuth
+// @Router			/api/plugin/task/{key}/dryrun [post]
 func DryRunTaskPlugin(c *gin.Context) {
 	var request taskPluginDryRunRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -417,6 +469,15 @@ func DryRunTaskPlugin(c *gin.Context) {
 	common.ApiSuccess(c, output)
 }
 
+// @Summary		删除任务插件版本
+// @Description	只能删除覆盖层版本。删除没有内置插件的激活版本时，若仍有渠道绑定或进行中的任务且未传 force=true，返回 success=false，data 含 channels 和 in_flight_count。
+// @Tags			任务插件
+// @Param			key		path		string	true	"插件 key"
+// @Param			version	path		string	true	"版本"
+// @Param			force	query		bool	false	"仍在使用时也删除"
+// @Success		200		{object}	common.ApiResponse
+// @Security		RootAuth
+// @Router			/api/plugin/task/{key}/versions/{version} [delete]
 func DeleteTaskPluginVersion(c *gin.Context) {
 	key := c.Param("key")
 	version := c.Param("version")
@@ -460,6 +521,13 @@ type taskPluginActivateRequest struct {
 	Version string `json:"version" binding:"required"`
 }
 
+// @Summary	激活任务插件版本
+// @Tags		任务插件
+// @Param		key		path		string						true	"插件 key"
+// @Param		body	body		taskPluginActivateRequest	true	"要激活的版本"
+// @Success	200		{object}	common.ApiResponse
+// @Security	RootAuth
+// @Router		/api/plugin/task/{key}/activate [post]
 func ActivateTaskPlugin(c *gin.Context) {
 	var request taskPluginActivateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -501,6 +569,22 @@ type taskPluginStatusRequest struct {
 	Enabled *bool `json:"enabled" binding:"required"`
 }
 
+type taskPluginStatusResult struct {
+	PluginEnabled    bool `json:"plugin_enabled"`
+	DisabledChannels int  `json:"disabled_channels"`
+	UnboundChannels  int  `json:"unbound_channels"`
+}
+
+// @Summary		启用或停用任务插件
+// @Description	同时作用于内置插件和覆盖层。停用时若有渠道绑定且未传 cascade=true，或有进行中的任务且未传 force=true，返回 success=false，data 含 channels 和 in_flight_count。cascade 停用绑定的渠道，New API 类型的渠道只解除绑定。
+// @Tags			任务插件
+// @Param			key		path		string					true	"插件 key"
+// @Param			cascade	query		bool					false	"停用时一并处理绑定的渠道"
+// @Param			force	query		bool					false	"有进行中的任务时也停用"
+// @Param			body	body		taskPluginStatusRequest	true	"是否启用"
+// @Success		200		{object}	common.ApiResponse{data=taskPluginStatusResult}
+// @Security		RootAuth
+// @Router			/api/plugin/task/{key}/status [post]
 func SetTaskPluginStatus(c *gin.Context) {
 	var request taskPluginStatusRequest
 	if err := c.ShouldBindJSON(&request); err != nil || request.Enabled == nil {
@@ -584,7 +668,7 @@ func SetTaskPluginStatus(c *gin.Context) {
 			return
 		}
 		if !hasActiveOverride {
-			common.ApiSuccess(c, gin.H{"plugin_enabled": *request.Enabled, "disabled_channels": disabledChannels, "unbound_channels": unboundChannels})
+			common.ApiSuccess(c, taskPluginStatusResult{PluginEnabled: *request.Enabled, DisabledChannels: disabledChannels, UnboundChannels: unboundChannels})
 			return
 		}
 	}
@@ -596,7 +680,7 @@ func SetTaskPluginStatus(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, gin.H{"plugin_enabled": *request.Enabled, "disabled_channels": disabledChannels, "unbound_channels": unboundChannels})
+	common.ApiSuccess(c, taskPluginStatusResult{PluginEnabled: *request.Enabled, DisabledChannels: disabledChannels, UnboundChannels: unboundChannels})
 }
 
 func taskPluginHasFactory(key string) bool {
@@ -608,10 +692,22 @@ func taskPluginHasFactory(key string) bool {
 	return false
 }
 
+// @Summary	获取插件市场源
+// @Tags		任务插件
+// @Success	200	{object}	common.ApiResponse{data=[]setting.TaskPluginMarketplaceSource}
+// @Security	RootAuth
+// @Router		/api/plugin/task/marketplace/sources [get]
 func GetTaskPluginMarketplaceSources(c *gin.Context) {
 	common.ApiSuccess(c, setting.GetTaskPluginMarketplaceSources())
 }
 
+// @Summary		更新插件市场源
+// @Description	整体替换；每项需要 name 和绝对 http(s) 地址 index_url。返回保存后的列表。
+// @Tags			任务插件
+// @Param			body	body		[]setting.TaskPluginMarketplaceSource	true	"市场源列表"
+// @Success		200		{object}	common.ApiResponse{data=[]setting.TaskPluginMarketplaceSource}
+// @Security		RootAuth
+// @Router			/api/plugin/task/marketplace/sources [put]
 func UpdateTaskPluginMarketplaceSources(c *gin.Context) {
 	var sources []setting.TaskPluginMarketplaceSource
 	if err := c.ShouldBindJSON(&sources); err != nil {
@@ -648,10 +744,32 @@ func UpdateTaskPluginMarketplaceSources(c *gin.Context) {
 	common.ApiSuccess(c, sources)
 }
 
+type taskPluginOption struct {
+	Key           string                               `json:"key"`
+	Name          string                               `json:"name"`
+	Description   jsplugin.LocalizedText               `json:"description"`
+	Icon          string                               `json:"icon"`
+	HasIcon       bool                                 `json:"hasIcon"`
+	BaseURL       string                               `json:"baseUrl"`
+	SortPriority  int                                  `json:"sortPriority"`
+	Website       string                               `json:"website"`
+	Models        []string                             `json:"models"`
+	ChannelTypes  []int                                `json:"channelTypes"`
+	Upstreams     []string                             `json:"upstreams"`
+	UsageSchema   map[string]jsplugin.UsageFieldSchema `json:"usageSchema"`
+	UsageProfiles []jsplugin.UsageProfile              `json:"usageProfiles"`
+}
+
+// @Summary		列出可绑定的任务插件
+// @Description	需要 task_plugin.bind 权限。列出已注册、可绑定到渠道的插件，已停用的内置插件除外。
+// @Tags			任务插件
+// @Success		200	{object}	common.ApiResponse{data=[]taskPluginOption}
+// @Security		AdminAuth
+// @Router			/api/task_plugin_options [get]
 func GetTaskPluginOptions(c *gin.Context) {
 	snapshot := jsplugin.DefaultRegistry.Snapshot()
 	seen := make(map[string]bool)
-	options := make([]gin.H, 0, len(snapshot.Factory)+len(snapshot.Override))
+	options := make([]taskPluginOption, 0, len(snapshot.Factory)+len(snapshot.Override))
 	for layer, metas := range [][]jsplugin.Meta{snapshot.Override, snapshot.Factory} {
 		for _, meta := range metas {
 			if seen[meta.Key] {
@@ -675,29 +793,29 @@ func GetTaskPluginOptions(c *gin.Context) {
 			} else {
 				_, _, hasIcon = plugins.Icon(meta.Key)
 			}
-			options = append(options, gin.H{
-				"key":           meta.Key,
-				"name":          meta.Name,
-				"description":   meta.Description,
-				"icon":          meta.Icon,
-				"hasIcon":       hasIcon,
-				"baseUrl":       meta.BaseURL,
-				"sortPriority":  meta.SortPriority,
-				"website":       meta.Website,
-				"models":        meta.Models,
-				"channelTypes":  meta.ChannelTypes,
-				"upstreams":     meta.Upstreams,
-				"usageSchema":   meta.UsageSchema,
-				"usageProfiles": meta.UsageProfiles,
+			options = append(options, taskPluginOption{
+				Key:           meta.Key,
+				Name:          meta.Name,
+				Description:   meta.Description,
+				Icon:          meta.Icon,
+				HasIcon:       hasIcon,
+				BaseURL:       meta.BaseURL,
+				SortPriority:  meta.SortPriority,
+				Website:       meta.Website,
+				Models:        meta.Models,
+				ChannelTypes:  meta.ChannelTypes,
+				Upstreams:     meta.Upstreams,
+				UsageSchema:   meta.UsageSchema,
+				UsageProfiles: meta.UsageProfiles,
 			})
 		}
 	}
 	sort.Slice(options, func(i, j int) bool {
-		left, right := options[i]["sortPriority"].(int), options[j]["sortPriority"].(int)
+		left, right := options[i].SortPriority, options[j].SortPriority
 		if left != right {
 			return left > right
 		}
-		return options[i]["key"].(string) < options[j]["key"].(string)
+		return options[i].Key < options[j].Key
 	})
 	common.ApiSuccess(c, options)
 }

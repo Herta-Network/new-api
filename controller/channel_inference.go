@@ -46,10 +46,28 @@ type inferenceStatus struct {
 	RawMetrics string                             `json:"raw_metrics"`
 }
 
+// @Summary		获取 vLLM 渠道状态
+// @Description	需要 channel.read 权限。并行读取推理服务的 /health、/version、/v1/models 和 /metrics；单个端点失败时记在 endpoints 里，不影响其他端点。
+// @Tags			渠道
+// @Param			id	path		int	true	"vLLM 渠道 ID"
+// @Success		200	{object}	common.ApiResponse{data=inferenceStatus}
+// @Failure		400	{object}	common.ApiResponse	"渠道 ID 无效"
+// @Failure		404	{object}	common.ApiResponse	"渠道不存在"
+// @Security		AdminAuth
+// @Router			/api/channel/{id}/vllm/status [get]
 func GetVLLMChannelStatus(c *gin.Context) {
 	getInferenceChannelStatus(c, constant.ChannelTypeVLLM)
 }
 
+// @Summary		获取 SGLang 渠道状态
+// @Description	需要 channel.read 权限。并行读取推理服务的 /health、/server_info（只取版本）、/v1/models 和 /metrics；单个端点失败时记在 endpoints 里，不影响其他端点。
+// @Tags			渠道
+// @Param			id	path		int	true	"SGLang 渠道 ID"
+// @Success		200	{object}	common.ApiResponse{data=inferenceStatus}
+// @Failure		400	{object}	common.ApiResponse	"渠道 ID 无效"
+// @Failure		404	{object}	common.ApiResponse	"渠道不存在"
+// @Security		AdminAuth
+// @Router			/api/channel/{id}/sglang/status [get]
 func GetSGLangChannelStatus(c *gin.Context) {
 	getInferenceChannelStatus(c, constant.ChannelTypeSGLang)
 }

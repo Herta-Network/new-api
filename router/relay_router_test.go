@@ -3,9 +3,11 @@ package router
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/pgtest"
 	"github.com/gin-gonic/gin"
@@ -85,6 +87,43 @@ func TestListModelsSupportsOpenAIAndGeminiAuthentication(t *testing.T) {
 			}
 		})
 	}
+}
+
+// /v1/edits is the legacy text Edits API, so its body is validated as a text
+// request, which needs an instruction.
+func TestEditsRouteValidatesTextRequest(t *testing.T) {
+	setupRelayRouterTestDB(t)
+
+	user := model.User{Username: "edits-user", Status: common.UserStatusEnabled, Group: "default", Quota: 100}
+	require.NoError(t, model.DB.Create(&user).Error)
+	require.NoError(t, model.DB.Create(&model.Token{
+		UserId:         user.Id,
+		Key:            "editstestkey",
+		Status:         common.TokenStatusEnabled,
+		ExpiredTime:    -1,
+		UnlimitedQuota: true,
+	}).Error)
+	channel := model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "unused",
+		Status: common.ChannelStatusEnabled,
+		Name:   "edits",
+		Models: "text-davinci-edit-001",
+		Group:  "default",
+	}
+	require.NoError(t, model.DB.Create(&channel).Error)
+	require.NoError(t, channel.AddAbilities(nil))
+
+	engine := gin.New()
+	SetRelayRouter(engine)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/edits", strings.NewReader(`{"model":"text-davinci-edit-001","input":"helo wrld"}`))
+	request.Header.Set("Authorization", "Bearer editstestkey")
+	request.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "field instruction is required")
 }
 
 func setupRelayRouterTestDB(t *testing.T) {

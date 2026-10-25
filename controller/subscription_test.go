@@ -10,7 +10,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/pgtest"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,12 +20,6 @@ import (
 func TestSubscriptionPlanPriceAllowsTwoDecimalPlaces(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	pgtest.Reset(t, model.DB)
-	paymentSetting := operation_setting.GetPaymentSetting()
-	previousConfirmed, previousVersion := paymentSetting.ComplianceConfirmed, paymentSetting.ComplianceTermsVersion
-	t.Cleanup(func() {
-		paymentSetting.ComplianceConfirmed, paymentSetting.ComplianceTermsVersion = previousConfirmed, previousVersion
-	})
-	paymentSetting.ComplianceConfirmed, paymentSetting.ComplianceTermsVersion = true, operation_setting.CurrentComplianceTermsVersion
 
 	router := gin.New()
 	router.POST("/plans", AdminCreateSubscriptionPlan)
@@ -64,4 +57,33 @@ func TestSubscriptionPlanPriceAllowsTwoDecimalPlaces(t *testing.T) {
 	require.True(t, save(http.MethodPut, planPath, "19.99").Success)
 	require.NoError(t, model.DB.First(&plan, plan.Id).Error)
 	assert.Equal(t, 19.99, plan.PriceAmount)
+}
+
+// Saving or switching a plan that does not exist fails instead of reporting
+// success for an update that changed nothing.
+func TestUpdatingMissingSubscriptionPlanFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	pgtest.Reset(t, model.DB)
+
+	router := gin.New()
+	router.PUT("/plans/:id", AdminUpdateSubscriptionPlan)
+	router.PATCH("/plans/:id", AdminUpdateSubscriptionPlanStatus)
+	tests := []struct {
+		method string
+		body   string
+	}{
+		{http.MethodPut, `{"plan":{"title":"Pro","total_amount":1000,"price_amount":9.99}}`},
+		{http.MethodPatch, `{"enabled":false}`},
+	}
+	for _, test := range tests {
+		t.Run(test.method, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(test.method, "/plans/999", strings.NewReader(test.body)))
+			require.Equal(t, http.StatusOK, recorder.Code)
+			var response common.ApiResponse
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+			assert.False(t, response.Success)
+			assert.Equal(t, "Subscription plan does not exist", response.MessageKey)
+		})
+	}
 }

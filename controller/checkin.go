@@ -11,7 +11,30 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// checkinStatusResponse is the body of GetCheckinStatus, which carries no
+// message.
+type checkinStatusResponse struct {
+	Success bool          `json:"success"`
+	Data    checkinStatus `json:"data"`
+}
+
+type checkinStatus struct {
+	Enabled  bool `json:"enabled"`
+	MinQuota int  `json:"min_quota"`
+	MaxQuota int  `json:"max_quota"`
+	// Stats are total_quota, total_checkins, checkin_count (this month),
+	// checked_in_today and records (this month's check-ins).
+	Stats map[string]any `json:"stats"`
+}
+
 // GetCheckinStatus 获取用户签到状态和历史记录
+//
+//	@Summary	获取签到状态
+//	@Tags		签到
+//	@Param		month	query		string	false	"月份，格式 2006-01，默认当月"
+//	@Success	200		{object}	checkinStatusResponse
+//	@Security	UserAuth
+//	@Router		/api/user/checkin [get]
 func GetCheckinStatus(c *gin.Context) {
 	setting := operation_setting.GetCheckinSetting()
 	if !setting.Enabled {
@@ -28,18 +51,30 @@ func GetCheckinStatus(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data": gin.H{
-			"enabled":   setting.Enabled,
-			"min_quota": setting.MinQuota,
-			"max_quota": setting.MaxQuota,
-			"stats":     stats,
+	c.JSON(http.StatusOK, checkinStatusResponse{
+		Success: true,
+		Data: checkinStatus{
+			Enabled:  setting.Enabled,
+			MinQuota: setting.MinQuota,
+			MaxQuota: setting.MaxQuota,
+			Stats:    stats,
 		},
 	})
 }
 
+type checkinResult struct {
+	QuotaAwarded int    `json:"quota_awarded"`
+	CheckinDate  string `json:"checkin_date"`
+}
+
 // DoCheckin 执行用户签到
+//
+//	@Summary	签到
+//	@Tags		签到
+//	@Param		turnstile	query		string	false	"Turnstile 令牌，开启 Turnstile 时必填"
+//	@Success	200			{object}	common.ApiResponse{data=checkinResult}
+//	@Security	UserAuth
+//	@Router		/api/user/checkin [post]
 func DoCheckin(c *gin.Context) {
 	setting := operation_setting.GetCheckinSetting()
 	if !setting.Enabled {
@@ -55,8 +90,8 @@ func DoCheckin(c *gin.Context) {
 		return
 	}
 	model.RecordLog(userId, model.LogTypeSystem, common.NewMessage("Daily check-in, received {{quota}}", map[string]any{"quota": logger.FormatQuota(checkin.QuotaAwarded)}))
-	common.ApiSuccessT(c, "Check-in successful", gin.H{
-		"quota_awarded": checkin.QuotaAwarded,
-		"checkin_date":  checkin.CheckinDate,
+	common.ApiSuccessT(c, "Check-in successful", checkinResult{
+		QuotaAwarded: checkin.QuotaAwarded,
+		CheckinDate:  checkin.CheckinDate,
 	})
 }

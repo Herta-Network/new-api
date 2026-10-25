@@ -938,6 +938,14 @@ func renderTaskPluginProtocolEventsResponse(
 	return response, hookElapsed, nil
 }
 
+// @Summary		查询 Responses 结果
+// @Description	只能查询由任务插件处理的 Responses 请求（如 background 请求）。未完成时返回进行中的 Response，失败时返回 failed 状态的 Response；结果未保留或插件不再处理时返回 404。
+// @Tags			OpenAI
+// @Param			response_id	path		string	true	"Response ID，以 resp_ 开头"
+// @Success		200			{object}	dto.OpenAIResponsesResponse
+// @Failure		default		{object}	TaskProtocolErrorResponse
+// @Security		TokenAuth
+// @Router			/v1/responses/{response_id} [get]
 func RetrieveTaskPluginResponse(c *gin.Context) {
 	retrieveTaskPluginResponse(c, defaultPluginProtocolBridgeDeps())
 }
@@ -1283,11 +1291,9 @@ func respondPluginProtocolSubmissionError(c *gin.Context, taskErr *dto.TaskError
 }
 
 func respondPluginProtocolError(c *gin.Context, status int, code, message string) {
-	c.JSON(status, gin.H{
-		"error": gin.H{
-			"message": message,
-			"type":    "new_api_error",
-			"code":    code,
-		},
-	})
+	c.JSON(status, TaskProtocolErrorResponse{Error: TaskProtocolError{
+		Message: message,
+		Type:    "new_api_error",
+		Code:    code,
+	}})
 }

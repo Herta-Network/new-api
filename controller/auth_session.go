@@ -14,6 +14,15 @@ import (
 	"gorm.io/gorm"
 )
 
+// @Summary		续期登录
+// @Description	凭 new_api_refresh Cookie（HttpOnly、SameSite=Strict、Path=/api/user/auth）轮换 Refresh Token 并签发新的访问令牌；Cookie 安全模式下还校验请求的 Origin 或 Referer。
+// @Description	X-Auth-Session 与 Cookie 所属会话不一致时返回 409 AUTH_SESSION_MISMATCH；Refresh Token 无效或会话已撤销时返回 401 并清除 Cookie。
+// @Tags			认证
+// @Param			X-Auth-Session	header		string	false	"客户端内存中的会话 sid"
+// @Success		200				{object}	common.ApiResponse{data=loginResult}
+// @Failure		401				{object}	common.ApiResponse
+// @Failure		409				{object}	common.ApiResponse
+// @Router			/api/user/auth/refresh [post]
 func RefreshAuth(c *gin.Context) {
 	setAuthNoStore(c)
 	rawRefreshToken, err := c.Cookie(service.RefreshCookieName)
@@ -31,19 +40,22 @@ func RefreshAuth(c *gin.Context) {
 		return
 	}
 	service.WriteRefreshCookie(c, bundle.RefreshToken)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data": gin.H{
-			"access_token":      bundle.AccessToken,
-			"token_type":        bundle.TokenType,
-			"access_expires_at": bundle.AccessExpiresAt,
-			"user":              buildSelfUserData(user),
-			"session":           bundle.Session,
-		},
-	})
+	common.ApiSuccess(c, loginResult{AuthBundle: bundle, User: buildSelfUserData(user)})
 }
 
+type logoutResult struct {
+	RevokedSID    string `json:"revoked_sid"`
+	CookieCleared bool   `json:"cookie_cleared"`
+}
+
+// @Summary		登出
+// @Description	撤销 new_api_refresh Cookie 所属的登录会话并清除 Cookie；Cookie 安全模式下还校验请求的 Origin 或 Referer。
+// @Description	同时带有效的 Authorization: Bearer <访问令牌> 时撤销该令牌所属会话，data 为被撤销的 sid 和是否清除了 Cookie；否则不返回 data。X-Auth-Session 与 Cookie 或访问令牌的会话不一致时返回 409 AUTH_SESSION_MISMATCH。
+// @Tags			认证
+// @Param			X-Auth-Session	header		string	false	"客户端内存中的会话 sid"
+// @Success		200				{object}	common.ApiResponse{data=logoutResult}
+// @Failure		409				{object}	common.ApiResponse
+// @Router			/api/user/auth/logout [post]
 func AuthLogout(c *gin.Context) {
 	setAuthNoStore(c)
 	expectedSID := strings.TrimSpace(c.GetHeader("X-Auth-Session"))
@@ -73,17 +85,13 @@ func AuthLogout(c *gin.Context) {
 				service.ClearRefreshCookie(c)
 				cookieCleared = true
 			}
-			c.JSON(http.StatusOK, gin.H{
-				"success": true,
-				"message": "",
-				"data":    gin.H{"revoked_sid": identity.SessionID, "cookie_cleared": cookieCleared},
-			})
+			common.ApiSuccess(c, logoutResult{RevokedSID: identity.SessionID, CookieCleared: cookieCleared})
 			return
 		}
 	}
 	if cookieErr != nil || rawRefreshToken == "" {
 		service.ClearRefreshCookie(c)
-		c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+		c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 		return
 	}
 	if err := service.RevokeByRefreshToken(rawRefreshToken, expectedSID, "logout"); err != nil {
@@ -91,9 +99,15 @@ func AuthLogout(c *gin.Context) {
 		return
 	}
 	service.ClearRefreshCookie(c)
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 }
 
+// @Summary		获取登录会话
+// @Description	列出当前鉴权版本的有效登录会话，当前会话在前，最多 100 条；仅限浏览器登录会话，个人访问令牌调用返回 403 AUTH_SESSION_REQUIRED。
+// @Tags			登录会话
+// @Success		200	{object}	common.ApiResponse{data=[]service.LoginSessionView}
+// @Security		UserAuth
+// @Router			/api/user/sessions [get]
 func GetLoginSessions(c *gin.Context) {
 	identity, ok := requireBrowserSession(c)
 	if !ok {
@@ -104,9 +118,23 @@ func GetLoginSessions(c *gin.Context) {
 		writeAuthSessionError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": sessions})
+	common.ApiSuccess(c, sessions)
 }
 
+type revokedLoginSession struct {
+	RevokedSID string `json:"revoked_sid"`
+	// Current reports that the revoked session is the caller's own.
+	Current bool `json:"current"`
+}
+
+// @Summary		撤销登录会话
+// @Description	可以撤销当前会话；撤销的是 Refresh Cookie 所属会话时同时清除 Cookie。仅限浏览器登录会话，个人访问令牌调用返回 403 AUTH_SESSION_REQUIRED。
+// @Tags			登录会话
+// @Param			sid	path		string	true	"会话 sid"
+// @Success		200	{object}	common.ApiResponse{data=revokedLoginSession}
+// @Failure		404	{object}	common.ApiResponse
+// @Security		UserAuth
+// @Router			/api/user/sessions/{sid} [delete]
 func DeleteLoginSession(c *gin.Context) {
 	identity, ok := requireBrowserSession(c)
 	if !ok {
@@ -132,9 +160,19 @@ func DeleteLoginSession(c *gin.Context) {
 			service.ClearRefreshCookie(c)
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{"revoked_sid": sid, "current": sid == identity.SessionID}})
+	common.ApiSuccess(c, revokedLoginSession{RevokedSID: sid, Current: sid == identity.SessionID})
 }
 
+type revokedLoginSessions struct {
+	RevokedCount int64 `json:"revoked_count"`
+}
+
+// @Summary		撤销其他登录会话
+// @Description	保留当前会话，撤销其余会话，包括旧鉴权版本残留的会话；仅限浏览器登录会话，个人访问令牌调用返回 403 AUTH_SESSION_REQUIRED。
+// @Tags			登录会话
+// @Success		200	{object}	common.ApiResponse{data=revokedLoginSessions}
+// @Security		UserAuth
+// @Router			/api/user/sessions/revoke-others [post]
 func RevokeOtherLoginSessions(c *gin.Context) {
 	identity, ok := requireBrowserSession(c)
 	if !ok {
@@ -145,7 +183,7 @@ func RevokeOtherLoginSessions(c *gin.Context) {
 		writeAuthSessionError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{"revoked_count": count}})
+	common.ApiSuccess(c, revokedLoginSessions{RevokedCount: count})
 }
 
 func requireBrowserSession(c *gin.Context) (service.AuthIdentity, bool) {
@@ -179,18 +217,11 @@ func setAuthNoStore(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 }
 
-// authRotationData is empty when the change came through an access token,
-// which has no browser session to rotate.
-func authRotationData(bundle *service.AuthBundle) gin.H {
-	if bundle == nil {
-		return gin.H{}
-	}
-	return gin.H{
-		"access_token":      bundle.AccessToken,
-		"token_type":        bundle.TokenType,
-		"access_expires_at": bundle.AccessExpiresAt,
-		"session":           bundle.Session,
-	}
+// sessionRotation carries the access token and login session that replace
+// the current ones after a security change. It is empty when the change came
+// through an access token, which has no browser session to rotate.
+type sessionRotation struct {
+	*service.AuthBundle
 }
 
 func dashboardBearer(header string) (string, bool) {

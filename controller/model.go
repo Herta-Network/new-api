@@ -213,6 +213,28 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 	}, nil
 }
 
+// openAIModelListResponse is the model list in the OpenAI format.
+type openAIModelListResponse struct {
+	Success bool               `json:"success"`
+	Data    []dto.OpenAIModels `json:"data"`
+	Object  string             `json:"object"`
+}
+
+// anthropicModelListResponse is the model list in the Anthropic format.
+type anthropicModelListResponse struct {
+	Data    []dto.AnthropicModel `json:"data"`
+	FirstID string               `json:"first_id"`
+	HasMore bool                 `json:"has_more"`
+	LastID  string               `json:"last_id"`
+}
+
+// geminiModelListResponse is the model list in the Gemini format; the list
+// is never paged, so nextPageToken is always null.
+type geminiModelListResponse struct {
+	Models        []dto.GeminiModel `json:"models"`
+	NextPageToken *string           `json:"nextPageToken"`
+}
+
 func ListModels(c *gin.Context, modelType int) {
 	userModelNames := make([]string, 0)
 	groups, err := getModelListGroups(c)
@@ -271,11 +293,11 @@ func ListModels(c *gin.Context, modelType int) {
 			firstID = useranthropicModels[0].ID
 			lastID = useranthropicModels[len(useranthropicModels)-1].ID
 		}
-		c.JSON(200, gin.H{
-			"data":     useranthropicModels,
-			"first_id": firstID,
-			"has_more": false,
-			"last_id":  lastID,
+		c.JSON(200, anthropicModelListResponse{
+			Data:    useranthropicModels,
+			FirstID: firstID,
+			HasMore: false,
+			LastID:  lastID,
 		})
 	case constant.ChannelTypeGemini:
 		userGeminiModels := make([]dto.GeminiModel, len(userOpenAiModels))
@@ -285,26 +307,51 @@ func ListModels(c *gin.Context, modelType int) {
 				DisplayName: model.Id,
 			}
 		}
-		c.JSON(200, gin.H{
-			"models":        userGeminiModels,
-			"nextPageToken": nil,
+		c.JSON(200, geminiModelListResponse{
+			Models:        userGeminiModels,
+			NextPageToken: nil,
 		})
 	default:
-		c.JSON(200, gin.H{
-			"success": true,
-			"data":    userOpenAiModels,
-			"object":  "list",
+		c.JSON(200, openAIModelListResponse{
+			Success: true,
+			Data:    userOpenAiModels,
+			Object:  "list",
 		})
 	}
 }
 
+// channelModelListResponse is ChannelListModels' body, which has no message.
+type channelModelListResponse struct {
+	Success bool               `json:"success"`
+	Data    []dto.OpenAIModels `json:"data"`
+}
+
+// @Summary		列出内置模型
+// @Description	需要 channel.read 权限。各渠道适配器内置的模型，按模型名去重。成功时响应体没有 message。
+// @Tags			渠道
+// @Success		200	{object}	channelModelListResponse
+// @Security		AdminAuth
+// @Router			/api/channel/models [get]
 func ChannelListModels(c *gin.Context) {
-	c.JSON(200, gin.H{
-		"success": true,
-		"data":    openAIModels,
+	c.JSON(200, channelModelListResponse{
+		Success: true,
+		Data:    openAIModels,
 	})
 }
 
+// dashboardModelListResponse is DashboardListModels' body, which has no
+// message.
+type dashboardModelListResponse struct {
+	Success bool             `json:"success"`
+	Data    map[int][]string `json:"data"`
+}
+
+// @Summary		列出各渠道类型的模型
+// @Description	data 的键是渠道类型，值是该类型内置或任务插件声明的模型。成功时响应体没有 message。
+// @Tags			模型
+// @Success		200	{object}	dashboardModelListResponse
+// @Security		UserAuth
+// @Router			/api/models [get]
 func DashboardListModels(c *gin.Context) {
 	modelsByChannel := make(map[int][]string, len(channelId2Models))
 	for channelType, models := range channelId2Models {
@@ -315,16 +362,28 @@ func DashboardListModels(c *gin.Context) {
 			modelsByChannel[channelType] = append([]string(nil), plugin.Meta.Models...)
 		}
 	}
-	c.JSON(200, gin.H{
-		"success": true,
-		"data":    modelsByChannel,
+	c.JSON(200, dashboardModelListResponse{
+		Success: true,
+		Data:    modelsByChannel,
 	})
 }
 
+// enabledModelListResponse is EnabledListModels' body, which has no message.
+type enabledModelListResponse struct {
+	Success bool     `json:"success"`
+	Data    []string `json:"data"`
+}
+
+// @Summary		列出已启用的模型
+// @Description	需要 channel.read 权限。已启用渠道提供的全部模型名。成功时响应体没有 message。
+// @Tags			渠道
+// @Success		200	{object}	enabledModelListResponse
+// @Security		AdminAuth
+// @Router			/api/channel/models_enabled [get]
 func EnabledListModels(c *gin.Context) {
-	c.JSON(200, gin.H{
-		"success": true,
-		"data":    model.GetEnabledModels(),
+	c.JSON(200, enabledModelListResponse{
+		Success: true,
+		Data:    model.GetEnabledModels(),
 	})
 }
 
@@ -349,8 +408,6 @@ func RetrieveModel(c *gin.Context, modelType int) {
 			Param:   "model",
 			Code:    "model_not_found",
 		}
-		c.JSON(200, gin.H{
-			"error": openAIError,
-		})
+		c.JSON(200, OpenAIErrorResponse{Error: openAIError})
 	}
 }

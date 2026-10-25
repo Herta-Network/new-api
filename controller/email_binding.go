@@ -1,8 +1,6 @@
 package controller
 
 import (
-	"net/http"
-
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
@@ -18,6 +16,19 @@ type emailBindRequest struct {
 	OldCode   string `json:"old_code"`
 }
 
+// bindingNotificationResult reports whether the security notification email
+// about a binding change failed to send.
+type bindingNotificationResult struct {
+	NotificationWarning bool `json:"notification_warning"`
+}
+
+// @Summary		开始绑定邮箱
+// @Description	向新邮箱发送验证码；账户已有邮箱且二次验证没有使用两步验证或 Passkey 时，也向原邮箱发送（old_email_required 为 true）。需要 scope 为 account.binding.bind 的 X-Security-Proof，其 context 为 {provider: "email", email}。
+// @Tags			第三方登录
+// @Param			body	body		emailBindRequest	true	"要绑定的邮箱 email"
+// @Success		200		{object}	common.ApiResponse{data=service.EmailBindingData}
+// @Security		UserAuth && SecurityProof
+// @Router			/api/oauth/email/bind/start [post]
 func EmailBindStart(c *gin.Context) {
 	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
@@ -56,6 +67,14 @@ func EmailBindStart(c *gin.Context) {
 	common.ApiSuccess(c, data)
 }
 
+// @Summary		重发邮箱绑定验证码
+// @Description	未到 resend_at 时返回 429 EMAIL_BINDING_RESEND_WAIT。
+// @Tags			第三方登录
+// @Param			body	body		emailBindRequest	true	"绑定流程的 flow_token"
+// @Success		200		{object}	common.ApiResponse{data=service.EmailBindingData}
+// @Failure		429		{object}	common.ApiResponse
+// @Security		UserAuth
+// @Router			/api/oauth/email/bind/resend [post]
 func EmailBindResend(c *gin.Context) {
 	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
@@ -80,6 +99,13 @@ func EmailBindResend(c *gin.Context) {
 	common.ApiSuccess(c, data)
 }
 
+// @Summary		完成绑定邮箱
+// @Description	提交新邮箱的验证码 new_code，需要验证原邮箱时还要 old_code。
+// @Tags			第三方登录
+// @Param			body	body		emailBindRequest	true	"绑定流程的 flow_token 和验证码"
+// @Success		200		{object}	common.ApiResponse{data=bindingNotificationResult}
+// @Security		UserAuth
+// @Router			/api/oauth/email/bind [post]
 func EmailBind(c *gin.Context) {
 	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
@@ -110,5 +136,5 @@ func EmailBind(c *gin.Context) {
 		writeSecurityOperationError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{"notification_warning": notificationFailed}})
+	common.ApiSuccess(c, bindingNotificationResult{NotificationWarning: notificationFailed})
 }

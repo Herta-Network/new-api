@@ -9,7 +9,7 @@ DEV_POSTGRES_USER = root
 TEST_DB_CONTAINER = new-api-test-postgres
 TEST_DB_PORT ?= 55432
 
-.PHONY: all build-web build-all-web start-api dev dev-api dev-api-rebuild dev-web reset-setup test test-db migration
+.PHONY: all build-web build-all-web start-api dev dev-api dev-api-rebuild dev-web reset-setup test test-db migration openapi
 
 all: build-all-web start-api
 
@@ -66,6 +66,12 @@ test-db:
 		until docker exec $(TEST_DB_CONTAINER) pg_isready -U postgres -d newapi_test >/dev/null 2>&1; do sleep 1; done; \
 	fi
 	@echo "export TEST_POSTGRES_DSN='postgres://postgres:postgres@127.0.0.1:$(TEST_DB_PORT)/newapi_test?sslmode=disable'"
+
+# Regenerates docs/openapi/api.json and relay.json from the swag annotations on
+# the handlers. The router/apidoc test, part of `make test`, fails when the
+# files are out of date or a registered route has no annotation.
+openapi:
+	@GOWORK=off go test ./router/apidoc -run '^TestOpenAPIDocuments$$' -count=1 -update
 
 # Creates the next versioned migration of the main (default) or log schema:
 # make migration NAME=add_user_locale [SET=log]
