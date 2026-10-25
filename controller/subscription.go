@@ -7,7 +7,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/internal/module/payment"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -26,17 +25,12 @@ type BillingPreferenceRequest struct {
 // ---- User APIs ----
 
 // @Summary		列出订阅套餐
-// @Description	只列出已启用的套餐；支付合规条款未确认时返回空列表。
+// @Description	只列出已启用的套餐。
 // @Tags			订阅
 // @Success		200	{object}	common.ApiResponse{data=[]SubscriptionPlanDTO}
 // @Security		UserAuth
 // @Router			/api/subscription/plans [get]
 func GetSubscriptionPlans(c *gin.Context) {
-	if !operation_setting.IsPaymentComplianceConfirmed() {
-		common.ApiSuccess(c, []SubscriptionPlanDTO{})
-		return
-	}
-
 	var plans []model.SubscriptionPlan
 	if err := model.DB.Where("enabled = ?", true).Order("sort_order desc, id desc").Find(&plans).Error; err != nil {
 		common.ApiError(c, err)
@@ -143,18 +137,13 @@ type AdminUpsertSubscriptionPlanRequest struct {
 	Plan model.SubscriptionPlan `json:"plan"`
 }
 
-// @Summary		创建订阅套餐
-// @Description	支付合规条款未确认时返回失败。
-// @Tags			订阅管理
-// @Param			body	body		AdminUpsertSubscriptionPlanRequest	true	"plan.price_amount 为站点货币金额（0–9999，最多两位小数）；plan.total_amount 为总额度，0 不限；allow_balance_pay、allow_wallet_overflow 不传为 true；plan.id 被忽略"
-// @Success		200		{object}	common.ApiResponse{data=model.SubscriptionPlan}
-// @Security		AdminAuth
-// @Router			/api/subscription/admin/plans [post]
+// @Summary	创建订阅套餐
+// @Tags		订阅管理
+// @Param		body	body		AdminUpsertSubscriptionPlanRequest	true	"plan.price_amount 为站点货币金额（0–9999，最多两位小数）；plan.total_amount 为总额度，0 不限；allow_balance_pay、allow_wallet_overflow 不传为 true；plan.id 被忽略"
+// @Success	200		{object}	common.ApiResponse{data=model.SubscriptionPlan}
+// @Security	AdminAuth
+// @Router		/api/subscription/admin/plans [post]
 func AdminCreateSubscriptionPlan(c *gin.Context) {
-	if !requirePaymentCompliance(c) {
-		return
-	}
-
 	var req AdminUpsertSubscriptionPlanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiErrorT(c, "Invalid parameters")
@@ -225,19 +214,14 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 	common.ApiSuccess(c, req.Plan)
 }
 
-// @Summary		更新订阅套餐
-// @Description	支付合规条款未确认时返回失败。
-// @Tags			订阅管理
-// @Param			id		path		int									true	"套餐 ID"
-// @Param			body	body		AdminUpsertSubscriptionPlanRequest	true	"plan.price_amount 为站点货币金额（0–9999，最多两位小数）；plan.total_amount 为总额度，0 不限；allow_balance_pay、allow_wallet_overflow 不传则不变"
-// @Success		200		{object}	common.ApiResponse
-// @Security		AdminAuth
-// @Router			/api/subscription/admin/plans/{id} [put]
+// @Summary	更新订阅套餐
+// @Tags		订阅管理
+// @Param		id		path		int									true	"套餐 ID"
+// @Param		body	body		AdminUpsertSubscriptionPlanRequest	true	"plan.price_amount 为站点货币金额（0–9999，最多两位小数）；plan.total_amount 为总额度，0 不限；allow_balance_pay、allow_wallet_overflow 不传则不变"
+// @Success	200		{object}	common.ApiResponse
+// @Security	AdminAuth
+// @Router		/api/subscription/admin/plans/{id} [put]
 func AdminUpdateSubscriptionPlan(c *gin.Context) {
-	if !requirePaymentCompliance(c) {
-		return
-	}
-
 	id, _ := strconv.Atoi(c.Param("id"))
 	if id <= 0 {
 		common.ApiErrorT(c, "Invalid ID")
@@ -345,19 +329,14 @@ type AdminUpdateSubscriptionPlanStatusRequest struct {
 	Enabled *bool `json:"enabled"`
 }
 
-// @Summary		启用或停用订阅套餐
-// @Description	支付合规条款未确认时返回失败。
-// @Tags			订阅管理
-// @Param			id		path		int											true	"套餐 ID"
-// @Param			body	body		AdminUpdateSubscriptionPlanStatusRequest	true	"enabled 必填"
-// @Success		200		{object}	common.ApiResponse
-// @Security		AdminAuth
-// @Router			/api/subscription/admin/plans/{id} [patch]
+// @Summary	启用或停用订阅套餐
+// @Tags		订阅管理
+// @Param		id		path		int											true	"套餐 ID"
+// @Param		body	body		AdminUpdateSubscriptionPlanStatusRequest	true	"enabled 必填"
+// @Success	200		{object}	common.ApiResponse
+// @Security	AdminAuth
+// @Router		/api/subscription/admin/plans/{id} [patch]
 func AdminUpdateSubscriptionPlanStatus(c *gin.Context) {
-	if !requirePaymentCompliance(c) {
-		return
-	}
-
 	id, _ := strconv.Atoi(c.Param("id"))
 	if id <= 0 {
 		common.ApiErrorT(c, "Invalid ID")
@@ -387,17 +366,13 @@ type AdminBindSubscriptionRequest struct {
 }
 
 // @Summary		为用户开通订阅
-// @Description	不经支付为用户开通套餐。用户分组随之变化时 data 为提示（message、message_key、message_params），否则为 null。支付合规条款未确认时返回失败。
+// @Description	不经支付为用户开通套餐。用户分组随之变化时 data 为提示（message、message_key、message_params），否则为 null。
 // @Tags			订阅管理
 // @Param			body	body		AdminBindSubscriptionRequest	true	"用户 ID 和套餐 ID"
 // @Success		200		{object}	common.ApiResponse{data=subscriptionChangeNotice}
 // @Security		AdminAuth
 // @Router			/api/subscription/admin/bind [post]
 func AdminBindSubscription(c *gin.Context) {
-	if !requirePaymentCompliance(c) {
-		return
-	}
-
 	var req AdminBindSubscriptionRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.UserId <= 0 || req.PlanId <= 0 {
 		common.ApiErrorT(c, "Invalid parameters")
@@ -483,7 +458,7 @@ func recordSubscriptionResetUserLogs(c *gin.Context, result *model.SubscriptionR
 // AdminCreateUserSubscription creates a new user subscription from a plan (no payment).
 //
 //	@Summary		为用户添加订阅
-//	@Description	不经支付为用户开通套餐。用户分组随之变化时 data 为提示（message、message_key、message_params），否则为 null。支付合规条款未确认时返回失败。
+//	@Description	不经支付为用户开通套餐。用户分组随之变化时 data 为提示（message、message_key、message_params），否则为 null。
 //	@Tags			订阅管理
 //	@Param			id		path		int									true	"用户 ID"
 //	@Param			body	body		AdminCreateUserSubscriptionRequest	true	"套餐 ID"
@@ -491,10 +466,6 @@ func recordSubscriptionResetUserLogs(c *gin.Context, result *model.SubscriptionR
 //	@Security		AdminAuth
 //	@Router			/api/subscription/admin/users/{id}/subscriptions [post]
 func AdminCreateUserSubscription(c *gin.Context) {
-	if !requirePaymentCompliance(c) {
-		return
-	}
-
 	userId, _ := strconv.Atoi(c.Param("id"))
 	if userId <= 0 {
 		common.ApiErrorT(c, "Invalid user ID")

@@ -8,7 +8,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
 )
@@ -79,18 +78,13 @@ func GetRedemption(c *gin.Context) {
 }
 
 // @Summary		生成兑换码
-// @Description	data 为生成的兑换码。中途失败时 success 为 false，data 为已生成的兑换码。支付合规条款未确认时返回失败。
+// @Description	data 为生成的兑换码。中途失败时 success 为 false，data 为已生成的兑换码。
 // @Tags			兑换码
 // @Param			body	body		model.Redemption	true	"只用到 name（1–20 字）、count（生成个数，1–100）、quota（每个兑换码的额度，正数）和 expired_time（过期时间，Unix 秒，0 不过期）"
 // @Success		200		{object}	common.ApiResponse{data=[]string}
 // @Security		AdminAuth
 // @Router			/api/redemption/ [post]
 func AddRedemption(c *gin.Context) {
-	if !operation_setting.IsPaymentComplianceConfirmed() {
-		common.ApiErrorT(c, "Payment, redemption, subscription, and invitation reward features are disabled. The administrator must confirm compliance terms before enabling them.")
-		return
-	}
-
 	redemption := model.Redemption{}
 	err := c.ShouldBindJSON(&redemption)
 	if err != nil {

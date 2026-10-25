@@ -10,7 +10,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/pgtest"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,12 +20,6 @@ import (
 func TestSubscriptionPlanPriceAllowsTwoDecimalPlaces(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	pgtest.Reset(t, model.DB)
-	paymentSetting := operation_setting.GetPaymentSetting()
-	previousConfirmed, previousVersion := paymentSetting.ComplianceConfirmed, paymentSetting.ComplianceTermsVersion
-	t.Cleanup(func() {
-		paymentSetting.ComplianceConfirmed, paymentSetting.ComplianceTermsVersion = previousConfirmed, previousVersion
-	})
-	paymentSetting.ComplianceConfirmed, paymentSetting.ComplianceTermsVersion = true, operation_setting.CurrentComplianceTermsVersion
 
 	router := gin.New()
 	router.POST("/plans", AdminCreateSubscriptionPlan)
@@ -71,12 +64,6 @@ func TestSubscriptionPlanPriceAllowsTwoDecimalPlaces(t *testing.T) {
 func TestUpdatingMissingSubscriptionPlanFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	pgtest.Reset(t, model.DB)
-	paymentSetting := operation_setting.GetPaymentSetting()
-	previousConfirmed, previousVersion := paymentSetting.ComplianceConfirmed, paymentSetting.ComplianceTermsVersion
-	t.Cleanup(func() {
-		paymentSetting.ComplianceConfirmed, paymentSetting.ComplianceTermsVersion = previousConfirmed, previousVersion
-	})
-	paymentSetting.ComplianceConfirmed, paymentSetting.ComplianceTermsVersion = true, operation_setting.CurrentComplianceTermsVersion
 
 	router := gin.New()
 	router.PUT("/plans/:id", AdminUpdateSubscriptionPlan)

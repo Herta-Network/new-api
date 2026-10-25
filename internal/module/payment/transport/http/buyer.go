@@ -42,9 +42,7 @@ type paymentInfo struct {
 	AmountOptions []int `json:"amount_options"`
 	// AmountDiscount maps such an amount to the multiplier its price is
 	// charged at.
-	AmountDiscount                map[int]float64 `json:"amount_discount"`
-	PaymentComplianceConfirmed    bool            `json:"payment_compliance_confirmed"`
-	PaymentComplianceTermsVersion string          `json:"payment_compliance_terms_version"`
+	AmountDiscount map[int]float64 `json:"amount_discount"`
 }
 
 // GetPaymentInfo returns what the wallet page needs to offer a top-up.
@@ -57,30 +55,23 @@ type paymentInfo struct {
 func GetPaymentInfo(c *gin.Context) {
 	settings := operation_setting.GetPaymentSetting()
 	common.ApiSuccess(c, paymentInfo{
-		Currency:                      operation_setting.PaymentCurrency(),
-		MinTopup:                      settings.MinTopup,
-		AmountOptions:                 settings.AmountOptions,
-		AmountDiscount:                settings.AmountDiscount,
-		PaymentComplianceConfirmed:    operation_setting.IsPaymentComplianceConfirmed(),
-		PaymentComplianceTermsVersion: operation_setting.CurrentComplianceTermsVersion,
+		Currency:       operation_setting.PaymentCurrency(),
+		MinTopup:       settings.MinTopup,
+		AmountOptions:  settings.AmountOptions,
+		AmountDiscount: settings.AmountDiscount,
 	})
 }
 
 // GetBuyerPaymentMethods lists the payment options the purpose in the
 // query can be paid with.
 //
-//	@Summary		列出可用支付方式
-//	@Description	支付合规条款未确认时返回空列表。
-//	@Tags			支付
-//	@Param			purpose	query		string	true	"购买用途：topup（充值）或 subscription（订阅）"
-//	@Success		200		{object}	common.ApiResponse{data=[]payment.OptionView}
-//	@Security		UserAuth
-//	@Router			/api/payment/methods [get]
+//	@Summary	列出可用支付方式
+//	@Tags		支付
+//	@Param		purpose	query		string	true	"购买用途：topup（充值）或 subscription（订阅）"
+//	@Success	200		{object}	common.ApiResponse{data=[]payment.OptionView}
+//	@Security	UserAuth
+//	@Router		/api/payment/methods [get]
 func GetBuyerPaymentMethods(c *gin.Context) {
-	if !operation_setting.IsPaymentComplianceConfirmed() {
-		common.ApiSuccess(c, []payment.OptionView{})
-		return
-	}
 	options, err := payment.BuyerOptions(c.Request.Context(), c.Query("purpose"))
 	if err != nil {
 		paymentAPIError(c, err)
@@ -114,7 +105,7 @@ func decodePurchase(c *gin.Context) (payment.PurchaseRequest, bool) {
 // QuotePayment prices a purchase without creating an order.
 //
 //	@Summary		购买报价
-//	@Description	返回的金额以站点货币的 1/100 为单位（1234 即 12.34）。支付合规条款未确认时返回失败。
+//	@Description	返回的金额以站点货币的 1/100 为单位（1234 即 12.34）。
 //	@Tags			支付
 //	@Param			body	body		payment.PurchaseRequest	true	"purpose 为 topup 或 subscription；payment_option_id 为支付方式 ID，-1 为余额；充值时 amount 为站点货币金额，JSON 数字，最多两位小数；订阅时 plan_id 为套餐 ID"
 //	@Success		200		{object}	common.ApiResponse{data=payment.Quote}
@@ -141,7 +132,7 @@ type createdPaymentOrder struct {
 // CreatePaymentOrder creates an order and starts its payment.
 //
 //	@Summary		创建支付订单
-//	@Description	创建订单并开始支付：checkout.type 为 url（打开链接）、stripe（用 Stripe.js 确认）、qrcode（展示二维码）或 paid（余额或免费购买已完成）。按用户限流；支付合规条款未确认时返回失败。
+//	@Description	创建订单并开始支付：checkout.type 为 url（打开链接）、stripe（用 Stripe.js 确认）、qrcode（展示二维码）或 paid（余额或免费购买已完成）。按用户限流。
 //	@Tags			支付
 //	@Param			body	body		payment.PurchaseRequest	true	"purpose 为 topup 或 subscription；payment_option_id 为支付方式 ID，-1 为余额；充值时 amount 为站点货币金额，JSON 数字，最多两位小数；订阅时 plan_id 为套餐 ID"
 //	@Success		200		{object}	common.ApiResponse{data=createdPaymentOrder}
@@ -167,7 +158,7 @@ func CreatePaymentOrder(c *gin.Context) {
 // CheckoutPaymentOrder starts the payment of a pending order again.
 //
 //	@Summary		重新发起支付
-//	@Description	按用户限流；支付合规条款未确认时返回失败。
+//	@Description	按用户限流。
 //	@Tags			支付
 //	@Param			no	path		string	true	"订单号"
 //	@Success		200	{object}	common.ApiResponse{data=payment.Checkout}

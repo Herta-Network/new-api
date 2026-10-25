@@ -6572,57 +6572,6 @@
                 }
             }
         },
-        "/api/option/payment_compliance": {
-            "post": {
-                "security": [
-                    {
-                        "RootAuth": []
-                    }
-                ],
-                "description": "确认后开放支付、兑换码、订阅和邀请奖励功能。须用登录得到的访问令牌，用个人访问令牌（PAT）调用返回 403。",
-                "tags": [
-                    "系统设置"
-                ],
-                "summary": "确认支付合规条款",
-                "parameters": [
-                    {
-                        "description": "confirmed 须为 true",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/controller.PaymentComplianceRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/common.ApiResponse"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/controller.paymentComplianceConfirmation"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "403": {
-                        "description": "用个人访问令牌调用",
-                        "schema": {
-                            "$ref": "#/definitions/common.ApiResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/api/option/request_policy": {
             "get": {
                 "security": [
@@ -7169,7 +7118,6 @@
                         "UserAuth": []
                     }
                 ],
-                "description": "支付合规条款未确认时返回空列表。",
                 "tags": [
                     "支付"
                 ],
@@ -7403,7 +7351,7 @@
                         "UserAuth": []
                     }
                 ],
-                "description": "创建订单并开始支付：checkout.type 为 url（打开链接）、stripe（用 Stripe.js 确认）、qrcode（展示二维码）或 paid（余额或免费购买已完成）。按用户限流；支付合规条款未确认时返回失败。",
+                "description": "创建订单并开始支付：checkout.type 为 url（打开链接）、stripe（用 Stripe.js 确认）、qrcode（展示二维码）或 paid（余额或免费购买已完成）。按用户限流。",
                 "tags": [
                     "支付"
                 ],
@@ -7490,7 +7438,7 @@
                         "UserAuth": []
                     }
                 ],
-                "description": "按用户限流；支付合规条款未确认时返回失败。",
+                "description": "按用户限流。",
                 "tags": [
                     "支付"
                 ],
@@ -7619,7 +7567,7 @@
                         "UserAuth": []
                     }
                 ],
-                "description": "返回的金额以站点货币的 1/100 为单位（1234 即 12.34）。支付合规条款未确认时返回失败。",
+                "description": "返回的金额以站点货币的 1/100 为单位（1234 即 12.34）。",
                 "tags": [
                     "支付"
                 ],
@@ -9444,7 +9392,7 @@
                         "AdminAuth": []
                     }
                 ],
-                "description": "data 为生成的兑换码。中途失败时 success 为 false，data 为已生成的兑换码。支付合规条款未确认时返回失败。",
+                "description": "data 为生成的兑换码。中途失败时 success 为 false，data 为已生成的兑换码。",
                 "tags": [
                     "兑换码"
                 ],
@@ -9846,7 +9794,7 @@
                         "AdminAuth": []
                     }
                 ],
-                "description": "不经支付为用户开通套餐。用户分组随之变化时 data 为提示（message、message_key、message_params），否则为 null。支付合规条款未确认时返回失败。",
+                "description": "不经支付为用户开通套餐。用户分组随之变化时 data 为提示（message、message_key、message_params），否则为 null。",
                 "tags": [
                     "订阅管理"
                 ],
@@ -9925,7 +9873,6 @@
                         "AdminAuth": []
                     }
                 ],
-                "description": "支付合规条款未确认时返回失败。",
                 "tags": [
                     "订阅管理"
                 ],
@@ -9970,7 +9917,6 @@
                         "AdminAuth": []
                     }
                 ],
-                "description": "支付合规条款未确认时返回失败。",
                 "tags": [
                     "订阅管理"
                 ],
@@ -10008,7 +9954,6 @@
                         "AdminAuth": []
                     }
                 ],
-                "description": "支付合规条款未确认时返回失败。",
                 "tags": [
                     "订阅管理"
                 ],
@@ -10229,7 +10174,7 @@
                         "AdminAuth": []
                     }
                 ],
-                "description": "不经支付为用户开通套餐。用户分组随之变化时 data 为提示（message、message_key、message_params），否则为 null。支付合规条款未确认时返回失败。",
+                "description": "不经支付为用户开通套餐。用户分组随之变化时 data 为提示（message、message_key、message_params），否则为 null。",
                 "tags": [
                     "订阅管理"
                 ],
@@ -10333,7 +10278,7 @@
                         "UserAuth": []
                     }
                 ],
-                "description": "只列出已启用的套餐；支付合规条款未确认时返回空列表。",
+                "description": "只列出已启用的套餐。",
                 "tags": [
                     "订阅"
                 ],
@@ -12326,7 +12271,6 @@
                         "UserAuth": []
                     }
                 ],
-                "description": "需要管理员已确认支付合规。",
                 "tags": [
                     "个人"
                 ],
@@ -13749,7 +13693,7 @@
                         "UserAuth": []
                     }
                 ],
-                "description": "需要管理员已确认支付合规；data 为到账额度。",
+                "description": "data 为到账额度。",
                 "tags": [
                     "个人"
                 ],
@@ -15934,14 +15878,6 @@
                 }
             }
         },
-        "controller.PaymentComplianceRequest": {
-            "type": "object",
-            "properties": {
-                "confirmed": {
-                    "type": "boolean"
-                }
-            }
-        },
         "controller.PerformanceConfig": {
             "type": "object",
             "properties": {
@@ -17903,23 +17839,6 @@
                 }
             }
         },
-        "controller.paymentComplianceConfirmation": {
-            "type": "object",
-            "properties": {
-                "confirmed": {
-                    "type": "boolean"
-                },
-                "confirmed_at": {
-                    "type": "integer"
-                },
-                "confirmed_by": {
-                    "type": "integer"
-                },
-                "terms_version": {
-                    "type": "string"
-                }
-            }
-        },
         "controller.perfMetricsResponse": {
             "type": "object",
             "properties": {
@@ -18121,9 +18040,6 @@
         "controller.selfTopUpInfo": {
             "type": "object",
             "properties": {
-                "enable_redemption": {
-                    "type": "boolean"
-                },
                 "topup_link": {
                     "type": "string"
                 }
@@ -19950,12 +19866,6 @@
                 },
                 "min_topup": {
                     "description": "MinTopup is the smallest top-up, a decimal amount of the site currency.",
-                    "type": "string"
-                },
-                "payment_compliance_confirmed": {
-                    "type": "boolean"
-                },
-                "payment_compliance_terms_version": {
                     "type": "string"
                 }
             }

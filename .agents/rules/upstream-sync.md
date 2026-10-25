@@ -21,6 +21,7 @@ Each area below differs from upstream by design. Keep the fork's design when res
 | Admin home | `/admin` is an operations overview backed by `/api/admin/console/*`. The older analytics tabs are detail pages. | `internal/module/console/`, `web/src/features/dashboard/` |
 | Model pricing | Model metadata and pricing share one workspace under `/admin/models`. Prices are edited through a simple real-price form that writes billing expressions, with the expression editor as the advanced mode. The system-settings Model Pricing page and `ratio-settings-card.tsx` are removed. | `web/src/features/models/`, `web/src/features/model-pricing/` |
 | Group pricing | The group pricing UI is rebuilt around a group list, advanced rules, and a price simulator. Group semantics and backend logic are unchanged. | `web/src/features/system-settings/billing/group-pricing/` |
+| Payment compliance | The compliance acknowledgement that gated payments, redemption codes, subscription plans, and invitation rewards is removed: no `payment_setting.compliance_*` settings, `POST /api/option/payment_compliance`, `middleware.PaymentCompliance`, or `RiskAcknowledgementDialog`, and those features are always available. | `controller/`, `internal/module/payment/`, `web/src/features/system-settings/integrations/payment-settings-section.tsx` |
 | Desktop | Electron is removed. | — |
 | Modules | Fork-owned domains are modules under `internal/module/` with an arch-tested boundary; the rest keeps upstream's layout as the shared kernel. Modules write kernel tables only through `model/module_api.go`. | `internal/module/`, `internal/arch/`, `model/module_api.go` |
 | Fork features | OpenCode Go channel (type 64), thinking-signature repair, 429 cooldown, Coding Plan usage, conversation session recognition (`internal/module/conversation`), fast GPT token counting in `tokenkit/`, per-user payment rate limits, SMTP sender parsing, log and `quota_data` I/O tuning. | various |
@@ -31,7 +32,7 @@ List the incoming commits (`git log --oneline $(git merge-base main upstream/mai
 
 - **Adopt as-is:** relay and channel adaptors, `relaykit/`, `tokenkit/`, task plugins (`pkg/jsplugin/`, `plugins/tasks/`), the billing engine and settlement, security fixes, dependency and toolchain bumps, bug fixes in shared code, and new i18n strings.
 - **Adapt:** anything that touches a diverged area. Keep the upstream intent and express it in the fork's design, following the rules below.
-- **Ignore:** changes that only touch removed code, such as SQLite or MySQL code paths and docs, Electron, Creem, Waffo, Waffo Pancake, the old top-up and subscription payment endpoints, the retired currency display options, `ratio-settings-card.tsx`, or the old group editors. Ignore the code, not the behavior: if the fix applies to a fork equivalent, port it there.
+- **Ignore:** changes that only touch removed code, such as SQLite or MySQL code paths and docs, Electron, Creem, Waffo, Waffo Pancake, the old top-up and subscription payment endpoints, the retired currency display options, `ratio-settings-card.tsx`, the old group editors, or the payment compliance acknowledgement. Ignore the code, not the behavior: if the fix applies to a fork equivalent, port it there.
 
 ## Resolving changes by area
 

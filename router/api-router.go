@@ -194,12 +194,12 @@ func SetApiRouter(router *gin.Engine) {
 			{
 				buyerRoute.GET("/info", paymenthttp.GetPaymentInfo)
 				buyerRoute.GET("/methods", paymenthttp.GetBuyerPaymentMethods)
-				buyerRoute.POST("/quote", middleware.PaymentCompliance(), paymenthttp.QuotePayment)
+				buyerRoute.POST("/quote", paymenthttp.QuotePayment)
 				buyerRoute.GET("/orders", paymenthttp.ListUserPaymentOrders)
 				buyerRoute.GET("/orders/:no", paymenthttp.GetUserPaymentOrder)
 				// Per-user buckets, apart from the IP bucket that guards login.
-				buyerRoute.POST("/orders", middleware.UserCriticalRateLimit("payment-order"), middleware.PaymentCompliance(), paymenthttp.CreatePaymentOrder)
-				buyerRoute.POST("/orders/:no/checkout", middleware.PaymentRateLimit(), middleware.PaymentCompliance(), paymenthttp.CheckoutPaymentOrder)
+				buyerRoute.POST("/orders", middleware.UserCriticalRateLimit("payment-order"), paymenthttp.CreatePaymentOrder)
+				buyerRoute.POST("/orders/:no/checkout", middleware.PaymentRateLimit(), paymenthttp.CheckoutPaymentOrder)
 				buyerRoute.POST("/orders/:no/sync", middleware.PaymentRateLimit(), paymenthttp.SyncPaymentOrder)
 				buyerRoute.POST("/orders/:no/close", middleware.PaymentRateLimit(), paymenthttp.CloseUserPaymentOrder)
 			}
@@ -248,7 +248,6 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.POST("/model_pricing/convert", controller.PreviewModelPricingConversion)
 			optionRoute.POST("/model_pricing/convert_legacy", controller.PreviewLegacyModelPricingConversions)
 			optionRoute.POST("/model_pricing/preview", controller.PreviewModelPricing)
-			optionRoute.POST("/payment_compliance", controller.ConfirmPaymentCompliance)
 			optionRoute.GET("/channel_affinity_cache", controller.GetChannelAffinityCacheStats)
 			optionRoute.DELETE("/channel_affinity_cache", controller.ClearChannelAffinityCache)
 			optionRoute.POST("/rest_model_ratio", controller.ResetModelRatio)
