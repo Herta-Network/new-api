@@ -161,6 +161,8 @@ func (g *stripeGateway) roundCharge(c Charge) Charge {
 // registered when the payment method was saved.
 func (g *stripeGateway) NeedsNotifyURL(*Order) bool { return false }
 
+func (g *stripeGateway) ServerCheckout() bool { return true }
+
 // StartPayment returns the client secret of the order's only PaymentIntent
 // and the payment method type the client confirms it with. Reusing it is
 // essential: accepting two client secrets would let a buyer pay an older

@@ -976,6 +976,19 @@ export const STATIC_I18N_KEYS = [
   'Secret key',
   'Merchant UUID',
   'Payment API key',
+  // Payment methods and the channels that collect them: the save and
+  // purchase messages of the server.
+  'Payment channel not found',
+  'The payment channel name is required',
+  'The platform of a payment channel cannot be changed',
+  'This payment channel has pending orders. Change or delete it after they are paid or closed.',
+  'Choose the payment method this channel collects',
+  'Enter a lowest and highest amount with at most two decimal places; the highest must not be below the lowest',
+  'Use a priority from 0 to 1000 and a weight from 1 to 1000',
+  'The balance channel cannot be changed. Change the balance payment method instead.',
+  'Set a public callback domain for this payment channel, or a public server address, first',
+  'Move or delete the channels of this payment method first',
+  'This payment method does not take this amount',
   // EPay protocol versions and checkout modes: the platform fields, their
   // options and hints, and the save validation messages.
   'Protocol version',

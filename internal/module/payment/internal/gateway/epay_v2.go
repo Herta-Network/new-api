@@ -245,7 +245,7 @@ func (g *epayGateway) callV2(ctx context.Context, path string, params map[string
 		}
 	}
 	if code != "0" {
-		return nil, fmt.Errorf("EPay %s failed: code=%s msg=%q", path, code, answer["msg"])
+		return nil, Refused(fmt.Errorf("EPay %s failed: code=%s msg=%q", path, code, answer["msg"]))
 	}
 	return answer, nil
 }

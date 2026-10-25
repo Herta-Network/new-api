@@ -20,7 +20,8 @@ const (
 )
 
 // PaymentOrder is one purchase: a wallet top-up or a subscription plan.
-// Amounts count hundredths of their currency.
+// Amounts count hundredths of their currency. A gateway order is paid
+// through its invoices; the balance pays an order itself.
 type PaymentOrder struct {
 	Id      int    `json:"id" gorm:"index:idx_payment_orders_user,priority:2"`
 	OrderNo string `json:"order_no" gorm:"type:varchar(64);not null;uniqueIndex"`
@@ -45,21 +46,21 @@ type PaymentOrder struct {
 	FeeAmount  int64  `json:"fee_amount" gorm:"not null;default:0"`
 	Amount     int64  `json:"amount" gorm:"not null;default:0"`
 
-	PaymentMethodId int    `json:"payment_method_id" gorm:"not null;index:idx_payment_orders_method_status,priority:1"`
+	// PaymentOptionId is the payment option the buyer chose.
+	PaymentOptionId int `json:"payment_option_id" gorm:"not null;default:0"`
+	// The payment method, the payment expectation and the trade show the
+	// order's latest invoice, and once the order is paid the invoice that
+	// paid it (a manual completion's trade is ManualTradeNo). They are a copy
+	// for lists and statistics; checkouts, callbacks and settlement read the
+	// invoices. A balance order names the balance method itself.
+	PaymentMethodId int    `json:"payment_method_id" gorm:"not null"`
 	Platform        string `json:"platform" gorm:"type:varchar(32);not null;uniqueIndex:idx_payment_orders_platform_trade,priority:1,where:trade_no <> ''"`
-
-	// The payment expectation is what the gateway is asked to collect, set
-	// once before the first checkout; an empty PaymentCurrency means no
-	// checkout has started. ExchangeRate converted Amount into it.
 	PaymentAmount   int64  `json:"payment_amount" gorm:"not null;default:0"`
 	PaymentCurrency string `json:"payment_currency" gorm:"type:varchar(8);not null;default:''"`
 	ExchangeRate    string `json:"exchange_rate" gorm:"type:varchar(64);not null;default:''"`
+	TradeNo         string `json:"trade_no" gorm:"type:varchar(255);not null;default:'';uniqueIndex:idx_payment_orders_platform_trade,priority:2"`
 
-	// TradeNo is the gateway payment bound to the order; one payment
-	// settles at most one order of its platform.
-	TradeNo string `json:"trade_no" gorm:"type:varchar(255);not null;default:'';uniqueIndex:idx_payment_orders_platform_trade,priority:2"`
-
-	Status             int    `json:"status" gorm:"not null;index:idx_payment_orders_status_check,priority:1;index:idx_payment_orders_method_status,priority:2;index:idx_payment_orders_status_paid,priority:1"`
+	Status             int    `json:"status" gorm:"not null;index:idx_payment_orders_status_check,priority:1;index:idx_payment_orders_status_paid,priority:1"`
 	FulfilError        string `json:"fulfil_error" gorm:"type:text;not null;default:''"`
 	UserSubscriptionId int    `json:"user_subscription_id" gorm:"not null;default:0"`
 	ClientIp           string `json:"-" gorm:"type:varchar(64);not null;default:''"`

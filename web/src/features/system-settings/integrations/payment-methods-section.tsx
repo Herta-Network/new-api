@@ -34,39 +34,46 @@ import {
   DropdownMenuShortcut,
 } from '@/components/ui/dropdown-menu'
 import { STRIPE_PAYMENT_METHOD_TYPE_LABELS } from '@/features/wallet/constants'
-import { PAYMENT_ICON_BY_NAME } from '@/features/wallet/lib/payment-icons'
 import { getPaymentIcon } from '@/features/wallet/lib/ui'
 import type { StripePaymentMethodType } from '@/features/wallet/types'
 import { toIntlLocale } from '@/i18n/languages'
-import { formatNumber } from '@/lib/format'
+import { formatNumber, formatTimestampToDate } from '@/lib/format'
 
 import { SettingsSection } from '../components/settings-section'
 import { PaymentMethodDialog } from './payment-method-dialog'
-import { usesFeeRate, usesFixedFee } from './payment-method-form'
 import {
-  BALANCE_PAYMENT_METHOD_ID,
-  PAYMENT_FEE_MODE,
+  BALANCE_PAYMENT_PLATFORM,
   toPaymentMethodInput,
   useDeletePaymentMethod,
   usePaymentMethods,
+  usePaymentOptions,
   usePaymentPlatforms,
   useSavePaymentMethod,
   useSyncPaymentWebhook,
   type PaymentMethod,
+  type PaymentOption,
   type PaymentPlatform,
 } from './payment-methods-api'
+import { PaymentOptionsSection } from './payment-options-section'
 
-// A stable empty list: the method dialog resets its form when this changes.
+// Stable empty lists: the channel dialog resets its form when they change.
 const NO_PLATFORMS: PaymentPlatform[] = []
+const NO_OPTIONS: PaymentOption[] = []
 
 type PaymentMethodsSectionProps = {
-  /** Site currency fixed fees are counted in. */
+  /** Site currency fees and amounts are counted in. */
   currency: string
 }
 
+/**
+ * The payment methods buyers choose from, then the channels that collect
+ * them: gateway accounts that take a method's orders within an amount range,
+ * by priority and weight.
+ */
 export function PaymentMethodsSection(props: PaymentMethodsSectionProps) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const optionsQuery = usePaymentOptions()
   const methodsQuery = usePaymentMethods()
   const platformsQuery = usePaymentPlatforms()
   const saveMethod = useSavePaymentMethod()
@@ -76,6 +83,35 @@ export function PaymentMethodsSection(props: PaymentMethodsSectionProps) {
   const [editing, setEditing] = useState<PaymentMethod | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<PaymentMethod | null>(null)
   const platforms = platformsQuery.data?.platforms ?? NO_PLATFORMS
+  const options = optionsQuery.data ?? NO_OPTIONS
+  // The balance channel follows the balance payment method and is not
+  // edited.
+  const channels = (methodsQuery.data ?? []).filter(
+    (method) => method.platform !== BALANCE_PAYMENT_PLATFORM
+  )
+  const optionName = (id: number) =>
+    options.find((option) => option.id === id)?.name ?? String(id)
+  const amountRange = (method: PaymentMethod) => {
+    const min = formatNumber(method.min_amount / 100, locale)
+    const max = formatNumber(method.max_amount / 100, locale)
+    if (method.min_amount === 0 && method.max_amount === 0) {
+      return t('Any amount')
+    }
+    if (method.max_amount === 0) {
+      return t('{{min}} {{currency}} and above', {
+        min,
+        currency: props.currency,
+      })
+    }
+    if (method.min_amount === 0) {
+      return t('Up to {{max}} {{currency}}', { max, currency: props.currency })
+    }
+    return t('{{min}} – {{max}} {{currency}}', {
+      min,
+      max,
+      currency: props.currency,
+    })
+  }
 
   const openDialog = (method: PaymentMethod | null) => {
     setEditing(method)
@@ -89,12 +125,13 @@ export function PaymentMethodsSection(props: PaymentMethodsSectionProps) {
     })
   }
 
-  if (methodsQuery.isError || platformsQuery.isError) {
+  if (optionsQuery.isError || methodsQuery.isError || platformsQuery.isError) {
     return (
       <SettingsSection title={t('Payment Methods')}>
         <ErrorState
           title={t('Failed to load payment methods')}
           onRetry={() => {
+            void optionsQuery.refetch()
             void methodsQuery.refetch()
             void platformsQuery.refetch()
           }}
@@ -104,215 +141,244 @@ export function PaymentMethodsSection(props: PaymentMethodsSectionProps) {
   }
 
   return (
-    <SettingsSection title={t('Payment Methods')}>
-      <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-        <p className='text-muted-foreground text-sm'>
-          {t(
-            'Buyers choose from the enabled methods. The balance can pay for subscriptions only.'
-          )}
-        </p>
-        <Button
-          size='sm'
-          onClick={() => openDialog(null)}
-          disabled={platforms.length === 0}
-        >
-          <Plus data-icon='inline-start' />
-          {t('Add payment method')}
-        </Button>
-      </div>
-
-      <StaticDataTable
-        data={methodsQuery.data ?? []}
-        getRowKey={(method) => method.id}
-        tableClassName='min-w-[880px] table-fixed'
-        emptyClassName='text-sm'
-        emptyContent={
-          methodsQuery.isLoading
-            ? t('Loading...')
-            : t('No payment methods configured yet.')
-        }
-        columns={[
-          {
-            id: 'name',
-            header: t('Name'),
-            className: 'w-40',
-            cell: (method) => {
-              const Icon = PAYMENT_ICON_BY_NAME.get(method.icon.trim())
-              return (
-                <span className='flex items-center gap-2 font-medium'>
-                  {Icon && (
-                    <Icon
-                      className='text-muted-foreground size-4 shrink-0'
-                      aria-hidden='true'
-                    />
-                  )}
-                  <span className='truncate'>{method.name}</span>
-                </span>
-              )
-            },
-          },
-          {
-            id: 'platform',
-            header: t('Platform'),
-            className: 'w-32',
-            cell: (method) => (
-              <span className='flex min-w-0 flex-col items-start gap-1'>
-                <BadgeCell>
-                  <StatusBadge
-                    label={
-                      method.id === BALANCE_PAYMENT_METHOD_ID
-                        ? t('Balance')
-                        : (platforms.find(
-                            (item) => item.platform === method.platform
-                          )?.name ?? method.platform)
-                    }
-                    variant='neutral'
-                    copyable={false}
-                  />
-                </BadgeCell>
-                <StripePaymentType method={method} />
-              </span>
-            ),
-          },
-          {
-            id: 'status',
-            header: t('Status'),
-            className: 'w-24',
-            cell: (method) => (
-              <BadgeCell>
-                <StatusBadge
-                  label={method.enabled ? t('Enabled') : t('Disabled')}
-                  variant={method.enabled ? 'success' : 'neutral'}
-                  copyable={false}
-                />
-              </BadgeCell>
-            ),
-          },
-          {
-            id: 'fee',
-            header: t('Payment fee'),
-            className: 'w-36',
-            cellClassName: 'whitespace-nowrap',
-            cell: (method) => {
-              if (method.fee_mode === PAYMENT_FEE_MODE.NONE) {
-                return (
-                  <span className='text-muted-foreground'>{t('No fee')}</span>
-                )
-              }
-              const parts: string[] = []
-              if (usesFeeRate(method.fee_mode)) {
-                parts.push(`${formatNumber(method.fee_rate_bp / 100, locale)}%`)
-              }
-              if (usesFixedFee(method.fee_mode)) {
-                parts.push(
-                  `${formatNumber(method.fee_fixed / 100, locale)} ${props.currency}`
-                )
-              }
-              return parts.join(' + ')
-            },
-          },
-          {
-            id: 'notify-url',
-            header: t('Callback URL'),
-            cell: (method) => <PaymentMethodNotifyUrl method={method} />,
-          },
-          {
-            id: 'sort',
-            header: t('Sort'),
-            className: 'w-16',
-            cell: (method) => method.sort,
-          },
-          {
-            id: 'actions',
-            header: t('Actions'),
-            className: 'w-24 text-right',
-            cellClassName: 'text-right',
-            cell: (method) => (
-              <div className='flex justify-end gap-1'>
-                <Button
-                  variant='ghost'
-                  size='icon-sm'
-                  onClick={() => openDialog(method)}
-                  aria-label={t('Edit')}
-                  disabled={platformsQuery.isLoading}
-                >
-                  <Pencil />
-                </Button>
-                <DataTableRowActionMenu ariaLabel={t('Open menu')}>
-                  <DropdownMenuItem
-                    disabled={saveMethod.isPending}
-                    onClick={() =>
-                      saveMethod.mutate({
-                        id: method.id,
-                        input: {
-                          ...toPaymentMethodInput(method),
-                          enabled: !method.enabled,
-                        },
-                      })
-                    }
-                  >
-                    {method.enabled ? t('Disable') : t('Enable')}
-                  </DropdownMenuItem>
-                  {method.platform === 'stripe' && (
-                    <DropdownMenuItem
-                      disabled={syncWebhook.isPending}
-                      onClick={() => syncWebhook.mutate(method.id)}
-                    >
-                      {t('Sync webhook')}
-                      <DropdownMenuShortcut>
-                        <RefreshCw size={16} />
-                      </DropdownMenuShortcut>
-                    </DropdownMenuItem>
-                  )}
-                  {method.id !== BALANCE_PAYMENT_METHOD_ID && (
-                    <>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onClick={() => setDeleteTarget(method)}
-                        className='text-destructive focus:text-destructive'
-                      >
-                        {t('Delete')}
-                        <DropdownMenuShortcut>
-                          <Trash2 size={16} />
-                        </DropdownMenuShortcut>
-                      </DropdownMenuItem>
-                    </>
-                  )}
-                </DataTableRowActionMenu>
-              </div>
-            ),
-          },
-        ]}
-      />
-
-      <PaymentMethodDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        method={editing}
-        platforms={platforms}
+    <>
+      <PaymentOptionsSection
+        options={options}
+        loading={optionsQuery.isLoading}
         currency={props.currency}
       />
 
-      <ConfirmDialog
-        open={deleteTarget !== null}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
-        title={t('Delete payment method')}
-        desc={t(
-          'Delete "{{name}}"? Buyers can no longer choose it. Orders already paid with it keep their records.',
-          { name: deleteTarget?.name ?? '' }
-        )}
-        confirmText={t('Delete')}
-        destructive
-        handleConfirm={handleDelete}
-        isLoading={deleteMethod.isPending}
-      />
-    </SettingsSection>
+      <SettingsSection title={t('Payment Channels')}>
+        <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+          <p className='text-muted-foreground text-sm'>
+            {t(
+              'Channels collect the payment methods. An order goes to a channel that takes its amount, the lowest priority first; buyers never see which.'
+            )}
+          </p>
+          <Button
+            size='sm'
+            onClick={() => openDialog(null)}
+            disabled={platforms.length === 0}
+          >
+            <Plus data-icon='inline-start' />
+            {t('Add payment channel')}
+          </Button>
+        </div>
+
+        <StaticDataTable
+          data={channels}
+          getRowKey={(method) => method.id}
+          tableClassName='min-w-[1040px] table-fixed'
+          emptyClassName='text-sm'
+          emptyContent={
+            methodsQuery.isLoading
+              ? t('Loading...')
+              : t('No payment channels configured yet.')
+          }
+          columns={[
+            {
+              id: 'name',
+              header: t('Name'),
+              className: 'w-40',
+              cell: (method) => (
+                <span className='flex min-w-0 flex-col gap-0.5'>
+                  <span className='truncate font-medium'>{method.name}</span>
+                  <span className='text-muted-foreground truncate text-xs'>
+                    {optionName(method.option_id)}
+                  </span>
+                </span>
+              ),
+            },
+            {
+              id: 'platform',
+              header: t('Platform'),
+              className: 'w-32',
+              cell: (method) => (
+                <span className='flex min-w-0 flex-col items-start gap-1'>
+                  <BadgeCell>
+                    <StatusBadge
+                      label={
+                        platforms.find(
+                          (item) => item.platform === method.platform
+                        )?.name ?? method.platform
+                      }
+                      variant='neutral'
+                      copyable={false}
+                    />
+                  </BadgeCell>
+                  <StripePaymentType method={method} />
+                </span>
+              ),
+            },
+            {
+              id: 'routing',
+              header: t('Takes'),
+              className: 'w-44',
+              cell: (method) => (
+                <span className='flex min-w-0 flex-col gap-0.5'>
+                  <span className='truncate'>{amountRange(method)}</span>
+                  <span className='text-muted-foreground text-xs'>
+                    {t('Priority {{priority}} · weight {{weight}}', {
+                      priority: method.priority,
+                      weight: method.weight,
+                    })}
+                  </span>
+                </span>
+              ),
+            },
+            {
+              id: 'status',
+              header: t('Status'),
+              className: 'w-36',
+              cell: (method) => (
+                <span className='flex min-w-0 flex-col items-start gap-1'>
+                  <BadgeCell>
+                    <StatusBadge
+                      label={method.enabled ? t('Enabled') : t('Disabled')}
+                      variant={method.enabled ? 'success' : 'neutral'}
+                      copyable={false}
+                    />
+                  </BadgeCell>
+                  <ChannelHealth method={method} />
+                </span>
+              ),
+            },
+            {
+              id: 'notify-url',
+              header: t('Callback URL'),
+              cell: (method) => <PaymentMethodNotifyUrl method={method} />,
+            },
+            {
+              id: 'actions',
+              header: t('Actions'),
+              className: 'w-24 text-right',
+              cellClassName: 'text-right',
+              cell: (method) => (
+                <div className='flex justify-end gap-1'>
+                  <Button
+                    variant='ghost'
+                    size='icon-sm'
+                    onClick={() => openDialog(method)}
+                    aria-label={t('Edit')}
+                    disabled={platformsQuery.isLoading}
+                  >
+                    <Pencil />
+                  </Button>
+                  <DataTableRowActionMenu ariaLabel={t('Open menu')}>
+                    <DropdownMenuItem
+                      disabled={saveMethod.isPending}
+                      onClick={() =>
+                        saveMethod.mutate({
+                          id: method.id,
+                          input: {
+                            ...toPaymentMethodInput(method),
+                            enabled: !method.enabled,
+                          },
+                        })
+                      }
+                    >
+                      {method.enabled ? t('Disable') : t('Enable')}
+                    </DropdownMenuItem>
+                    {method.platform === 'stripe' && (
+                      <DropdownMenuItem
+                        disabled={syncWebhook.isPending}
+                        onClick={() => syncWebhook.mutate(method.id)}
+                      >
+                        {t('Sync webhook')}
+                        <DropdownMenuShortcut>
+                          <RefreshCw size={16} />
+                        </DropdownMenuShortcut>
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => setDeleteTarget(method)}
+                      className='text-destructive focus:text-destructive'
+                    >
+                      {t('Delete')}
+                      <DropdownMenuShortcut>
+                        <Trash2 size={16} />
+                      </DropdownMenuShortcut>
+                    </DropdownMenuItem>
+                  </DataTableRowActionMenu>
+                </div>
+              ),
+            },
+          ]}
+        />
+
+        <PaymentMethodDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          method={editing}
+          platforms={platforms}
+          options={options}
+          currency={props.currency}
+        />
+
+        <ConfirmDialog
+          open={deleteTarget !== null}
+          onOpenChange={(open) => !open && setDeleteTarget(null)}
+          title={t('Delete payment channel')}
+          desc={t(
+            'Delete "{{name}}"? Its payment method stops using it. Orders already paid through it keep their records.',
+            { name: deleteTarget?.name ?? '' }
+          )}
+          confirmText={t('Delete')}
+          destructive
+          handleConfirm={handleDelete}
+          isLoading={deleteMethod.isPending}
+        />
+      </SettingsSection>
+    </>
   )
 }
 
-/** The payment method type a Stripe method collects; nothing for others. */
+/**
+ * Failed checkouts of a channel this server saw: a tripped channel is tried
+ * after the others until its cooldown ends. The last error is in the badge's
+ * title.
+ */
+function ChannelHealth(props: { method: PaymentMethod }) {
+  const { t } = useTranslation()
+  const health = props.method.health
+  if (!health) return null
+  const tripped = health.tripped_until * 1000 > Date.now()
+  return (
+    <BadgeCell>
+      <span title={health.last_error}>
+        <StatusBadge
+          label={
+            tripped
+              ? t('Tripped until {{time}}', {
+                  time: formatTimestampToDate(health.tripped_until),
+                })
+              : t('{{count}} failed checkouts', { count: health.failures })
+          }
+          variant={tripped ? 'danger' : 'warning'}
+          copyable={false}
+        />
+      </span>
+    </BadgeCell>
+  )
+}
+
+/**
+ * The payment method type a Stripe channel collects, and an EPay channel's
+ * payment page, which orders are never switched to; nothing for others.
+ */
 function StripePaymentType(props: { method: PaymentMethod }) {
   const { t } = useTranslation()
+  if (
+    props.method.platform === 'epay' &&
+    props.method.config.checkout === 'page'
+  ) {
+    return (
+      <span className='text-muted-foreground text-xs'>
+        {t('Payment page, not switched to')}
+      </span>
+    )
+  }
   const paymentType = props.method.config.payment_method_type
   if (
     props.method.platform !== 'stripe' ||
@@ -334,9 +400,6 @@ function StripePaymentType(props: { method: PaymentMethod }) {
 
 function PaymentMethodNotifyUrl(props: { method: PaymentMethod }) {
   const { t } = useTranslation()
-  if (props.method.id === BALANCE_PAYMENT_METHOD_ID) {
-    return <span className='text-muted-foreground'>-</span>
-  }
   if (!props.method.notify_url) {
     return (
       <span className='text-muted-foreground text-sm'>

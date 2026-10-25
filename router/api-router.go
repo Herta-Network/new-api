@@ -207,6 +207,7 @@ func SetApiRouter(router *gin.Engine) {
 			paymentAdminRoute.Use(middleware.AdminAuth())
 			{
 				paymentAdminRoute.GET("/orders", paymenthttp.AdminListPaymentOrders)
+				paymentAdminRoute.GET("/orders/:no/invoices", paymenthttp.AdminListPaymentOrderInvoices)
 				paymentAdminRoute.POST("/orders/:no/reconcile", paymenthttp.AdminReconcilePaymentOrder)
 				paymentAdminRoute.POST("/orders/:no/close", paymenthttp.AdminClosePaymentOrder)
 				paymentAdminRoute.POST("/orders/:no/fulfil", paymenthttp.AdminFulfilPaymentOrder)
@@ -221,6 +222,10 @@ func SetApiRouter(router *gin.Engine) {
 				paymentSettingsRoute.GET("/platforms", paymenthttp.GetPaymentPlatforms)
 				paymentSettingsRoute.GET("/rates", currencyhttp.GetPaymentRates)
 				paymentSettingsRoute.POST("/rates/refresh", currencyhttp.RefreshPaymentRates)
+				paymentSettingsRoute.GET("/options", paymenthttp.AdminListPaymentOptions)
+				paymentSettingsRoute.POST("/options", paymenthttp.AdminCreatePaymentOption)
+				paymentSettingsRoute.PUT("/options/:id", paymenthttp.AdminUpdatePaymentOption)
+				paymentSettingsRoute.DELETE("/options/:id", paymenthttp.AdminDeletePaymentOption)
 				paymentSettingsRoute.GET("/methods", paymenthttp.AdminListPaymentMethods)
 				paymentSettingsRoute.POST("/methods", paymenthttp.AdminCreatePaymentMethod)
 				paymentSettingsRoute.PUT("/methods/:id", paymenthttp.AdminUpdatePaymentMethod)

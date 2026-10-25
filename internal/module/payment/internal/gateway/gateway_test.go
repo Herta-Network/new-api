@@ -221,7 +221,7 @@ func TestRegistryDescribesThePlatforms(t *testing.T) {
 		}
 	}
 	assert.Equal(t, map[string][]string{
-		"epay.version":               {EPayV1, EPayV2},
+		"epay.version":               {EPayV2, EPayV1},
 		"epay.checkout":              {EPayCheckoutAPI, EPayCheckoutPage},
 		"stripe.payment_method_type": {"card", "alipay", "wechat_pay"},
 	}, choices)

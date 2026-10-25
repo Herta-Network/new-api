@@ -73,33 +73,28 @@ const info = {
 function method(
   id: number,
   name: string,
-  platform: PaymentMethodOption['platform'],
   extra: Partial<PaymentMethodOption> = {}
 ): PaymentMethodOption {
   return {
     id,
     name,
-    platform,
     icon: '',
     description: '',
     fee_mode: 0,
     fee_rate_bp: 0,
     fee_fixed: 0,
-    charge_currency: 'USD',
+    balance: false,
+    amount_ranges: [],
     available: true,
     ...extra,
   }
 }
 
-const alipay = method(3, 'Alipay', 'epay', { charge_currency: 'CNY' })
-const card = method(4, 'Card', 'stripe', { payment_method_type: 'card' })
-const stripeAlipay = method(6, 'Stripe Alipay', 'stripe', {
-  payment_method_type: 'alipay',
-})
-const stripeWechat = method(7, 'Stripe WeChat', 'stripe', {
-  payment_method_type: 'wechat_pay',
-})
-const balance = method(-1, 'Balance', 'balance')
+const alipay = method(3, 'Alipay', { icon: 'SiAlipay' })
+const card = method(4, 'Card', { icon: 'FaCreditCard' })
+const stripeAlipay = method(6, 'Stripe Alipay', { icon: 'SiAlipay' })
+const stripeWechat = method(7, 'Stripe WeChat', { icon: 'SiWechat' })
+const balance = method(-1, 'Balance', { icon: 'FaWallet', balance: true })
 
 const topupQuote: PaymentQuote = {
   purpose: 'topup',
@@ -123,29 +118,23 @@ function order(
   extra: Partial<PaymentOrder> = {}
 ): PaymentOrder {
   return {
-    id: 1,
     order_no: orderNo,
-    user_id: 1,
     purpose: 'topup',
     plan_id: 0,
     subject: 'Top-up 12.50 USD',
     topup_amount: 1250,
     quota_amount: 6250000,
-    quota_rate: '1',
     currency: 'USD',
     price: 1250,
     adjustment: 0,
     fee_amount: 0,
     amount: 1250,
-    payment_method_id: 4,
-    platform: 'stripe',
+    payment_option: 'Card',
+    balance: false,
     payment_amount: 1250,
     payment_currency: 'USD',
-    exchange_rate: '1',
-    trade_no: '',
     status,
     fulfil_error: '',
-    user_subscription_id: 0,
     close_reason: '',
     created_at: 1,
     expires_at: Math.floor(Date.now() / 1000) + 900,
@@ -313,7 +302,7 @@ it('quotes a typed top-up with the chosen method and opens the payment page of a
   expect(within(summary).getByText('CN¥83.00')).toBeVisible()
   expect(postsTo(post, '/api/payment/quote').at(-1)).toEqual({
     purpose: 'topup',
-    payment_method_id: 3,
+    payment_option_id: 3,
     amount: 12.5,
   })
 
@@ -322,7 +311,7 @@ it('quotes a typed top-up with the chosen method and opens the payment page of a
     expect(assign).toHaveBeenCalledWith('https://pay.example/submit.php?sign=x')
   )
   expect(postsTo(post, '/api/payment/orders')).toEqual([
-    { purpose: 'topup', payment_method_id: 3, amount: 12.5 },
+    { purpose: 'topup', payment_option_id: 3, amount: 12.5 },
   ])
 })
 
@@ -331,7 +320,7 @@ it('lists an unavailable method disabled with the server reason', async () => {
     methods: {
       topup: [
         alipay,
-        method(5, 'Crypto', 'cryptomus', {
+        method(5, 'Crypto', {
           available: false,
           unavailable: { key: 'Exchange rate unavailable' },
         }),
@@ -368,7 +357,7 @@ it('shows why a quote failed and does not offer to pay', async () => {
   expect(screen.getByRole('button', { name: 'Pay' })).toBeDisabled()
 })
 
-it('names the payment method type of each Stripe method and shows its icon', async () => {
+it('shows each payment method by its own name and icon, never the channel behind it', async () => {
   mockServer({
     methods: { topup: [card, stripeAlipay, stripeWechat] },
     quote: topupQuote,
@@ -378,16 +367,79 @@ it('names the payment method type of each Stripe method and shows its icon', asy
   const alipayButton = await screen.findByRole('button', {
     name: /Stripe Alipay/,
   })
-  expect(alipayButton).toHaveTextContent('Stripe AlipayAlipay')
+  expect(alipayButton).toHaveTextContent('Stripe Alipay')
   expect(
-    within(alipayButton).getByRole('img', { name: 'Alipay' })
+    within(alipayButton).getByRole('img', { name: 'Stripe Alipay' })
   ).toBeVisible()
   const wechat = screen.getByRole('button', { name: /Stripe WeChat/ })
-  expect(wechat).toHaveTextContent('Stripe WeChatWeChat Pay')
-  expect(within(wechat).getByRole('img', { name: 'WeChat' })).toBeVisible()
-  expect(screen.getByRole('button', { name: /^Card/ })).toHaveTextContent(
-    'CardCard'
+  expect(
+    within(wechat).getByRole('img', { name: 'Stripe WeChat' })
+  ).toBeVisible()
+  expect(wechat).not.toHaveTextContent('WeChat Pay')
+})
+
+it('disables a payment method that does not take the typed amount and says which amounts it takes', async () => {
+  const post = mockServer({
+    methods: {
+      topup: [
+        method(3, 'Alipay', { amount_ranges: [{ min: 100, max: 5000 }] }),
+        method(4, 'Card', { amount_ranges: [{ min: 5001, max: 0 }] }),
+      ],
+    },
+    quote: topupQuote,
+  })
+  renderWallet()
+
+  const amount = await screen.findByRole('textbox', { name: /Custom Amount/ })
+  await userEvent.clear(amount)
+  await userEvent.type(amount, '12.5')
+  const card = screen.getByRole('button', { name: /^Card/ })
+  expect(card).toBeDisabled()
+  expect(card).toHaveTextContent('Takes $50.01 and above')
+  const alipayButton = screen.getByRole('button', { name: /^Alipay/ })
+  expect(alipayButton).toBeEnabled()
+  await waitFor(() =>
+    expect(postsTo(post, '/api/payment/quote').at(-1)).toEqual({
+      purpose: 'topup',
+      payment_option_id: 3,
+      amount: 12.5,
+    })
   )
+
+  await userEvent.clear(amount)
+  await userEvent.type(amount, '100')
+  expect(screen.getByRole('button', { name: /^Alipay/ })).toHaveTextContent(
+    'Takes $1.00 – $50.00'
+  )
+  await waitFor(() =>
+    expect(postsTo(post, '/api/payment/quote').at(-1)).toEqual({
+      purpose: 'topup',
+      payment_option_id: 4,
+      amount: 100,
+    })
+  )
+})
+
+it('asks for another amount when no payment method takes the typed one', async () => {
+  mockServer({
+    methods: {
+      topup: [
+        method(3, 'Alipay', { amount_ranges: [{ min: 100, max: 5000 }] }),
+      ],
+    },
+    quote: topupQuote,
+  })
+  renderWallet()
+
+  const amount = await screen.findByRole('textbox', { name: /Custom Amount/ })
+  await userEvent.clear(amount)
+  await userEvent.type(amount, '60')
+  expect(
+    await screen.findByText(
+      'No payment method takes this amount. Choose another amount.'
+    )
+  ).toBeVisible()
+  expect(screen.getByRole('button', { name: /^Pay/ })).toBeDisabled()
 })
 
 it('pays a card checkout in Stripe card fields with the cardholder name and then shows the settled order', async () => {
@@ -405,7 +457,7 @@ it('pays a card checkout in Stripe card fields with the cardholder name and then
   await userEvent.click(
     await screen.findByRole('button', { name: 'Pay $11.55' })
   )
-  const dialog = await screen.findByRole('dialog', { name: 'Pay with Stripe' })
+  const dialog = await screen.findByRole('dialog', { name: 'Complete payment' })
   expect(within(dialog).getByText('Stripe card number')).toBeVisible()
   await userEvent.type(
     within(dialog).getByRole('textbox', { name: 'Cardholder name' }),
@@ -422,10 +474,10 @@ it('pays a card checkout in Stripe card fields with the cardholder name and then
   const result = await screen.findByRole('dialog', { name: 'Payment status' })
   expect(await within(result).findByText('Payment successful')).toBeVisible()
   expect(
-    screen.queryByRole('dialog', { name: 'Pay with Stripe' })
+    screen.queryByRole('dialog', { name: 'Complete payment' })
   ).not.toBeInTheDocument()
   expect(postsTo(post, '/api/payment/orders')).toEqual([
-    { purpose: 'topup', payment_method_id: 4, amount: 10 },
+    { purpose: 'topup', payment_option_id: 4, amount: 10 },
   ])
 })
 
@@ -440,7 +492,7 @@ it('asks for the cardholder name before confirming a card payment', async () => 
   await userEvent.click(
     await screen.findByRole('button', { name: 'Pay $11.55' })
   )
-  const dialog = await screen.findByRole('dialog', { name: 'Pay with Stripe' })
+  const dialog = await screen.findByRole('dialog', { name: 'Complete payment' })
   await userEvent.click(within(dialog).getByRole('button', { name: 'Pay now' }))
 
   expect(within(dialog).getByText('Enter the cardholder name')).toBeVisible()
@@ -464,7 +516,7 @@ it('keeps the Stripe dialog open with the decline reason when the card is declin
   await userEvent.click(
     await screen.findByRole('button', { name: 'Pay $11.55' })
   )
-  const dialog = await screen.findByRole('dialog', { name: 'Pay with Stripe' })
+  const dialog = await screen.findByRole('dialog', { name: 'Complete payment' })
   await userEvent.type(
     within(dialog).getByRole('textbox', { name: 'Cardholder name' }),
     'Ada Lovelace'
@@ -506,7 +558,7 @@ it('shows the Alipay QR code, offers to open it on this device and follows the o
   await userEvent.click(
     await screen.findByRole('button', { name: 'Pay $11.55' })
   )
-  const dialog = await screen.findByRole('dialog', { name: 'Pay with Stripe' })
+  const dialog = await screen.findByRole('dialog', { name: 'Complete payment' })
   expect(
     await within(dialog).findByRole('img', { name: 'Scan with Alipay to pay' })
   ).toBeVisible()
@@ -524,7 +576,7 @@ it('shows the Alipay QR code, offers to open it on this device and follows the o
   const result = await screen.findByRole('dialog', { name: 'Payment status' })
   expect(await within(result).findByText('Payment successful')).toBeVisible()
   expect(
-    screen.queryByRole('dialog', { name: 'Pay with Stripe' })
+    screen.queryByRole('dialog', { name: 'Complete payment' })
   ).not.toBeInTheDocument()
 })
 
@@ -535,7 +587,7 @@ it('shows the QR code a gateway checkout answers with, offers its web page on th
     methods: { topup: [alipay] },
     quote: topupQuote,
     checkout: { type: 'qrcode', qr_code: qrCode, order_no: 'P8' },
-    orders: { P8: order('P8', 1, { platform: 'epay' }) },
+    orders: { P8: order('P8', 1, { payment_option: 'Alipay' }) },
     synced: new Promise((resolve) => {
       settle = resolve
     }),
@@ -557,7 +609,7 @@ it('shows the QR code a gateway checkout answers with, offers its web page on th
     })
   ).toHaveAttribute('href', qrCode)
 
-  settle(order('P8', 5, { platform: 'epay' }))
+  settle(order('P8', 5, { payment_option: 'Alipay' }))
   const result = await screen.findByRole('dialog', { name: 'Payment status' })
   expect(await within(result).findByText('Payment successful')).toBeVisible()
   expect(
@@ -574,7 +626,7 @@ it('does not offer to open a gateway QR code that is no web page', async () => {
       qr_code: 'weixin://wxpay/bizpayurl?pr=abc',
       order_no: 'P9',
     },
-    orders: { P9: order('P9', 1, { platform: 'epay' }) },
+    orders: { P9: order('P9', 1, { payment_option: 'Alipay' }) },
   })
   renderWallet()
 
@@ -620,7 +672,7 @@ it('shows the WeChat Pay QR image Stripe returns', async () => {
   await userEvent.click(
     await screen.findByRole('button', { name: 'Pay $11.55' })
   )
-  const dialog = await screen.findByRole('dialog', { name: 'Pay with Stripe' })
+  const dialog = await screen.findByRole('dialog', { name: 'Complete payment' })
   expect(
     await within(dialog).findByRole('img', { name: 'Scan with WeChat to pay' })
   ).toHaveAttribute('src', image)
@@ -650,7 +702,7 @@ it('keeps an error Stripe.js throws inside the Stripe dialog', async () => {
   await userEvent.click(
     await screen.findByRole('button', { name: 'Pay $11.55' })
   )
-  const dialog = await screen.findByRole('dialog', { name: 'Pay with Stripe' })
+  const dialog = await screen.findByRole('dialog', { name: 'Complete payment' })
   expect(
     await within(dialog).findByText(
       'The payment could not be started. Try again later.'
@@ -682,7 +734,11 @@ it('buys a subscription from the balance without a gateway', async () => {
     },
     checkout: { type: 'paid', order_no: 'P3' },
     orders: {
-      P3: order('P3', 5, { purpose: 'subscription', platform: 'balance' }),
+      P3: order('P3', 5, {
+        purpose: 'subscription',
+        payment_option: 'Balance',
+        balance: true,
+      }),
     },
   })
   renderWallet()
@@ -704,7 +760,7 @@ it('buys a subscription from the balance without a gateway', async () => {
     await within(result).findByText('Your subscription is active.')
   ).toBeVisible()
   expect(postsTo(post, '/api/payment/orders')).toEqual([
-    { purpose: 'subscription', plan_id: 7, payment_method_id: -1 },
+    { purpose: 'subscription', plan_id: 7, payment_option_id: -1 },
   ])
   expect(
     screen.queryByRole('dialog', { name: 'Purchase Subscription' })

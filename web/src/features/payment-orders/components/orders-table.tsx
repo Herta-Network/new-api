@@ -46,6 +46,7 @@ import {
   paymentOrdersQueryKey,
 } from '../lib/payment-orders-query'
 import type { PaymentOrder } from '../types'
+import { OrderInvoicesDialog } from './order-invoices-dialog'
 import { usePaymentOrdersColumns } from './orders-columns'
 import { PaymentNoteDialog } from './payment-note-dialog'
 
@@ -83,6 +84,7 @@ export function PaymentOrdersTable() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [target, setTarget] = useState<ActionRequest | null>(null)
+  const [invoicesOf, setInvoicesOf] = useState<PaymentOrder | null>(null)
 
   const {
     globalFilter,
@@ -134,7 +136,7 @@ export function PaymentOrdersTable() {
       return
     }
     setTarget({ order, action })
-  })
+  }, setInvoicesOf)
   const { table } = useDataTable({
     data: data?.items ?? [],
     columns,
@@ -212,6 +214,11 @@ export function PaymentOrdersTable() {
             },
           ],
         }}
+      />
+
+      <OrderInvoicesDialog
+        order={invoicesOf}
+        onClose={() => setInvoicesOf(null)}
       />
 
       <ConfirmDialog
