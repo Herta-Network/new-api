@@ -29,6 +29,14 @@ type oauthStateRequest struct {
 	Context  json.RawMessage `json:"context,omitempty"`
 }
 
+type oauthStateResult struct {
+	FlowToken string `json:"flow_token"`
+	ExpiresAt int64  `json:"expires_at"`
+	// AuthorizationURL is present for Telegram, whose authorization request
+	// carries a PKCE challenge the server keeps.
+	AuthorizationURL string `json:"authorization_url,omitempty"`
+}
+
 type oauthFlowPayload struct {
 	AffiliateCode   string                         `json:"affiliate_code,omitempty"`
 	Verification    *service.OAuthVerificationFlow `json:"verification,omitempty"`
@@ -43,6 +51,14 @@ func providerParams(name string) map[string]any {
 }
 
 // GenerateOAuthCode generates a state code for OAuth CSRF protection
+//
+//	@Summary		创建 OAuth state
+//	@Description	flow_token 用作 OAuth 授权请求的 state，10 分钟内有效。intent 为 login、bind 或 verify：bind 和 verify 需要已登录的浏览器会话（Authorization: Bearer），bind 还需要 scope 为 account.binding.bind 的 X-Security-Proof，其 context 为 {provider}；verify 要提交 scope 和 context。aff 只用于 login。
+//	@Tags			第三方登录
+//	@Param			body	body		oauthStateRequest	true	"provider、intent，以及 aff 或 scope 和 context"
+//	@Success		200		{object}	common.ApiResponse{data=oauthStateResult}
+//	@Failure		401		{object}	common.ApiResponse
+//	@Router			/api/oauth/state [post]
 func GenerateOAuthCode(c *gin.Context) {
 	var request oauthStateRequest
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
@@ -131,18 +147,28 @@ func GenerateOAuthCode(c *gin.Context) {
 		return
 	}
 	bindingStarted = request.Intent == model.AuthFlowIntentBind
-	data := gin.H{"flow_token": state, "expires_at": expiresAt.Unix()}
+	data := oauthStateResult{FlowToken: state, ExpiresAt: expiresAt.Unix()}
 	if flowPayload.Telegram != nil {
-		data["authorization_url"] = flowPayload.Telegram.AuthorizationURL(state)
+		data.AuthorizationURL = flowPayload.Telegram.AuthorizationURL(state)
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    data,
-	})
+	common.ApiSuccess(c, data)
 }
 
 // HandleOAuth handles OAuth callback for all standard OAuth providers
+//
+//	@Summary		OAuth 回调
+//	@Description	按 state 对应流程的 intent 处理：login 时 data 为访问令牌、登录会话和用户，并写入 new_api_refresh Cookie，账户需要二次登录验证时 data 改为 {require_verification: true, flow_token, expires_at, methods}；bind 时 data 为 {action: "bind", notification_warning}；verify 时 data 为 service.SecurityProof。
+//	@Description	bind 和 verify 必须由发起流程的浏览器会话调用（Authorization: Bearer）。提供方返回 error 时 success 为 false，message 为其 error_description。
+//	@Tags			第三方登录
+//	@Param			provider			path		string	true	"提供方：github、discord、oidc、linuxdo、telegram 或自定义 OAuth 的 slug"
+//	@Param			state				query		string	true	"POST /api/oauth/state 返回的 flow_token"
+//	@Param			code				query		string	false	"授权码"
+//	@Param			error				query		string	false	"提供方返回的错误码"
+//	@Param			error_description	query		string	false	"提供方返回的错误说明"
+//	@Success		200					{object}	common.ApiResponse{data=loginResult}
+//	@Failure		400					{object}	common.ApiResponse
+//	@Failure		403					{object}	common.ApiResponse
+//	@Router			/api/oauth/{provider} [get]
 func HandleOAuth(c *gin.Context) {
 	providerName := c.Param("provider")
 	provider := oauth.GetProvider(providerName)
@@ -343,6 +369,11 @@ func handleOAuthLogin(c *gin.Context, provider oauth.Provider, oauthUser *oauth.
 	setupLogin(user, migration, c)
 }
 
+type oauthBindResult struct {
+	Action              string `json:"action"`
+	NotificationWarning bool   `json:"notification_warning"`
+}
+
 // handleOAuthBind handles binding OAuth account to existing user
 func handleOAuthBind(c *gin.Context, providerName string, provider oauth.Provider, oauthUser *oauth.OAuthUser, flow *model.AuthFlow, state string, match model.AuthFlowMatch) (bool, bool) {
 	identity, ok := middleware.GetSessionAuthIdentity(c)
@@ -389,7 +420,7 @@ func handleOAuthBind(c *gin.Context, providerName string, provider oauth.Provide
 		return true, true
 	}
 	notificationFailed := service.NotifyAccountSecurityChange(service.AccountMailLanguage(c, user.Id), user.Email, i18n.MsgSecurityEventLoginLinked, map[string]any{"Provider": provider.GetName()}) != nil
-	common.ApiSuccessT(c, "Binding successful", gin.H{"action": "bind", "notification_warning": notificationFailed})
+	common.ApiSuccessT(c, "Binding successful", oauthBindResult{Action: "bind", NotificationWarning: notificationFailed})
 	return true, notificationFailed
 }
 

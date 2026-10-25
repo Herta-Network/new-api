@@ -14,12 +14,20 @@ import (
 	webauthnlib "github.com/go-webauthn/webauthn/webauthn"
 )
 
+type loginVerifyRequest struct {
+	FlowToken string `json:"flow_token"`
+	Method    string `json:"method"`
+	Code      string `json:"code"`
+}
+
+// @Summary		完成二次登录验证
+// @Description	提交登录返回的 flow_token 和 TOTP 验证码或备用码；method 只能为 2fa 或留空。成功后 data 为访问令牌、登录会话和用户，并写入 new_api_refresh Cookie。
+// @Tags			认证
+// @Param			body	body		loginVerifyRequest	true	"登录流程的 flow_token 和验证码"
+// @Success		200		{object}	common.ApiResponse{data=loginResult}
+// @Router			/api/user/login/verify [post]
 func VerifyLogin(c *gin.Context) {
-	var request struct {
-		FlowToken string `json:"flow_token"`
-		Method    string `json:"method"`
-		Code      string `json:"code"`
-	}
+	var request loginVerifyRequest
 	if common.DecodeJson(c.Request.Body, &request) != nil || request.FlowToken == "" || request.Code == "" {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
@@ -39,11 +47,19 @@ func VerifyLogin(c *gin.Context) {
 	completeVerifiedLoginResponse(c, bundle, service.VerificationMethodTwoFA, migration)
 }
 
+type loginPasskeyBeginRequest struct {
+	FlowToken string `json:"flow_token"`
+	RPID      string `json:"rp_id"`
+}
+
+// @Summary		开始 Passkey 二次登录验证
+// @Description	用登录返回的 flow_token 开始 Passkey 验证：把 data.options 交给 navigator.credentials.get，再把结果和两个 flow_token 提交到 POST /api/user/login/passkey/finish。
+// @Tags			认证
+// @Param			body	body		loginPasskeyBeginRequest	true	"登录流程的 flow_token，可选的 Passkey 域名"
+// @Success		200		{object}	common.ApiResponse{data=passkeyAssertionOptions}
+// @Router			/api/user/login/passkey/begin [post]
 func LoginPasskeyBegin(c *gin.Context) {
-	var request struct {
-		FlowToken string `json:"flow_token"`
-		RPID      string `json:"rp_id"`
-	}
+	var request loginPasskeyBeginRequest
 	if common.DecodeJson(c.Request.Body, &request) != nil || request.FlowToken == "" {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
@@ -81,15 +97,25 @@ func LoginPasskeyBegin(c *gin.Context) {
 		writeSecurityOperationError(c, err)
 		return
 	}
-	common.ApiSuccess(c, gin.H{"flow_token": token, "expires_at": expiresAt, "options": options, "rp_ids": rpIDs})
+	common.ApiSuccess(c, passkeyAssertionOptions{FlowToken: token, ExpiresAt: expiresAt, Options: options, RPIDs: rpIDs})
 }
 
+type loginPasskeyFinishRequest struct {
+	// FlowToken is the login flow's token, PasskeyFlowToken the one the
+	// Passkey begin step returned.
+	FlowToken        string          `json:"flow_token"`
+	PasskeyFlowToken string          `json:"passkey_flow_token"`
+	Credential       json.RawMessage `json:"credential"`
+}
+
+// @Summary		完成 Passkey 二次登录验证
+// @Description	成功后 data 为访问令牌、登录会话和用户，并写入 new_api_refresh Cookie。
+// @Tags			认证
+// @Param			body	body		loginPasskeyFinishRequest	true	"两个 flow_token 和 navigator.credentials.get 的结果"
+// @Success		200		{object}	common.ApiResponse{data=loginResult}
+// @Router			/api/user/login/passkey/finish [post]
 func LoginPasskeyFinish(c *gin.Context) {
-	var request struct {
-		FlowToken        string          `json:"flow_token"`
-		PasskeyFlowToken string          `json:"passkey_flow_token"`
-		Credential       json.RawMessage `json:"credential"`
-	}
+	var request loginPasskeyFinishRequest
 	if common.DecodeJson(c.Request.Body, &request) != nil || request.FlowToken == "" || request.PasskeyFlowToken == "" || len(request.Credential) == 0 {
 		common.ApiErrorT(c, "Invalid parameters")
 		return

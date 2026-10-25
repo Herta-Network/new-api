@@ -873,6 +873,24 @@ scanLoop:
 	return summary
 }
 
+type applyChannelUpstreamModelUpdatesResponse struct {
+	ID                    int      `json:"id"`
+	AddedModels           []string `json:"added_models"`
+	RemovedModels         []string `json:"removed_models"`
+	IgnoredModels         []string `json:"ignored_models"`
+	RemainingModels       []string `json:"remaining_models"`
+	RemainingRemoveModels []string `json:"remaining_remove_models"`
+	Models                string   `json:"models"`
+	Settings              string   `json:"settings"`
+}
+
+// @Summary		应用渠道上游模型变更
+// @Description	需要 channel.write 权限。从上次检测到的变更中添加 add_models、删除 remove_models，并忽略 ignore_models（以后不再提示）；不在检测结果里的模型被跳过。data.models 是更新后的模型列表，settings 是渠道其他设置的 JSON。
+// @Tags			渠道
+// @Param			body	body		applyChannelUpstreamModelUpdatesRequest	true	"渠道 ID 和选择的模型"
+// @Success		200		{object}	common.ApiResponse{data=applyChannelUpstreamModelUpdatesResponse}
+// @Security		AdminAuth
+// @Router			/api/channel/upstream_updates/apply [post]
 func ApplyChannelUpstreamModelUpdates(c *gin.Context) {
 	var req applyChannelUpstreamModelUpdatesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -913,22 +931,25 @@ func ApplyChannelUpstreamModelUpdates(c *gin.Context) {
 	recordManageAudit(c, "channel.upstream_apply", map[string]any{
 		"id": channel.Id,
 	})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data": gin.H{
-			"id":                      channel.Id,
-			"added_models":            addedModels,
-			"removed_models":          removedModels,
-			"ignored_models":          ignoredModels,
-			"remaining_models":        remainingModels,
-			"remaining_remove_models": remainingRemoveModels,
-			"models":                  channel.Models,
-			"settings":                channel.OtherSettings,
-		},
+	common.ApiSuccess(c, applyChannelUpstreamModelUpdatesResponse{
+		ID:                    channel.Id,
+		AddedModels:           addedModels,
+		RemovedModels:         removedModels,
+		IgnoredModels:         ignoredModels,
+		RemainingModels:       remainingModels,
+		RemainingRemoveModels: remainingRemoveModels,
+		Models:                channel.Models,
+		Settings:              channel.OtherSettings,
 	})
 }
 
+// @Summary		检测渠道上游模型变更
+// @Description	需要 channel.operate 权限。立即向上游拉取模型列表，与渠道模型比较并保存待处理的新增和删除；这里不会自动添加模型。
+// @Tags			渠道
+// @Param			body	body		applyChannelUpstreamModelUpdatesRequest	true	"只读取 id"
+// @Success		200		{object}	common.ApiResponse{data=detectChannelUpstreamModelUpdatesResult}
+// @Security		AdminAuth
+// @Router			/api/channel/upstream_updates/detect [post]
 func DetectChannelUpstreamModelUpdates(c *gin.Context) {
 	var req applyChannelUpstreamModelUpdatesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -959,17 +980,13 @@ func DetectChannelUpstreamModelUpdates(c *gin.Context) {
 		refreshChannelRuntimeCache()
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data": detectChannelUpstreamModelUpdatesResult{
-			ChannelID:       channel.Id,
-			ChannelName:     channel.Name,
-			AddModels:       normalizeModelNames(settings.UpstreamModelUpdateLastDetectedModels),
-			RemoveModels:    normalizeModelNames(settings.UpstreamModelUpdateLastRemovedModels),
-			LastCheckTime:   settings.UpstreamModelUpdateLastCheckTime,
-			AutoAddedModels: autoAdded,
-		},
+	common.ApiSuccess(c, detectChannelUpstreamModelUpdatesResult{
+		ChannelID:       channel.Id,
+		ChannelName:     channel.Name,
+		AddModels:       normalizeModelNames(settings.UpstreamModelUpdateLastDetectedModels),
+		RemoveModels:    normalizeModelNames(settings.UpstreamModelUpdateLastRemovedModels),
+		LastCheckTime:   settings.UpstreamModelUpdateLastCheckTime,
+		AutoAddedModels: autoAdded,
 	})
 }
 
@@ -1040,6 +1057,20 @@ func findEnabledChannelsAfterID(lastID int, batchSize int) ([]*model.Channel, er
 	return channels, query.Find(&channels).Error
 }
 
+type applyAllChannelUpstreamModelUpdatesSummary struct {
+	ProcessedChannels int                                         `json:"processed_channels"`
+	AddedModels       int                                         `json:"added_models"`
+	RemovedModels     int                                         `json:"removed_models"`
+	FailedChannelIDs  []int                                       `json:"failed_channel_ids"`
+	Results           []applyAllChannelUpstreamModelUpdatesResult `json:"results"`
+}
+
+// @Summary		应用所有渠道上游模型变更
+// @Description	需要 channel.write 权限。对开启了上游模型检测的已启用渠道，应用上次检测到的全部新增和删除；added_models 和 removed_models 是模型总数。
+// @Tags			渠道
+// @Success		200	{object}	common.ApiResponse{data=applyAllChannelUpstreamModelUpdatesSummary}
+// @Security		AdminAuth
+// @Router			/api/channel/upstream_updates/apply_all [post]
 func ApplyAllChannelUpstreamModelUpdates(c *gin.Context) {
 	results := make([]applyAllChannelUpstreamModelUpdatesResult, 0)
 	failed := make([]int, 0)
@@ -1111,16 +1142,12 @@ func ApplyAllChannelUpstreamModelUpdates(c *gin.Context) {
 	recordManageAudit(c, "channel.upstream_apply_all", map[string]any{
 		"count": len(results),
 	})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data": gin.H{
-			"processed_channels": len(results),
-			"added_models":       addedModelCount,
-			"removed_models":     removedModelCount,
-			"failed_channel_ids": failed,
-			"results":            results,
-		},
+	common.ApiSuccess(c, applyAllChannelUpstreamModelUpdatesSummary{
+		ProcessedChannels: len(results),
+		AddedModels:       addedModelCount,
+		RemovedModels:     removedModelCount,
+		FailedChannelIDs:  failed,
+		Results:           results,
 	})
 }
 
@@ -1130,6 +1157,14 @@ func ApplyAllChannelUpstreamModelUpdates(c *gin.Context) {
 // history as the scheduled scan. If any model_update task is already active, the
 // manual run is rejected so the caller does not mistake a scheduled run for this
 // manual one.
+//
+//	@Summary		检测所有渠道上游模型变更
+//	@Description	需要 channel.operate 权限。创建 model_update 系统任务后立即返回，检测在后台进行。
+//	@Tags			渠道
+//	@Success		200	{object}	common.ApiResponse{data=queuedChannelTask}
+//	@Failure		409	{object}	common.ApiResponse	"已有模型更新任务在运行或排队，data 是该任务的 task_id、status 和 type"
+//	@Security		AdminAuth
+//	@Router			/api/channel/upstream_updates/detect_all [post]
 func DetectAllChannelUpstreamModelUpdates(c *gin.Context) {
 	task, created, err := service.EnqueueSystemTask(model.SystemTaskTypeModelUpdate, modelUpdateTaskPayload{Manual: true})
 	if err != nil {
@@ -1149,12 +1184,8 @@ func DetectAllChannelUpstreamModelUpdates(c *gin.Context) {
 	recordManageAudit(c, "channel.upstream_detect_all", map[string]any{
 		"task_id": task.TaskID,
 	})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data": gin.H{
-			"task_id": task.TaskID,
-			"status":  task.Status,
-		},
+	common.ApiSuccess(c, queuedChannelTask{
+		TaskID: task.TaskID,
+		Status: task.Status,
 	})
 }

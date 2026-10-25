@@ -843,6 +843,26 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 	return testRequest
 }
 
+// channelTestResponse is TestChannel's body, which reports the test result
+// at the top level.
+type channelTestResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	// Time is the test's duration in seconds.
+	Time      float64          `json:"time"`
+	ErrorCode *types.ErrorCode `json:"error_code,omitempty"`
+}
+
+// @Summary		测试渠道
+// @Description	需要 channel.operate 权限。同步向上游发送一次测试请求并记录响应时间；测试失败时 success 为 false，message 是原因，error_code 是错误码。
+// @Tags			渠道
+// @Param			id				path		int		true	"渠道 ID"
+// @Param			model			query		string	false	"测试模型，默认取渠道的测试模型或第一个模型"
+// @Param			endpoint_type	query		string	false	"端点类型，如 openai、openai-response、anthropic、gemini、embeddings；默认按模型推断"
+// @Param			stream			query		bool	false	"是否流式请求"
+// @Success		200				{object}	channelTestResponse
+// @Security		AdminAuth
+// @Router			/api/channel/test/{id} [get]
 func TestChannel(c *gin.Context) {
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -877,13 +897,13 @@ func TestChannel(c *gin.Context) {
 	}
 	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream)
 	if result.localErr != nil {
-		resp := gin.H{
-			"success": false,
-			"message": result.localErr.Error(),
-			"time":    0.0,
+		resp := channelTestResponse{
+			Success: false,
+			Message: result.localErr.Error(),
+			Time:    0.0,
 		}
 		if result.newAPIError != nil {
-			resp["error_code"] = result.newAPIError.GetErrorCode()
+			resp.ErrorCode = lo.ToPtr(result.newAPIError.GetErrorCode())
 		}
 		c.JSON(http.StatusOK, resp)
 		return
@@ -893,18 +913,18 @@ func TestChannel(c *gin.Context) {
 	go channel.UpdateResponseTime(milliseconds)
 	consumedTime := float64(milliseconds) / 1000.0
 	if result.newAPIError != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success":    false,
-			"message":    result.newAPIError.Error(),
-			"time":       consumedTime,
-			"error_code": result.newAPIError.GetErrorCode(),
+		c.JSON(http.StatusOK, channelTestResponse{
+			Success:   false,
+			Message:   result.newAPIError.Error(),
+			Time:      consumedTime,
+			ErrorCode: lo.ToPtr(result.newAPIError.GetErrorCode()),
 		})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"time":    consumedTime,
+	c.JSON(http.StatusOK, channelTestResponse{
+		Success: true,
+		Message: "",
+		Time:    consumedTime,
 	})
 }
 
@@ -1134,9 +1154,23 @@ func selectChannelsForAutomaticTest(channels []*model.Channel, mode string) []*m
 	return selected
 }
 
+// queuedChannelTask is the system task a manual channel run enqueued.
+type queuedChannelTask struct {
+	TaskID string                 `json:"task_id"`
+	Status model.SystemTaskStatus `json:"status"`
+}
+
 // TestAllChannels enqueues a channel_test system task instead of running the
 // test loop inline. If any channel_test task is already active, the manual run is
 // rejected so the caller does not mistake a scheduled run for this manual one.
+//
+//	@Summary		测试所有渠道
+//	@Description	需要 channel.operate 权限。创建 channel_test 系统任务后立即返回，测试除手动禁用外的所有渠道，完成后通知管理员。
+//	@Tags			渠道
+//	@Success		200	{object}	common.ApiResponse{data=queuedChannelTask}
+//	@Failure		409	{object}	common.ApiResponse	"已有渠道测试任务在运行或排队，data 是该任务的 task_id、status 和 type"
+//	@Security		AdminAuth
+//	@Router			/api/channel/test [get]
 func TestAllChannels(c *gin.Context) {
 	task, created, err := service.EnqueueSystemTask(model.SystemTaskTypeChannelTest, channelTestTaskPayload{
 		Mode:   operation_setting.ChannelTestModeScheduledAll,
@@ -1155,12 +1189,8 @@ func TestAllChannels(c *gin.Context) {
 		}})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data": gin.H{
-			"task_id": task.TaskID,
-			"status":  task.Status,
-		},
+	common.ApiSuccess(c, queuedChannelTask{
+		TaskID: task.TaskID,
+		Status: task.Status,
 	})
 }

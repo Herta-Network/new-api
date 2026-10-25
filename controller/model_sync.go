@@ -314,6 +314,18 @@ func fetchMetadataCatalog(c *gin.Context, locale string) (metadataSyncSource, ma
 	return source, models, vendors, nil
 }
 
+type syncUpstreamPreview struct {
+	Source     metadataSyncSource      `json:"source"`
+	Candidates []metadataSyncCandidate `json:"candidates"`
+}
+
+// @Summary		预览上游元数据同步
+// @Description	从上游元数据源取模型和供应商元数据并与本站对比，不做修改；source.version 和 candidates[].record_version 用于随后的同步。
+// @Tags			模型
+// @Param			locale	query		string	false	"元数据语言：zh（默认）、en、ja"
+// @Success		200		{object}	common.ApiResponse{data=syncUpstreamPreview}
+// @Security		AdminAuth
+// @Router			/api/models/sync_upstream/preview [get]
 func SyncUpstreamPreview(c *gin.Context) {
 	source, upstream, upstreamVendors, err := fetchMetadataCatalog(c, c.Query("locale"))
 	if err != nil {
@@ -407,15 +419,26 @@ func SyncUpstreamPreview(c *gin.Context) {
 		}
 		candidates = append(candidates, candidate)
 	}
-	common.ApiSuccess(c, gin.H{"source": source, "candidates": candidates})
+	common.ApiSuccess(c, syncUpstreamPreview{Source: source, Candidates: candidates})
 }
 
+type syncUpstreamModelsRequest struct {
+	Locale        string                        `json:"locale"`
+	SourceVersion string                        `json:"source_version"`
+	Selections    []model.MetadataSyncSelection `json:"selections"`
+}
+
+// @Summary		同步上游元数据
+// @Description	应用预览中选中的变更；上游元数据或本地记录在预览后有变化时返回 409，需重新预览。
+// @Tags			模型
+// @Param			body	body		syncUpstreamModelsRequest	true	"预览时的语言、source.version 和选中的变更"
+// @Success		200		{object}	common.ApiResponse{data=model.MetadataSyncResult}
+// @Failure		400		{object}	common.ApiResponse	"未选择变更或同步失败"
+// @Failure		409		{object}	common.ApiResponse	"元数据已变化，需重新预览"
+// @Security		AdminAuth
+// @Router			/api/models/sync_upstream [post]
 func SyncUpstreamModels(c *gin.Context) {
-	var request struct {
-		Locale        string                        `json:"locale"`
-		SourceVersion string                        `json:"source_version"`
-		Selections    []model.MetadataSyncSelection `json:"selections"`
-	}
+	var request syncUpstreamModelsRequest
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil || len(request.Selections) == 0 || request.SourceVersion == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Preview and select metadata changes before applying"})
 		return

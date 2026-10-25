@@ -18,6 +18,14 @@ import (
 
 // GetOpenCodeGoChannelUsage reads how much of each allowance window the key of
 // an OpenCode Go channel has used.
+//
+//	@Summary		获取 OpenCode Go 渠道用量
+//	@Description	需要 channel.read 权限。向上游查询各额度窗口的已用比例。不支持多密钥渠道。
+//	@Tags			渠道
+//	@Param			id	path		int	true	"OpenCode Go 渠道 ID"
+//	@Success		200	{object}	common.ApiResponse{data=opencodego.Usage}
+//	@Security		AdminAuth
+//	@Router			/api/channel/{id}/opencode-go/usage [get]
 func GetOpenCodeGoChannelUsage(c *gin.Context) {
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {

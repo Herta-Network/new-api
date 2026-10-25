@@ -25,6 +25,21 @@ func requirePaymentCompliance(c *gin.Context) bool {
 	return true
 }
 
+type paymentComplianceConfirmation struct {
+	Confirmed    bool   `json:"confirmed"`
+	TermsVersion string `json:"terms_version"`
+	ConfirmedAt  int64  `json:"confirmed_at"`
+	ConfirmedBy  int    `json:"confirmed_by"`
+}
+
+// @Summary		确认支付合规条款
+// @Description	确认后开放支付、兑换码、订阅和邀请奖励功能。须用登录得到的访问令牌，用个人访问令牌（PAT）调用返回 403。
+// @Tags			系统设置
+// @Param			body	body		PaymentComplianceRequest	true	"confirmed 须为 true"
+// @Success		200		{object}	common.ApiResponse{data=paymentComplianceConfirmation}
+// @Failure		403		{object}	common.ApiResponse	"用个人访问令牌调用"
+// @Security		RootAuth
+// @Router			/api/option/payment_compliance [post]
 func ConfirmPaymentCompliance(c *gin.Context) {
 	if c.GetBool("use_access_token") {
 		c.JSON(http.StatusForbidden, gin.H{
@@ -71,10 +86,10 @@ func ConfirmPaymentCompliance(c *gin.Context) {
 		now,
 	))
 
-	common.ApiSuccess(c, gin.H{
-		"confirmed":     true,
-		"terms_version": operation_setting.CurrentComplianceTermsVersion,
-		"confirmed_at":  now,
-		"confirmed_by":  userId,
+	common.ApiSuccess(c, paymentComplianceConfirmation{
+		Confirmed:    true,
+		TermsVersion: operation_setting.CurrentComplianceTermsVersion,
+		ConfirmedAt:  now,
+		ConfirmedBy:  userId,
 	})
 }

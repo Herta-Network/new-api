@@ -703,6 +703,24 @@ func updateStandardChannelBalance(channel *model.Channel) (float64, error) {
 	return balance, nil
 }
 
+// channelBalanceResponse is UpdateChannelBalance's body, which reports the
+// balance at the top level.
+type channelBalanceResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	// Balance is the balance in USD; advanced custom channels report
+	// RawResponse instead.
+	Balance     *float64 `json:"balance,omitempty"`
+	RawResponse string   `json:"raw_response,omitempty"`
+}
+
+// @Summary		更新渠道余额
+// @Description	需要 channel.operate 权限。向上游查询余额并保存。高级自定义渠道返回 raw_response（上游原始响应），其他渠道返回 balance（美元）。多密钥和任务插件渠道不支持。
+// @Tags			渠道
+// @Param			id	path		int	true	"渠道 ID"
+// @Success		200	{object}	channelBalanceResponse
+// @Security		AdminAuth
+// @Router			/api/channel/update_balance/{id} [get]
 func UpdateChannelBalance(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -727,14 +745,14 @@ func UpdateChannelBalance(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	response := gin.H{
-		"success": true,
-		"message": "",
+	response := channelBalanceResponse{
+		Success: true,
+		Message: "",
 	}
 	if result.RawResponse == "" {
-		response["balance"] = result.Balance
+		response.Balance = &result.Balance
 	} else {
-		response["raw_response"] = result.RawResponse
+		response.RawResponse = result.RawResponse
 	}
 	c.JSON(http.StatusOK, response)
 }
@@ -769,6 +787,12 @@ func updateAllChannelsBalance() error {
 	return nil
 }
 
+// @Summary		更新所有渠道余额
+// @Description	需要 channel.operate 权限。同步逐个查询所有已启用的单密钥渠道的余额，耗时随渠道数增长；余额不大于 0 的渠道会被自动禁用。
+// @Tags			渠道
+// @Success		200	{object}	common.ApiResponse
+// @Security		AdminAuth
+// @Router			/api/channel/update_balance [get]
 func UpdateAllChannelsBalance(c *gin.Context) {
 	// TODO: make it async
 	err := updateAllChannelsBalance()
@@ -776,10 +800,7 @@ func UpdateAllChannelsBalance(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 	return
 }
 

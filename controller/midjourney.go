@@ -278,6 +278,17 @@ func checkMjTaskNeedUpdate(oldTask *model.Midjourney, newTask dto.MidjourneyDto)
 	return false
 }
 
+// @Summary	列出全部 Midjourney 任务
+// @Tags		任务
+// @Param		channel_id		query		int		false	"渠道 ID"
+// @Param		mj_id			query		string	false	"任务 ID"
+// @Param		start_timestamp	query		int		false	"提交时间下限，Unix 毫秒"
+// @Param		end_timestamp	query		int		false	"提交时间上限，Unix 毫秒"
+// @Param		p				query		int		false	"页码，从 1 开始"
+// @Param		page_size		query		int		false	"每页条数，最多 100"
+// @Success	200				{object}	common.ApiResponse{data=common.PageInfo{items=[]model.Midjourney}}
+// @Security	AdminAuth
+// @Router		/api/mj/ [get]
 func GetAllMidjourney(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 
@@ -303,6 +314,16 @@ func GetAllMidjourney(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
+// @Summary	列出我的 Midjourney 任务
+// @Tags		任务
+// @Param		mj_id			query		string	false	"任务 ID"
+// @Param		start_timestamp	query		int		false	"提交时间下限，Unix 毫秒"
+// @Param		end_timestamp	query		int		false	"提交时间上限，Unix 毫秒"
+// @Param		p				query		int		false	"页码，从 1 开始"
+// @Param		page_size		query		int		false	"每页条数，最多 100"
+// @Success	200				{object}	common.ApiResponse{data=common.PageInfo{items=[]model.Midjourney}}
+// @Security	UserAuth
+// @Router		/api/mj/self [get]
 func GetUserMidjourney(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 

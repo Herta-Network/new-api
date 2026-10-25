@@ -14,13 +14,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// @Summary		操练场对话
+// @Description	只接受登录得到的访问令牌，个人访问令牌（PAT）会被拒绝。请求体可多带 group 指定计费分组，须是用户可用的分组。stream 为 true 时以 SSE 流式返回。
+// @Tags			操练场
+// @Produce		json,event-stream
+// @Param			body	body		dto.GeneralOpenAIRequest	true	"对话请求，另可带 group"
+// @Success		200		{object}	dto.OpenAITextResponse
+// @Failure		default	{object}	OpenAIErrorResponse
+// @Security		UserAuth
+// @Router			/pg/chat/completions [post]
 func Playground(c *gin.Context) {
 	var newAPIError *types.NewAPIError
 
 	defer func() {
 		if newAPIError != nil {
-			c.JSON(newAPIError.StatusCode, gin.H{
-				"error": newAPIError.ToOpenAIError(common.UpstreamAddresses(c)...),
+			c.JSON(newAPIError.StatusCode, OpenAIErrorResponse{
+				Error: newAPIError.ToOpenAIError(common.UpstreamAddresses(c)...),
 			})
 		}
 	}()

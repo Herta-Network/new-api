@@ -12,6 +12,20 @@ import (
 	"github.com/samber/lo"
 )
 
+type perfMetricsSummaryResponse struct {
+	Success bool                         `json:"success"`
+	Data    perfmetrics.SummaryAllResult `json:"data"`
+}
+
+// @Summary		获取模型性能概览
+// @Description	定价模块公开时登录可选，要求登录或已关闭时需要登录。
+// @Tags			系统
+// @Param			hours			query		int			false	"统计最近多少小时，默认 24，最大 720"
+// @Param			recent_model	query		[]string	false	"要返回近 7 天成功率序列的模型，可重复，最多 50 个"	collectionFormat(multi)
+// @Success		200				{object}	perfMetricsSummaryResponse
+// @Failure		400				{object}	common.ApiResponse
+// @Failure		500				{object}	common.ApiResponse
+// @Router			/api/perf-metrics/summary [get]
 func GetPerfMetricsSummary(c *gin.Context) {
 	hours := 24
 	if rawHours := c.Query("hours"); rawHours != "" {
@@ -35,12 +49,27 @@ func GetPerfMetricsSummary(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    result,
+	c.JSON(http.StatusOK, perfMetricsSummaryResponse{
+		Success: true,
+		Data:    result,
 	})
 }
 
+type perfMetricsResponse struct {
+	Success bool                    `json:"success"`
+	Data    perfmetrics.QueryResult `json:"data"`
+}
+
+// @Summary		获取模型性能指标
+// @Description	定价模块公开时登录可选，要求登录或已关闭时需要登录。
+// @Tags			系统
+// @Param			model	query		string	true	"模型名"
+// @Param			group	query		string	false	"只看此分组"
+// @Param			hours	query		int		false	"统计最近多少小时，默认 24，最大 720"
+// @Success		200		{object}	perfMetricsResponse
+// @Failure		400		{object}	common.ApiResponse
+// @Failure		500		{object}	common.ApiResponse
+// @Router			/api/perf-metrics [get]
 func GetPerfMetrics(c *gin.Context) {
 	modelName := c.Query("model")
 	if modelName == "" {
@@ -72,8 +101,8 @@ func GetPerfMetrics(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    result,
+	c.JSON(http.StatusOK, perfMetricsResponse{
+		Success: true,
+		Data:    result,
 	})
 }

@@ -17,6 +17,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// @Summary		获取 Codex 渠道用量
+// @Description	需要 channel.read 权限。向渠道上游查询用量；success 跟随上游状态码，data 是上游响应体。上游返回 401 或 403 时用 refresh_token 刷新令牌、保存后重试一次。不支持多密钥渠道。
+// @Tags			渠道
+// @Param			id	path		int	true	"Codex 渠道 ID"
+// @Success		200	{object}	codexWhamResponse
+// @Security		AdminAuth
+// @Router			/api/channel/{id}/codex/usage [get]
 func GetCodexChannelUsage(c *gin.Context) {
 	fetchCodexChannelWhamData(
 		c,
@@ -26,6 +33,13 @@ func GetCodexChannelUsage(c *gin.Context) {
 	)
 }
 
+// @Summary		获取 Codex 限额重置额度
+// @Description	需要 channel.read 权限。向渠道上游查询限额重置额度；success 跟随上游状态码，data 是上游响应体。上游返回 401 或 403 时用 refresh_token 刷新令牌、保存后重试一次。不支持多密钥渠道。
+// @Tags			渠道
+// @Param			id	path		int	true	"Codex 渠道 ID"
+// @Success		200	{object}	codexWhamResponse
+// @Security		AdminAuth
+// @Router			/api/channel/{id}/codex/usage/reset-credits [get]
 func GetCodexChannelRateLimitResetCredits(c *gin.Context) {
 	fetchCodexChannelWhamData(
 		c,
@@ -35,6 +49,13 @@ func GetCodexChannelRateLimitResetCredits(c *gin.Context) {
 	)
 }
 
+// @Summary		重置 Codex 渠道用量
+// @Description	需要 channel.operate 权限。消耗一次限额重置额度来重置用量；success 跟随上游状态码，data 是上游响应体。上游返回 401 或 403 时用 refresh_token 刷新令牌、保存后重试一次。不支持多密钥渠道。
+// @Tags			渠道
+// @Param			id	path		int	true	"Codex 渠道 ID"
+// @Success		200	{object}	codexWhamResponse
+// @Security		AdminAuth
+// @Router			/api/channel/{id}/codex/usage/reset [post]
 func ResetCodexChannelUsage(c *gin.Context) {
 	fetchCodexChannelWhamData(
 		c,
@@ -42,6 +63,17 @@ func ResetCodexChannelUsage(c *gin.Context) {
 		common.LogText("failed to reset codex usage"),
 		"Failed to reset usage. Please try again later",
 	)
+}
+
+// codexWhamResponse is the body of the Codex usage handlers, which pass the
+// upstream status and body through.
+type codexWhamResponse struct {
+	Success        bool   `json:"success"`
+	Message        string `json:"message"`
+	UpstreamStatus int    `json:"upstream_status"`
+	// Data is the upstream body: its JSON value, or its text when it is not
+	// JSON.
+	Data any `json:"data"`
 }
 
 type codexWhamFetchFunc func(
@@ -153,14 +185,14 @@ func fetchCodexChannelWhamData(
 	}
 
 	ok := statusCode >= 200 && statusCode < 300
-	resp := gin.H{
-		"success":         ok,
-		"message":         "",
-		"upstream_status": statusCode,
-		"data":            payload,
+	resp := codexWhamResponse{
+		Success:        ok,
+		Message:        "",
+		UpstreamStatus: statusCode,
+		Data:           payload,
 	}
 	if !ok {
-		resp["message"] = fmt.Sprintf("upstream status: %d", statusCode)
+		resp.Message = fmt.Sprintf("upstream status: %d", statusCode)
 	}
 	c.JSON(http.StatusOK, resp)
 }

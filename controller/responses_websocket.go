@@ -111,6 +111,12 @@ func newResponsesWSRequestRunner(c *gin.Context) relay.ResponsesWSRequestRunner 
 	}
 }
 
+// @Summary		建立 Responses WebSocket
+// @Description	升级为 WebSocket 连接。客户端发送 response.create 事件，每个事件按 POST /v1/responses 处理（选渠道、限流、计费），服务端以 Responses 流式事件回复。浏览器无法设置请求头时，可在 Sec-WebSocket-Protocol 里写 openai-insecure-api-key.<API 密钥> 代替 Authorization。
+// @Tags			OpenAI
+// @Success		101	"切换到 WebSocket 协议"
+// @Security		TokenAuth
+// @Router			/v1/responses [get]
 func ResponsesWebSocket(c *gin.Context) {
 	requestID := c.GetString(common.RequestIdKey)
 	runner := newResponsesWSRequestRunner(c)

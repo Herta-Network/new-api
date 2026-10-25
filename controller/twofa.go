@@ -2,7 +2,6 @@ package controller
 
 import (
 	"errors"
-	"net/http"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -19,6 +18,12 @@ type Verify2FARequest struct {
 	FlowToken string `json:"flow_token,omitempty"`
 }
 
+// @Summary		开始设置两步验证
+// @Description	生成 TOTP 密钥、二维码数据和备用码，用 POST /api/user/2fa/enable 提交验证码完成启用；需要 scope 为 2fa.setup 的 X-Security-Proof。
+// @Tags			两步验证
+// @Success		200	{object}	common.ApiResponse{data=service.TwoFASetup}
+// @Security		UserAuth && SecurityProof
+// @Router			/api/user/2fa/setup [post]
 func Setup2FA(c *gin.Context) {
 	authorization := middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeTwoFASetup})
 	if authorization == nil {
@@ -34,6 +39,13 @@ func Setup2FA(c *gin.Context) {
 	common.ApiSuccess(c, setup)
 }
 
+// @Summary		启用两步验证
+// @Description	提交设置时得到的 flow_token 和 TOTP 验证码；成功后 data 为替换当前会话的访问令牌和会话，经个人访问令牌启用时为空对象。
+// @Tags			两步验证
+// @Param			body	body		Verify2FARequest	true	"验证码和设置流程的 flow_token"
+// @Success		200		{object}	common.ApiResponse{data=sessionRotation}
+// @Security		UserAuth
+// @Router			/api/user/2fa/enable [post]
 func Enable2FA(c *gin.Context) {
 	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
@@ -55,10 +67,17 @@ func Enable2FA(c *gin.Context) {
 		return
 	}
 	recordUserSecurityAudit(c, identity.UserID, "user.2fa_enable", nil)
-	common.ApiSuccess(c, authRotationData(bundle))
+	common.ApiSuccess(c, sessionRotation{bundle})
 }
 
 // Disable2FA 禁用2FA
+//
+//	@Summary		禁用两步验证
+//	@Description	需要 scope 为 2fa.disable 的 X-Security-Proof；data 为替换当前会话的访问令牌和会话，经个人访问令牌禁用时为空对象。
+//	@Tags			两步验证
+//	@Success		200	{object}	common.ApiResponse{data=sessionRotation}
+//	@Security		UserAuth && SecurityProof
+//	@Router			/api/user/2fa/disable [post]
 func Disable2FA(c *gin.Context) {
 	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeTwoFADisable}) == nil {
 		return
@@ -78,10 +97,24 @@ func Disable2FA(c *gin.Context) {
 	// 记录操作日志
 	recordUserSecurityAudit(c, userId, "user.2fa_disable_self", nil)
 
-	common.ApiSuccessT(c, "Two-factor authentication disabled", authRotationData(bundle))
+	common.ApiSuccessT(c, "Two-factor authentication disabled", sessionRotation{bundle})
+}
+
+type twoFAStatus struct {
+	Enabled bool `json:"enabled"`
+	Locked  bool `json:"locked"`
+	// BackupCodesRemaining is present while two-factor authentication is
+	// enabled and the unused backup codes could be counted.
+	BackupCodesRemaining *int `json:"backup_codes_remaining,omitempty"`
 }
 
 // Get2FAStatus 获取用户2FA状态
+//
+//	@Summary	获取两步验证状态
+//	@Tags		两步验证
+//	@Success	200	{object}	common.ApiResponse{data=twoFAStatus}
+//	@Security	UserAuth
+//	@Router		/api/user/2fa/status [get]
 func Get2FAStatus(c *gin.Context) {
 	userId := c.GetInt("id")
 
@@ -91,33 +124,43 @@ func Get2FAStatus(c *gin.Context) {
 		return
 	}
 
-	status := map[string]any{
-		"enabled": false,
-		"locked":  false,
+	status := twoFAStatus{
+		Enabled: false,
+		Locked:  false,
 	}
 
 	if twoFA != nil {
-		status["enabled"] = twoFA.IsEnabled
-		status["locked"] = twoFA.IsLocked()
+		status.Enabled = twoFA.IsEnabled
+		status.Locked = twoFA.IsLocked()
 		if twoFA.IsEnabled {
 			// 获取剩余备用码数量
 			backupCount, err := model.GetUnusedBackupCodeCount(userId)
 			if err != nil {
 				common.SysLog(common.LogText("failed to count backup codes: %s", err.Error()))
 			} else {
-				status["backup_codes_remaining"] = backupCount
+				status.BackupCodesRemaining = &backupCount
 			}
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    status,
-	})
+	common.ApiSuccess(c, status)
+}
+
+// backupCodesResult holds the new backup codes and, like sessionRotation, the
+// access token and login session that replace the current ones.
+type backupCodesResult struct {
+	*service.AuthBundle
+	BackupCodes []string `json:"backup_codes"`
 }
 
 // RegenerateBackupCodes 重新生成备用码
+//
+//	@Summary		重新生成备用码
+//	@Description	作废旧备用码；需要 scope 为 2fa.backup_codes.regenerate 的 X-Security-Proof。data 含新备用码和替换当前会话的访问令牌与会话（经个人访问令牌操作时只有备用码）。
+//	@Tags			两步验证
+//	@Success		200	{object}	common.ApiResponse{data=backupCodesResult}
+//	@Security		UserAuth && SecurityProof
+//	@Router			/api/user/2fa/backup_codes [post]
 func RegenerateBackupCodes(c *gin.Context) {
 	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeTwoFABackupCodes}) == nil {
 		return
@@ -147,17 +190,29 @@ func RegenerateBackupCodes(c *gin.Context) {
 	// 记录操作日志
 	recordUserSecurityAudit(c, userId, "user.2fa_backup_codes", nil)
 
-	data := authRotationData(bundle)
-	data["backup_codes"] = backupCodes
-	common.ApiSuccessT(c, "Backup codes regenerated successfully", data)
+	common.ApiSuccessT(c, "Backup codes regenerated successfully", backupCodesResult{AuthBundle: bundle, BackupCodes: backupCodes})
 }
 
 // Verify2FALogin 登录时验证2FA
+//
+//	@Summary		两步验证登录
+//	@Description	与 POST /api/user/login/verify 相同：提交登录返回的 flow_token 和 TOTP 验证码或备用码，成功后返回访问令牌、登录会话和用户，并写入 new_api_refresh Cookie。
+//	@Tags			认证
+//	@Param			body	body		loginVerifyRequest	true	"登录流程的 flow_token 和验证码"
+//	@Success		200		{object}	common.ApiResponse{data=loginResult}
+//	@Router			/api/user/login/2fa [post]
 func Verify2FALogin(c *gin.Context) {
 	VerifyLogin(c)
 }
 
 // Admin2FAStats 管理员获取2FA统计信息
+//
+//	@Summary		获取两步验证统计
+//	@Description	data 为 total_users（用户总数）、enabled_users（已启用两步验证的用户数）和 enabled_rate（启用率，如 "12.5%"）。
+//	@Tags			用户管理
+//	@Success		200	{object}	common.ApiResponse{data=map[string]any}
+//	@Security		AdminAuth
+//	@Router			/api/user/2fa/stats [get]
 func Admin2FAStats(c *gin.Context) {
 	stats, err := model.GetTwoFAStats()
 	if err != nil {
@@ -165,14 +220,18 @@ func Admin2FAStats(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    stats,
-	})
+	common.ApiSuccess(c, stats)
 }
 
 // AdminDisable2FA 管理员强制禁用用户2FA
+//
+//	@Summary		重置用户两步验证
+//	@Description	禁用该用户的两步验证并撤销其全部登录会话；需要 scope 为 admin.user.2fa.disable 的 X-Security-Proof，只能操作角色低于自己的用户，超级管理员不受此限。
+//	@Tags			用户管理
+//	@Param			id	path		int	true	"用户 ID"
+//	@Success		200	{object}	common.ApiResponse
+//	@Security		AdminAuth && SecurityProof
+//	@Router			/api/user/{id}/2fa [delete]
 func AdminDisable2FA(c *gin.Context) {
 	userIdStr := c.Param("id")
 	userId, err := strconv.Atoi(userIdStr)

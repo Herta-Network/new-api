@@ -12,6 +12,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type pricingResponse struct {
+	Success           bool                           `json:"success"`
+	Data              []model.Pricing                `json:"data"`
+	Vendors           []model.PricingVendor          `json:"vendors"`
+	GroupRatio        map[string]float64             `json:"group_ratio"`
+	UsableGroup       map[string]string              `json:"usable_group"`
+	SupportedEndpoint map[string]common.EndpointInfo `json:"supported_endpoint"`
+	AutoGroups        []string                       `json:"auto_groups"`
+	PricingVersion    string                         `json:"pricing_version"`
+}
+
+// @Summary		获取模型定价
+// @Description	访问取决于顶部导航的定价模块设置：公开（登录可选）、需要登录，或关闭（返回 403，带 Authorization 的请求改为要求超级管理员）。已登录时按用户分组返回可用分组和分组倍率。
+// @Tags			系统
+// @Success		200	{object}	pricingResponse
+// @Router			/api/pricing [get]
 func GetPricing(c *gin.Context) {
 	userId := c.GetInt("id")
 	groupRatio := map[string]float64{}
@@ -39,18 +55,24 @@ func GetPricing(c *gin.Context) {
 		}
 	}
 
-	c.JSON(200, gin.H{
-		"success":            true,
-		"data":               pricing,
-		"vendors":            model.GetVendors(),
-		"group_ratio":        groupRatio,
-		"usable_group":       usableGroup,
-		"supported_endpoint": model.GetSupportedEndpointMap(),
-		"auto_groups":        service.GetUserAutoGroup(group),
-		"pricing_version":    "a42d372ccf0b5dd13ecf71203521f9d2",
+	c.JSON(200, pricingResponse{
+		Success:           true,
+		Data:              pricing,
+		Vendors:           model.GetVendors(),
+		GroupRatio:        groupRatio,
+		UsableGroup:       usableGroup,
+		SupportedEndpoint: model.GetSupportedEndpointMap(),
+		AutoGroups:        service.GetUserAutoGroup(group),
+		PricingVersion:    "a42d372ccf0b5dd13ecf71203521f9d2",
 	})
 }
 
+// @Summary		重置模型倍率
+// @Description	把 ModelRatio 恢复为内置默认值。
+// @Tags			系统设置
+// @Success		200	{object}	common.ApiResponse
+// @Security		RootAuth
+// @Router			/api/option/rest_model_ratio [post]
 func ResetModelRatio(c *gin.Context) {
 	defaultStr := ratio_setting.DefaultModelRatio2JSONString()
 	err := model.UpdateOption("ModelRatio", defaultStr)
