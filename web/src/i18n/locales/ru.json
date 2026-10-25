@@ -6303,6 +6303,7 @@
     "Subscription Only": "Только подписка",
     "Subscription plan creation and changes are locked until the administrator confirms compliance terms in Payment Gateway settings.": "Создание и изменение планов подписки заблокированы, пока администратор не подтвердит условия соответствия в настройках платежного шлюза.",
     "Subscription plan is not enabled": "План подписки не включен",
+    "Subscription plan does not exist": "План подписки не существует",
     "Subscription plan title cannot be empty": "Название плана подписки не может быть пустым",
     "Subscription Plans": "Планы подписки",
     "Subscription purchased with balance, plan: {{plan}}, payment amount: {{amount}}, quota deducted: {{quota}}": "Подписка оформлена с баланса, тариф: {{plan}}, сумма оплаты: {{amount}}, списано квоты: {{quota}}",

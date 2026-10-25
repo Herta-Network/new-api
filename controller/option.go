@@ -450,6 +450,15 @@ func UpdateOption(c *gin.Context) {
 			return
 		}
 		recordPasskeyDomainAudit(c, change, false, nil)
+		if option.Key == "ServerAddress" {
+			// Stripe webhooks of methods without a callback domain point at
+			// the server address.
+			gopool.Go(func() {
+				if err := payment.SyncStripeWebhooks(context.Background()); err != nil {
+					common.SysError(common.LogText("sync Stripe webhooks after the server address changed: %v", err))
+				}
+			})
+		}
 		common.ApiSuccess(c, change)
 		return
 	}
@@ -466,15 +475,6 @@ func UpdateOption(c *gin.Context) {
 	recordManageAudit(c, "option.update", map[string]any{
 		"key": option.Key,
 	})
-	if option.Key == "ServerAddress" {
-		// Stripe webhooks of methods without a callback domain point at
-		// the server address.
-		gopool.Go(func() {
-			if err := payment.SyncStripeWebhooks(context.Background()); err != nil {
-				common.SysError(common.LogText("sync Stripe webhooks after the server address changed: %v", err))
-			}
-		})
-	}
 	if option.Key == "payment_setting.currency" || option.Key == "payment_setting.exchange_rate_overrides" {
 		// Amounts show at the new rate on this node now and on the others
 		// within a minute.

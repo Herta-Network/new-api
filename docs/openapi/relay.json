@@ -1053,18 +1053,19 @@
                         "TokenAuth": []
                     }
                 ],
+                "description": "OpenAI 已停用的 Edits 接口：按 instruction 修改 input，按文本请求转发和计费。",
                 "tags": [
-                    "图像"
+                    "OpenAI"
                 ],
-                "summary": "编辑图像（旧路径）",
+                "summary": "文本编辑（旧接口）",
                 "parameters": [
                     {
-                        "description": "图像请求，model 必填",
+                        "description": "model 和 instruction 必填，input 是要修改的文本",
                         "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/dto.ImageRequest"
+                            "$ref": "#/definitions/dto.GeneralOpenAIRequest"
                         }
                     }
                 ],
@@ -1072,7 +1073,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/dto.ImageResponse"
+                            "$ref": "#/definitions/dto.OpenAITextResponse"
                         }
                     },
                     "default": {

@@ -6303,6 +6303,7 @@
     "Subscription Only": "僅用訂閱",
     "Subscription plan creation and changes are locked until the administrator confirms compliance terms in Payment Gateway settings.": "管理員在支付閘道設定中確認合規條款之前，訂閱套餐的建立和修改會被鎖定。",
     "Subscription plan is not enabled": "訂閱方案未啟用",
+    "Subscription plan does not exist": "訂閱方案不存在",
     "Subscription plan title cannot be empty": "訂閱方案標題不能為空",
     "Subscription Plans": "訂閱套餐",
     "Subscription purchased with balance, plan: {{plan}}, payment amount: {{amount}}, quota deducted: {{quota}}": "使用餘額購買訂閱成功，方案：{{plan}}，支付金額：{{amount}}，扣除額度：{{quota}}",

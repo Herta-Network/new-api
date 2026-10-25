@@ -6303,6 +6303,7 @@
     "Subscription Only": "Subscription Only",
     "Subscription plan creation and changes are locked until the administrator confirms compliance terms in Payment Gateway settings.": "Subscription plan creation and changes are locked until the administrator confirms compliance terms in Payment Gateway settings.",
     "Subscription plan is not enabled": "Subscription plan is not enabled",
+    "Subscription plan does not exist": "Subscription plan does not exist",
     "Subscription plan title cannot be empty": "Subscription plan title cannot be empty",
     "Subscription Plans": "Subscription Plans",
     "Subscription purchased with balance, plan: {{plan}}, payment amount: {{amount}}, quota deducted: {{quota}}": "Subscription purchased with balance, plan: {{plan}}, payment amount: {{amount}}, quota deducted: {{quota}}",
