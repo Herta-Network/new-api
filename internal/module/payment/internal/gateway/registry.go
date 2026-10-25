@@ -213,7 +213,7 @@ func Platforms() []PlatformInfo {
 				// The first choice is what API orders asked for before the
 				// field existed.
 				{Key: "pay_form", Label: "Payment form", Type: FieldSelect, Required: true, When: map[string]string{"checkout": EPayCheckoutAPI},
-					Description: "What an API order asks the gateway for. By the buyer's device, a computer gets a QR code and a phone the payment page. A payment page answered for a QR code is shown as one.",
+					Description: "API orders always get the gateway's payment page. A QR code shows its link for the buyer to scan with a phone; by the buyer's device, a computer gets the QR code and a phone opens the page.",
 					Options: []FieldOption{
 						{Value: EPayFormJump, Label: "Payment page"},
 						{Value: EPayFormQRCode, Label: "QR code"},

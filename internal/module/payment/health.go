@@ -25,11 +25,14 @@ var (
 // ChannelHealth is what this server saw of a channel's checkouts since the
 // last one that started.
 type ChannelHealth struct {
-	// Failures counts the checkouts that failed in a row.
+	// Failures counts the checkouts that failed in a row and count towards
+	// the breaker; a refusal, for one, does not.
 	Failures int `json:"failures"`
 	// TrippedUntil ends the channel's cooldown, in Unix seconds; 0 when it
 	// was not tripped.
-	TrippedUntil int64  `json:"tripped_until"`
+	TrippedUntil int64 `json:"tripped_until"`
+	// LastError and LastFailedAt describe the latest failed checkout,
+	// counted or not.
 	LastError    string `json:"last_error"`
 	LastFailedAt int64  `json:"last_failed_at"`
 }
@@ -49,9 +52,9 @@ func checkoutStarted(methodID int) {
 	delete(health, methodID)
 }
 
-// checkoutFailed counts a failed checkout of a channel and trips it at the
-// threshold.
-func checkoutFailed(methodID int, err error) {
+// checkoutFailed records a failed checkout of a channel. One that counts is
+// counted towards the breaker, which trips the channel at the threshold.
+func checkoutFailed(methodID int, err error, counts bool) {
 	healthMu.Lock()
 	defer healthMu.Unlock()
 	state := health[methodID]
@@ -60,8 +63,11 @@ func checkoutFailed(methodID int, err error) {
 		health[methodID] = state
 	}
 	now := healthNow()
-	state.Failures++
 	state.LastError, state.LastFailedAt = err.Error(), now.Unix()
+	if !counts {
+		return
+	}
+	state.Failures++
 	if state.Failures >= breakerThreshold {
 		state.TrippedUntil = now.Add(breakerCooldown).Unix()
 	}

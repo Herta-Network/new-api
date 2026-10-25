@@ -926,63 +926,71 @@ func TestEPayV2Checkout(t *testing.T) {
 	assert.ErrorContains(t, err, "HTTPS")
 }
 
-// An API order asks for the payment form its method sets: the payment page
-// (V1 device=jump, V2 method=jump), what a computer pays with (V1 device=pc,
-// V2 method=web with device=pc), or by the buyer's device. A method saved
-// before payment forms existed asks for the page. Asked for a QR code, the
-// buyer gets one whatever link the gateway answers.
+// An API order always asks for the payment page (V1 device=jump, V2
+// method=jump), which a Rainbow EPay gateway such as NiuNiu Pay answers
+// before it reaches the payment channel, unsigned over V2. What a computer
+// pays with (V1 device=pc, V2 method=web with device=pc) is the channel's to
+// pick, such as an Alipay HTML form, which is never shown. The payment form
+// the method sets decides how the buyer gets the page: opened, or its link
+// as a QR code, by the buyer's device for auto. A method saved before payment
+// forms existed opens the page.
 func TestEPayAPIPaymentForm(t *testing.T) {
 	checkout := Checkout{Order: &Order{OrderNo: "order-1", PaymentAmount: 1990, PaymentCurrency: "CNY", ClientIP: "203.0.113.9"}, Charge: Charge{1990, "CNY"},
 		NotifyURL: "https://www.example.test/api/payment/notify/epay/tok"}
-	const page = "https://pay.example/pay/T1"
+	const page = "https://pay.example/pay/submit/T1/"
 	v1Config := func(form string) string {
-		return `{"url":"SERVER","pid":"1001","key":"secret","version":"v1","checkout":"api","type":"wxpay","pay_form":"` + form + `"}`
+		return `{"url":"SERVER","pid":"1001","key":"secret","version":"v1","checkout":"api","type":"alipay","pay_form":"` + form + `"}`
 	}
 	tests := []struct {
 		form   string
 		mobile bool
-		// v1 is the device asked of mapi.php, v2 the method and device asked
-		// of api/pay/create.
-		v1 string
-		v2 [2]string
+		qrCode bool
 	}{
-		{"", false, "jump", [2]string{"jump", ""}},
-		{EPayFormJump, false, "jump", [2]string{"jump", ""}},
-		{EPayFormJump, true, "jump", [2]string{"jump", ""}},
-		{EPayFormQRCode, false, "pc", [2]string{"web", "pc"}},
-		{EPayFormQRCode, true, "pc", [2]string{"web", "pc"}},
-		{EPayFormAuto, false, "pc", [2]string{"web", "pc"}},
-		{EPayFormAuto, true, "jump", [2]string{"jump", ""}},
+		{"", false, false},
+		{EPayFormJump, false, false},
+		{EPayFormJump, true, false},
+		{EPayFormQRCode, false, true},
+		{EPayFormQRCode, true, true},
+		{EPayFormAuto, false, true},
+		{EPayFormAuto, true, false},
 	}
 	for _, tt := range tests {
 		name := fmt.Sprintf("form %q, mobile %v", tt.form, tt.mobile)
 		checkout.Mobile = tt.mobile
 		want := &Action{Type: ActionURL, URL: page}
-		if tt.v1 == "pc" {
+		if tt.qrCode {
 			want = &Action{Type: ActionQRCode, QRCode: page}
 		}
 
 		var v1Sent map[string]string
 		v1 := epayServer(t, v1Config(tt.form), func(w http.ResponseWriter, r *http.Request) {
 			v1Sent = epayRequest(t, r)
+			if v1Sent["device"] != "jump" {
+				_, _ = w.Write([]byte(`{"code":1,"trade_no":"T1","html":"<form action=\"https://openapi.alipay.com/gateway.do\"></form>"}`))
+				return
+			}
 			_, _ = w.Write([]byte(`{"code":1,"trade_no":"T1","payurl":"` + page + `"}`))
 		})
 		action, err := v1.StartPayment(context.Background(), checkout)
 		require.NoError(t, err, name)
 		assert.Equal(t, want, action, name)
-		assert.Equal(t, tt.v1, v1Sent["device"], name)
+		assert.Equal(t, "jump", v1Sent["device"], name)
 		assert.Equal(t, "19.90", v1Sent["money"], name)
 		assert.Equal(t, v1.(*epayGateway).sign(v1Sent), v1Sent["sign"], name)
 
 		var v2Sent map[string]string
 		v2 := epayV2Server(t, epayV2FormConfig(tt.form), func(_ string, params map[string]string) (map[string]string, bool) {
 			v2Sent = params
-			return map[string]string{"code": "0", "trade_no": "T1", "pay_type": "jump", "pay_info": page}, true
+			if params["method"] != "jump" {
+				return map[string]string{"code": "0", "trade_no": "T1", "pay_type": "html", "pay_info": `<form action="https://openapi.alipay.com/gateway.do"></form>`}, false
+			}
+			return map[string]string{"code": "0", "trade_no": "T1", "pay_type": "jump", "pay_info": page}, false
 		})
 		action, err = v2.StartPayment(context.Background(), checkout)
 		require.NoError(t, err, name)
 		assert.Equal(t, want, action, name)
-		assert.Equal(t, tt.v2, [2]string{v2Sent["method"], v2Sent["device"]}, name)
+		assert.Equal(t, "jump", v2Sent["method"], name)
+		assert.NotContains(t, v2Sent, "device", name)
 		assert.Equal(t, "19.90", v2Sent["money"], name)
 	}
 

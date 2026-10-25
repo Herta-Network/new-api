@@ -133,9 +133,10 @@ func (f *checkoutFailure) Unwrap() error { return f.err }
 // that arrives anyway still settles; unless the provider refused it, the
 // gateway is then asked in the background to close what it may have created
 // (see closeFailedCheckout). One whose checkout the buyer got before stays
-// pending, so the order's close still asks its gateway about it. A
-// failure counts towards the channel's breaker unless the provider refused
-// the request or worded it for the buyer, or it is the renewal of a checkout
+// pending, so the order's close still asks its gateway about it. Every
+// failure is the channel's last error, which the administrator sees; it
+// counts towards the channel's breaker unless the provider refused the
+// request or worded it for the buyer, or it is the renewal of a checkout
 // that started before (countFirst false), which a gateway may refuse without
 // being down.
 func checkoutThrough(ctx context.Context, order *entity.PaymentOrder, invoice *entity.PaymentInvoice, channels []channel, buyer Buyer, countFirst bool) (*Checkout, error) {
@@ -170,13 +171,11 @@ func checkoutThrough(ctx context.Context, order *entity.PaymentOrder, invoice *e
 		}
 		logger.LogWarn(ctx, common.LogText("payment channel %d could not start invoice %s: %v", candidate.method.Id, invoice.InvoiceNo, failed.err))
 		var message *common.Message
-		switch {
-		case errors.As(failed.err, &message):
+		if errors.As(failed.err, &message) {
 			failure = message
-		case errors.Is(failed.err, gateway.ErrRefused):
-		case i > 0 || countFirst:
-			checkoutFailed(candidate.method.Id, failed.err)
 		}
+		counts := message == nil && !errors.Is(failed.err, gateway.ErrRefused) && (i > 0 || countFirst)
+		checkoutFailed(candidate.method.Id, failed.err, counts)
 		if !handedOut {
 			if _, err := store.CloseInvoice(invoice, false, closeReasonFailed); err != nil {
 				return nil, err

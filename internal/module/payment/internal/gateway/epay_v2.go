@@ -283,15 +283,11 @@ func (g *epayGateway) v2PageAction(params map[string]string) (*Action, error) {
 	return &Action{Type: ActionURL, URL: endpoint.String()}, nil
 }
 
-// createV2Payment creates the payment at /api/pay/create, asking for a
-// payment page (method=jump) or, when qrCode is set, for what a computer
-// pays with (method=web, device=pc); the gateway may answer with a QR code,
-// a page or an app link.
+// createV2Payment creates the payment at /api/pay/create, asking for the
+// payment page (method=jump), which becomes the buyer's QR code when qrCode
+// is set.
 func (g *epayGateway) createV2Payment(ctx context.Context, params map[string]string, qrCode bool) (*Action, error) {
 	params["method"] = "jump"
-	if qrCode {
-		params["method"], params["device"] = "web", "pc"
-	}
 	answer, err := g.callV2(ctx, "api/pay/create", params)
 	if err != nil {
 		return nil, err
