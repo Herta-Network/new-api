@@ -344,7 +344,7 @@ type AdminUpdateSubscriptionPlanStatusRequest struct {
 // @Summary		启用或停用订阅套餐
 // @Description	支付合规条款未确认时返回失败。
 // @Tags			订阅管理
-// @Param			id		path		int										true	"套餐 ID"
+// @Param			id		path		int											true	"套餐 ID"
 // @Param			body	body		AdminUpdateSubscriptionPlanStatusRequest	true	"enabled 必填"
 // @Success		200		{object}	common.ApiResponse
 // @Security		AdminAuth

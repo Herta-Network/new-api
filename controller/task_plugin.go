@@ -416,7 +416,7 @@ func GetTaskPlugin(c *gin.Context) {
 type taskPluginDryRunRequest struct {
 	Hook   string            `json:"hook" binding:"required"`
 	Member string            `json:"member"`
-	Args   []json.RawMessage `json:"args" swaggertype:"array,object"`
+	Args   []json.RawMessage `json:"args"`
 }
 
 // @Summary		试运行任务插件钩子

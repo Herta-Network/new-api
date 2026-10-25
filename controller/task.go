@@ -363,11 +363,11 @@ func writeTaskArtifactError(c *gin.Context, status int, code, message string) {
 // @Description	用 API 密钥访问时只能下载自己的任务产物。也可以不带 API 密钥，改用产物列表 content_url 里的 access 签名参数访问：签名绑定任务和产物，有并发和错误次数限制，签名无效时返回 404。支持 Range 续传和 HEAD。
 // @Tags			异步任务
 // @Produce		octet-stream
-// @Param			key				path		string	true	"任务 ID"
-// @Param			artifact_key	path		string	true	"产物 key"
-// @Param			access			query		string	false	"签名访问凭证，产物列表的 content_url 自带"
-// @Param			Range			header		string	false	"字节范围；If-Range、If-None-Match、If-Modified-Since 也会转发给上游"
-// @Success		200				{file}		file	"产物内容"
+// @Param			key				path	string	true	"任务 ID"
+// @Param			artifact_key	path	string	true	"产物 key"
+// @Param			access			query	string	false	"签名访问凭证，产物列表的 content_url 自带"
+// @Param			Range			header	string	false	"字节范围；If-Range、If-None-Match、If-Modified-Since 也会转发给上游"
+// @Success		200				{file}	file	"产物内容"
 // @Security		TokenAuth
 // @Router			/v1/tasks/{key}/artifacts/{artifact_key}/content [get]
 // @Router			/v1/tasks/{key}/artifacts/{artifact_key}/content [head]

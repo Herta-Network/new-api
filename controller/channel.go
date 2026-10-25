@@ -320,12 +320,12 @@ func GetAllChannels(c *gin.Context) {
 	for _, r := range results {
 		typeCounts[r.Type] = r.Count
 	}
-	common.ApiSuccess(c, gin.H{
-		"items":       channelData,
-		"total":       total,
-		"page":        pageInfo.GetPage(),
-		"page_size":   pageInfo.GetPageSize(),
-		"type_counts": typeCounts,
+	common.ApiSuccess(c, channelListPage{
+		Items:      channelData,
+		Total:      total,
+		Page:       pageInfo.GetPage(),
+		PageSize:   pageInfo.GetPageSize(),
+		TypeCounts: typeCounts,
 	})
 	return
 }
@@ -947,10 +947,7 @@ func AddChannel(c *gin.Context) {
 		createAudit["base_url_source"] = "plugin_default"
 	}
 	recordManageAudit(c, "channel.create", createAudit)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 	return
 }
 
@@ -989,10 +986,7 @@ func DeleteChannel(c *gin.Context) {
 		"name": channelName,
 	})
 	closeActiveChannelWebSockets([]int{id})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 	return
 }
 
@@ -1069,10 +1063,7 @@ func DisableTagChannels(c *gin.Context) {
 		"tag": channelTag.Tag,
 	})
 	closeActiveChannelWebSockets(ids)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 	return
 }
 
@@ -1099,10 +1090,7 @@ func EnableTagChannels(c *gin.Context) {
 	recordManageAudit(c, "channel.tag_enable", map[string]any{
 		"tag": channelTag.Tag,
 	})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 	return
 }
 
@@ -1154,10 +1142,7 @@ func EditTagChannels(c *gin.Context) {
 	recordManageAudit(c, "channel.tag_edit", map[string]any{
 		"tag": channelTag.Tag,
 	})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 	return
 }
 
@@ -2326,10 +2311,7 @@ func OllamaPullModel(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": fmt.Sprintf("Model %s pulled successfully", req.ModelName),
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true, Message: fmt.Sprintf("Model %s pulled successfully", req.ModelName)})
 }
 
 // OllamaPullModelStream 流式拉取 Ollama 模型
@@ -2487,10 +2469,7 @@ func OllamaDeleteModel(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": fmt.Sprintf("Model %s deleted successfully", req.ModelName),
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true, Message: fmt.Sprintf("Model %s deleted successfully", req.ModelName)})
 }
 
 type ollamaVersion struct {

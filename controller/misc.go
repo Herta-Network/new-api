@@ -382,10 +382,7 @@ func SendEmailVerification(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 	return
 }
 
@@ -422,10 +419,7 @@ func SendPasswordResetEmail(c *gin.Context) {
 	} else if err != nil && !errors.Is(err, model.ErrEmailNotFound) {
 		logger.LogWarn(c.Request.Context(), common.LogText("skip password reset email for %s: %s", email, err.Error()))
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 }
 
 type PasswordResetRequest struct {

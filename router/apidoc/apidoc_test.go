@@ -41,7 +41,13 @@ var searchDirs = []string{
 // typeOverrides name the Swagger type of library types whose JSON form swag
 // cannot read from their fields.
 var typeOverrides = map[string]string{
-	"github.com/shopspring/decimal.Decimal": "string",
+	"encoding/json.Number": "number",
+	// Raw JSON, mostly objects; Swagger 2.0 has no "any value" type.
+	"encoding/json.RawMessage":                       "object",
+	"github.com/QuantumNous/new-api/model.JSONValue": "object",
+	"github.com/shopspring/decimal.Decimal":          "string",
+	// A soft-deleted row's time, or null.
+	"gorm.io/gorm.DeletedAt": "string",
 }
 
 var (

@@ -449,10 +449,7 @@ func AddToken(c *gin.Context) {
 	}
 	params["id"] = cleanToken.Id
 	common.SetContextKey(c, constant.ContextKeyTokenAuditSucceeded, true)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 }
 
 // @Summary	删除令牌
@@ -477,10 +474,7 @@ func DeleteToken(c *gin.Context) {
 		return
 	}
 	common.SetContextKey(c, constant.ContextKeyTokenAuditSucceeded, true)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 }
 
 // @Summary		更新令牌

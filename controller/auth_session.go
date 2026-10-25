@@ -91,7 +91,7 @@ func AuthLogout(c *gin.Context) {
 	}
 	if cookieErr != nil || rawRefreshToken == "" {
 		service.ClearRefreshCookie(c)
-		c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+		c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 		return
 	}
 	if err := service.RevokeByRefreshToken(rawRefreshToken, expectedSID, "logout"); err != nil {
@@ -99,7 +99,7 @@ func AuthLogout(c *gin.Context) {
 		return
 	}
 	service.ClearRefreshCookie(c)
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 }
 
 // @Summary		获取登录会话

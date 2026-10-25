@@ -449,20 +449,20 @@ func RevokeLegacyAccessToken(c *gin.Context) {
 //	@Security		AdminAuth
 //	@Router			/api/audit [get]
 
-// @Summary		获取我的审计日志
-// @Tags			日志
-// @Param			p					query		int		false	"页码，从 1 开始"
-// @Param			page_size			query		int		false	"每页条数"
-// @Param			category			query		string	false	"类别：login、security、operation、access_token"
-// @Param			token_ref			query		string	false	"只看该令牌的记录（64 位十六进制摘要）"
-// @Param			exclude_token_ref	query		string	false	"排除该令牌的记录（64 位十六进制摘要）"
-// @Param			request_id			query		string	false	"请求 ID"
-// @Param			start_timestamp		query		int		false	"开始时间（Unix 秒）"
-// @Param			end_timestamp		query		int		false	"结束时间（Unix 秒）"
-// @Param			success				query		string	false	"结果：true 或 false"
-// @Success		200					{object}	common.ApiResponse{data=common.PageInfo{items=[]model.AuditLog}}
-// @Security		UserAuth
-// @Router			/api/audit/self [get]
+// @Summary	获取我的审计日志
+// @Tags		日志
+// @Param		p					query		int		false	"页码，从 1 开始"
+// @Param		page_size			query		int		false	"每页条数"
+// @Param		category			query		string	false	"类别：login、security、operation、access_token"
+// @Param		token_ref			query		string	false	"只看该令牌的记录（64 位十六进制摘要）"
+// @Param		exclude_token_ref	query		string	false	"排除该令牌的记录（64 位十六进制摘要）"
+// @Param		request_id			query		string	false	"请求 ID"
+// @Param		start_timestamp		query		int		false	"开始时间（Unix 秒）"
+// @Param		end_timestamp		query		int		false	"结束时间（Unix 秒）"
+// @Param		success				query		string	false	"结果：true 或 false"
+// @Success	200					{object}	common.ApiResponse{data=common.PageInfo{items=[]model.AuditLog}}
+// @Security	UserAuth
+// @Router		/api/audit/self [get]
 func GetAuditLogs(c *gin.Context) {
 	page := common.GetPageQuery(c)
 	if page.Page < 1 || page.PageSize < 1 || page.Page > 100000000 {

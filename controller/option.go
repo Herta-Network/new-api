@@ -480,8 +480,5 @@ func UpdateOption(c *gin.Context) {
 		// within a minute.
 		currency.PublishSiteCurrencyRate()
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 }

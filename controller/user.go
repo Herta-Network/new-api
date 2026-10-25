@@ -353,10 +353,7 @@ func Register(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 	return
 }
 
@@ -825,10 +822,7 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 	recordManageAuditFor(c, updatedUser.Id, "user.update", auditParams)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 	return
 }
 
@@ -1051,7 +1045,7 @@ func UpdateSelf(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 	return
 }
 
@@ -1093,10 +1087,7 @@ func DeleteUser(c *gin.Context) {
 		"verification_method":   authorization.Method,
 		"revoked_access_tokens": revokedAccessTokens,
 	})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 	return
 }
 
@@ -1205,10 +1196,7 @@ func CreateUser(c *gin.Context) {
 
 	auditParams["username"] = cleanUser.Username
 	recordManageAuditFor(c, cleanUser.Id, "user.create", auditParams)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 	return
 }
 
@@ -1307,10 +1295,7 @@ func ManageUser(c *gin.Context) {
 			"verification_method":   authorization.Method,
 			"revoked_access_tokens": revokedAccessTokens,
 		})
-		c.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"message": "",
-		})
+		c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 		return
 	case "promote":
 		if myRole != common.RoleRootUser {
