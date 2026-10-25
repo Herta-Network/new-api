@@ -10,10 +10,11 @@
 // method is saved with (EPay endpoint and credentials, Stripe key prefixes
 // and mode, Cryptomus credentials) instead of only re-encoding it; the
 // field descriptions mark secret and server-managed fields, can offer a
-// fixed set of choices (the Stripe payment method type, the EPay version and
-// checkout mode), take several lines, carry a hint, and apply only under a
-// choice of another field (the credentials of each EPay version); an
-// injected HTTP client also carries Stripe traffic.
+// fixed set of choices (the Stripe payment method type, the EPay version,
+// checkout mode and payment form), take several lines, carry a hint, and
+// apply only under a choice of another field (the credentials of each EPay
+// version, the payment form of EPay API orders); an injected HTTP client also
+// carries Stripe traffic.
 
 package gateway
 
@@ -208,6 +209,15 @@ func Platforms() []PlatformInfo {
 					Options: []FieldOption{
 						{Value: EPayCheckoutAPI, Label: "API order"},
 						{Value: EPayCheckoutPage, Label: "Gateway payment page"},
+					}},
+				// The first choice is what API orders asked for before the
+				// field existed.
+				{Key: "pay_form", Label: "Payment form", Type: FieldSelect, Required: true, When: map[string]string{"checkout": EPayCheckoutAPI},
+					Description: "What an API order asks the gateway for. By the buyer's device, a computer gets a QR code and a phone the payment page. A payment page answered for a QR code is shown as one.",
+					Options: []FieldOption{
+						{Value: EPayFormJump, Label: "Payment page"},
+						{Value: EPayFormQRCode, Label: "QR code"},
+						{Value: EPayFormAuto, Label: "By the buyer's device"},
 					}},
 				{Key: "key", Label: "Merchant key", Required: true, Secret: true, When: map[string]string{"version": EPayV1}},
 				{Key: "private_key", Label: "Merchant private key", Required: true, Secret: true, When: map[string]string{"version": EPayV2}},

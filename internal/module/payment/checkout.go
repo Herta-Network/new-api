@@ -35,12 +35,22 @@ type Checkout struct {
 	OrderNo string                `json:"order_no"`
 }
 
+// Buyer describes the request that starts a checkout.
+type Buyer struct {
+	// IP is the buyer's address, which a new order records for gateways
+	// that create the payment from the server.
+	IP string
+	// UserAgent tells a phone from a computer for gateways that pick the
+	// payment form by the buyer's device.
+	UserAgent string
+}
+
 // CreateOrder prices a purchase, stores it as a pending order with an
 // invoice through the first channel of the chosen payment option and starts
 // its payment in the same request, switching to the next channels when one
 // cannot start it (see checkoutThrough). A balance or free purchase needs no
 // invoice and completes at once; if it fails the order is closed again.
-func CreateOrder(ctx context.Context, userId int, req PurchaseRequest, clientIp string) (*entity.PaymentOrder, *Checkout, error) {
+func CreateOrder(ctx context.Context, userId int, req PurchaseRequest, buyer Buyer) (*entity.PaymentOrder, *Checkout, error) {
 	quote, err := QuotePurchase(ctx, userId, req)
 	if err != nil {
 		return nil, nil, err
@@ -67,7 +77,7 @@ func CreateOrder(ctx context.Context, userId int, req PurchaseRequest, clientIp 
 		PaymentOptionId: quote.option.Id,
 		PaymentMethodId: quote.method.Id,
 		Platform:        quote.method.Platform,
-		ClientIp:        clientIp,
+		ClientIp:        buyer.IP,
 		CreatedAt:       now.Unix(),
 		ExpiresAt:       now.Add(paymentWindow).Unix(),
 	}
@@ -92,7 +102,7 @@ func CreateOrder(ctx context.Context, userId int, req PurchaseRequest, clientIp 
 	if err := store.CreateOrder(order, limits, invoice); err != nil {
 		return nil, nil, err
 	}
-	checkout, err := checkoutThrough(ctx, order, invoice, quote.channels, true)
+	checkout, err := checkoutThrough(ctx, order, invoice, quote.channels, buyer, true)
 	if err != nil {
 		return order, nil, err
 	}
@@ -128,7 +138,7 @@ func (f *checkoutFailure) Unwrap() error { return f.err }
 // the request or worded it for the buyer, or it is the renewal of a checkout
 // that started before (countFirst false), which a gateway may refuse without
 // being down.
-func checkoutThrough(ctx context.Context, order *entity.PaymentOrder, invoice *entity.PaymentInvoice, channels []channel, countFirst bool) (*Checkout, error) {
+func checkoutThrough(ctx context.Context, order *entity.PaymentOrder, invoice *entity.PaymentInvoice, channels []channel, buyer Buyer, countFirst bool) (*Checkout, error) {
 	failure := errCheckoutFailed
 	tried := 0
 	for i, candidate := range channels {
@@ -150,7 +160,7 @@ func checkoutThrough(ctx context.Context, order *entity.PaymentOrder, invoice *e
 		}
 		tried++
 		handedOut := invoice.PaymentCurrency != ""
-		checkout, err := startCheckout(ctx, order, invoice, candidate.method)
+		checkout, err := startCheckout(ctx, order, invoice, candidate.method, buyer)
 		var failed *checkoutFailure
 		if !errors.As(err, &failed) {
 			if err == nil {
@@ -220,8 +230,9 @@ func closeFailedCheckout(ctx context.Context, order *entity.PaymentOrder, invoic
 // channels, those it already tried last. The replaced invoice is closed
 // through its gateway as the system would close it, so it takes no payment
 // any more; one the gateway cannot confirm stays pending, and the order's
-// close asks about it again.
-func ResumeCheckout(ctx context.Context, userId int, orderNo string) (*Checkout, error) {
+// close asks about it again. The payment form follows the buyer's device
+// now; the order keeps the address it was made from.
+func ResumeCheckout(ctx context.Context, userId int, orderNo string, buyer Buyer) (*Checkout, error) {
 	order, err := UserOrder(userId, orderNo)
 	if err != nil {
 		return nil, err
@@ -260,7 +271,7 @@ func ResumeCheckout(ctx context.Context, userId int, orderNo string) (*Checkout,
 		return nil, errMethodUnavailable
 	}
 	if latest != nil && channels[0].method.Id == latest.PaymentMethodId {
-		return checkoutThrough(ctx, order, latest, channels, latest.PaymentCurrency == "")
+		return checkoutThrough(ctx, order, latest, channels, buyer, latest.PaymentCurrency == "")
 	}
 	if latest != nil {
 		settled, err := closeInvoice(ctx, order, latest, false, closeReasonReplaced)
@@ -271,14 +282,14 @@ func ResumeCheckout(ctx context.Context, userId int, orderNo string) (*Checkout,
 			return nil, err
 		}
 	}
-	return checkoutThrough(ctx, order, nil, channels, true)
+	return checkoutThrough(ctx, order, nil, channels, buyer, true)
 }
 
 // startCheckout creates, or resumes, the gateway payment of a pending
 // invoice of a pending order. The payment expectation is recorded before the
 // gateway is asked for anything and never changes afterwards, so a resumed
 // checkout asks for the same amount even when the exchange rate moved.
-func startCheckout(ctx context.Context, order *entity.PaymentOrder, invoice *entity.PaymentInvoice, method *entity.PaymentMethod) (*Checkout, error) {
+func startCheckout(ctx context.Context, order *entity.PaymentOrder, invoice *entity.PaymentInvoice, method *entity.PaymentMethod, buyer Buyer) (*Checkout, error) {
 	if order.Status != entity.PaymentOrderPending || invoice.Status != entity.PaymentInvoicePending || time.Now().Unix() >= order.ExpiresAt {
 		return nil, errOrderNotPayable
 	}
@@ -316,6 +327,7 @@ func startCheckout(ctx context.Context, order *entity.PaymentOrder, invoice *ent
 		Charge:    gateway.Charge{Amount: invoice.PaymentAmount, Currency: invoice.PaymentCurrency},
 		ReturnURL: service.ConsoleURL("/user/wallet?payment_order=" + url.QueryEscape(order.OrderNo)),
 		Subject:   order.Subject,
+		Mobile:    gateway.MobileUserAgent(buyer.UserAgent),
 		Claim: func(_ context.Context, tradeNo string) (string, error) {
 			return store.ClaimInvoiceTrade(invoice, tradeNo)
 		},

@@ -14,7 +14,9 @@
 // notice can report an authentic payment that must not settle its order as
 // unmatched. The Order view carries the buyer's IP address, an Action can
 // be a QR code to show, a gateway says whether its checkout reaches the
-// provider, and a provider's refusal is marked apart from its failure.
+// provider, and a provider's refusal is marked apart from its failure. A
+// Checkout says whether the buyer pays from a phone, which MobileUserAgent
+// tells from the User-Agent.
 
 // Package gateway is the protocol layer of new-api payments. A Gateway
 // speaks one payment provider's protocol for one configured payment method:
@@ -28,6 +30,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -109,11 +112,31 @@ type Checkout struct {
 	ReturnURL string
 	// Subject names the purchase on the provider's payment page.
 	Subject string
+	// Mobile reports that the request starting this checkout came from a
+	// phone or tablet browser (see MobileUserAgent). A resumed checkout
+	// judges its own request, so a buyer who moves to another device gets
+	// the payment form of that device.
+	Mobile bool
 	// Claim binds a provider-side payment (a Stripe intent, a Cryptomus
 	// invoice) as the order's only one and returns the payment the order
 	// holds afterwards: tradeNo when the claim won, the concurrent winner's
 	// otherwise.
 	Claim func(ctx context.Context, tradeNo string) (string, error)
+}
+
+// mobileUserAgentMarks are what the User-Agent of a phone or tablet browser
+// contains, in lower case: the list EPay gateways tell devices by, with iPad
+// and OpenHarmony added. WeChat and Alipay browsers on phones carry the
+// phone's marks; WeChat on Windows carries none.
+var mobileUserAgentMarks = []string{"mobile", "android", "iphone", "ipad", "ipod", "windows phone", "openharmony", "midp", "nokia", "blackberry"}
+
+// MobileUserAgent reports whether a User-Agent is that of a phone or tablet
+// browser. iPadOS asks for desktop sites by default and reads as a computer.
+func MobileUserAgent(userAgent string) bool {
+	userAgent = strings.ToLower(userAgent)
+	return slices.ContainsFunc(mobileUserAgentMarks, func(mark string) bool {
+		return strings.Contains(userAgent, mark)
+	})
 }
 
 // Action types tell the client how to complete a payment.
