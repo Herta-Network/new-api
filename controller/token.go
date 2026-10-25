@@ -34,7 +34,7 @@ func (input *tokenAutoGroupsInput) UnmarshalJSON(data []byte) error {
 
 type tokenRequest struct {
 	model.Token
-	AutoGroups tokenAutoGroupsInput `json:"auto_groups"`
+	AutoGroups tokenAutoGroupsInput `json:"auto_groups" swaggertype:"array,string"`
 	// 指针区分“未传”和显式 false：新建时未传即开启，更新时未传则保留原值。
 	AllowUserQuotaQuery *bool `json:"allow_user_quota_query"`
 }
@@ -129,6 +129,13 @@ func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) boo
 	return true
 }
 
+// @Summary	列出令牌
+// @Tags		令牌
+// @Param		p			query		int	false	"页码，从 1 开始"
+// @Param		page_size	query		int	false	"每页条数，最多 100"
+// @Success	200			{object}	common.ApiResponse{data=common.PageInfo{items=[]tokenResponse}}
+// @Security	UserAuth
+// @Router		/api/token/ [get]
 func GetAllTokens(c *gin.Context) {
 	userId := c.GetInt("id")
 	pageInfo := common.GetPageQuery(c)
@@ -143,6 +150,16 @@ func GetAllTokens(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
+// @Summary		搜索令牌
+// @Description	受搜索接口的频率限制。令牌数超过上限的用户不能用 % 通配，只能精确搜索。
+// @Tags			令牌
+// @Param			keyword		query		string	false	"按名称搜索，可用 % 通配"
+// @Param			token		query		string	false	"按密钥搜索，可带 sk- 前缀，可用 % 通配"
+// @Param			p			query		int		false	"页码，从 1 开始"
+// @Param			page_size	query		int		false	"每页条数，最多 100"
+// @Success		200			{object}	common.ApiResponse{data=common.PageInfo{items=[]tokenResponse}}
+// @Security		UserAuth
+// @Router			/api/token/search [get]
 func SearchTokens(c *gin.Context) {
 	userId := c.GetInt("id")
 	keyword := c.Query("keyword")
@@ -160,6 +177,12 @@ func SearchTokens(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
+// @Summary	获取令牌
+// @Tags		令牌
+// @Param		id	path		int	true	"令牌 ID"
+// @Success	200	{object}	common.ApiResponse{data=tokenResponse}
+// @Security	UserAuth
+// @Router		/api/token/{id} [get]
 func GetToken(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	userId := c.GetInt("id")
@@ -175,18 +198,40 @@ func GetToken(c *gin.Context) {
 	common.ApiSuccess(c, buildMaskedTokenResponse(token))
 }
 
+type tokenAutoGroupOptions struct {
+	Groups   []string `json:"groups"`
+	MaxCount int      `json:"max_count"`
+}
+
+// @Summary		获取可选的自动分组
+// @Description	auto 分组的令牌可从 groups 中选择最多 max_count 个分组。
+// @Tags			令牌
+// @Success		200	{object}	common.ApiResponse{data=tokenAutoGroupOptions}
+// @Security		UserAuth
+// @Router			/api/token/auto-groups [get]
 func GetTokenAutoGroups(c *gin.Context) {
 	userGroup, err := getTokenRequestUserGroup(c)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, gin.H{
-		"groups":    service.GetUserAutoGroup(userGroup),
-		"max_count": setting.GetMaxTokenAutoGroups(),
+	common.ApiSuccess(c, tokenAutoGroupOptions{
+		Groups:   service.GetUserAutoGroup(userGroup),
+		MaxCount: setting.GetMaxTokenAutoGroups(),
 	})
 }
 
+type revealedTokenKey struct {
+	Key string `json:"key"`
+}
+
+// @Summary		获取令牌完整密钥
+// @Description	令牌列表和详情里的 key 已打码，此接口返回完整密钥并记入审计日志；受关键操作的频率限制。
+// @Tags			令牌
+// @Param			id	path		int	true	"令牌 ID"
+// @Success		200	{object}	common.ApiResponse{data=revealedTokenKey}
+// @Security		UserAuth
+// @Router			/api/token/{id}/key [post]
 func GetTokenKey(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	userId := c.GetInt("id")
@@ -202,9 +247,7 @@ func GetTokenKey(c *gin.Context) {
 	params := tokenAuditParams(c)
 	params["id"], params["name"] = token.Id, token.Name
 	common.SetContextKey(c, constant.ContextKeyTokenAuditSucceeded, true)
-	common.ApiSuccess(c, gin.H{
-		"key": token.GetFullKey(),
-	})
+	common.ApiSuccess(c, revealedTokenKey{Key: token.GetFullKey()})
 }
 
 func GetTokenStatus(c *gin.Context) {
@@ -228,6 +271,41 @@ func GetTokenStatus(c *gin.Context) {
 	})
 }
 
+type tokenUserQuota struct {
+	TotalAvailable int `json:"total_available"`
+	TotalUsed      int `json:"total_used"`
+}
+
+type tokenUsage struct {
+	Object             string          `json:"object"`
+	Name               string          `json:"name"`
+	TotalGranted       int             `json:"total_granted"`
+	TotalUsed          int             `json:"total_used"`
+	TotalAvailable     int             `json:"total_available"`
+	UnlimitedQuota     bool            `json:"unlimited_quota"`
+	ModelLimits        map[string]bool `json:"model_limits"`
+	ModelLimitsEnabled bool            `json:"model_limits_enabled"`
+	// ExpiresAt is 0 when the token never expires.
+	ExpiresAt int64 `json:"expires_at"`
+	// UserQuota is present only when the token allows querying its owner's
+	// quota.
+	UserQuota *tokenUserQuota `json:"user_quota,omitempty"`
+}
+
+// tokenUsageResponse is GetTokenUsage's body, which reports success in Code.
+type tokenUsageResponse struct {
+	Code    bool       `json:"code"`
+	Message string     `json:"message"`
+	Data    tokenUsage `json:"data"`
+}
+
+// @Summary		查询 API 密钥用量
+// @Description	用 API 密钥查询它自己的额度和用量，允许跨域。响应体不是 common.ApiResponse：成功时 code 为 true；失败时仍是 success 为 false 的 common.ApiResponse。
+// @Tags			令牌
+// @Success		200	{object}	tokenUsageResponse
+// @Failure		401	{object}	common.ApiResponse	"Authorization 不是 Bearer <密钥> 的形式"
+// @Security		TokenAuth
+// @Router			/api/usage/token/ [get]
 func GetTokenUsage(c *gin.Context) {
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {
@@ -260,16 +338,16 @@ func GetTokenUsage(c *gin.Context) {
 		expiredAt = 0
 	}
 
-	data := gin.H{
-		"object":               "token_usage",
-		"name":                 token.Name,
-		"total_granted":        token.RemainQuota + token.UsedQuota,
-		"total_used":           token.UsedQuota,
-		"total_available":      token.RemainQuota,
-		"unlimited_quota":      token.UnlimitedQuota,
-		"model_limits":         token.GetModelLimitsMap(),
-		"model_limits_enabled": token.ModelLimitsEnabled,
-		"expires_at":           expiredAt,
+	data := tokenUsage{
+		Object:             "token_usage",
+		Name:               token.Name,
+		TotalGranted:       token.RemainQuota + token.UsedQuota,
+		TotalUsed:          token.UsedQuota,
+		TotalAvailable:     token.RemainQuota,
+		UnlimitedQuota:     token.UnlimitedQuota,
+		ModelLimits:        token.GetModelLimitsMap(),
+		ModelLimitsEnabled: token.ModelLimitsEnabled,
+		ExpiresAt:          expiredAt,
 	}
 	// 用户额度只在令牌允许时返回；IP 白名单已由 TokenAuthReadOnly 检查。
 	if token.AllowUserQuotaQuery {
@@ -283,19 +361,19 @@ func GetTokenUsage(c *gin.Context) {
 			common.ApiErrorI18n(c, i18n.MsgTokenGetInfoFailed)
 			return
 		}
-		data["user_quota"] = gin.H{
-			"total_available": userQuota,
-			"total_used":      userUsedQuota,
-		}
+		data.UserQuota = &tokenUserQuota{TotalAvailable: userQuota, TotalUsed: userUsedQuota}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    true,
-		"message": "ok",
-		"data":    data,
-	})
+	c.JSON(http.StatusOK, tokenUsageResponse{Code: true, Message: "ok", Data: data})
 }
 
+// @Summary		创建令牌
+// @Description	密钥由服务端生成；allow_user_quota_query 未传时开启。
+// @Tags			令牌
+// @Param			body	body		tokenRequest	true	"令牌；用到 name、expired_time（-1 为永不过期）、remain_quota、unlimited_quota、model_limits_enabled、model_limits、allow_ips、group、cross_group_retry、auto_groups（仅 auto 分组）、allow_user_quota_query"
+// @Success		200		{object}	common.ApiResponse
+// @Security		UserAuth
+// @Router			/api/token/ [post]
 func AddToken(c *gin.Context) {
 	request := tokenRequest{}
 	err := c.ShouldBindJSON(&request)
@@ -377,6 +455,12 @@ func AddToken(c *gin.Context) {
 	})
 }
 
+// @Summary	删除令牌
+// @Tags		令牌
+// @Param		id	path		int	true	"令牌 ID"
+// @Success	200	{object}	common.ApiResponse
+// @Security	UserAuth
+// @Router		/api/token/{id} [delete]
 func DeleteToken(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	userId := c.GetInt("id")
@@ -399,6 +483,14 @@ func DeleteToken(c *gin.Context) {
 	})
 }
 
+// @Summary		更新令牌
+// @Description	按 id 更新。带 status_only 时只改 status；否则改 AddToken 用到的字段，auto_groups 未传时保留原值。
+// @Tags			令牌
+// @Param			status_only	query		string			false	"非空时只更新 status"
+// @Param			body		body		tokenRequest	true	"令牌；用到 id、status 和 AddToken 用到的字段"
+// @Success		200			{object}	common.ApiResponse{data=tokenResponse}
+// @Security		UserAuth
+// @Router			/api/token/ [put]
 func UpdateToken(c *gin.Context) {
 	userId := c.GetInt("id")
 	statusOnly := c.Query("status_only")
@@ -504,17 +596,19 @@ func UpdateToken(c *gin.Context) {
 		params["changed_fields"] = changedFields
 	}
 	common.SetContextKey(c, constant.ContextKeyTokenAuditSucceeded, true)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    buildMaskedTokenResponse(cleanToken),
-	})
+	common.ApiSuccess(c, buildMaskedTokenResponse(cleanToken))
 }
 
 type TokenBatch struct {
 	Ids []int `json:"ids"`
 }
 
+// @Summary	批量删除令牌
+// @Tags		令牌
+// @Param		body	body		TokenBatch						true	"令牌 ID"
+// @Success	200		{object}	common.ApiResponse{data=int}	"data 为删除的令牌数"
+// @Security	UserAuth
+// @Router		/api/token/batch [post]
 func DeleteTokenBatch(c *gin.Context) {
 	tokenBatch := TokenBatch{}
 	if err := c.ShouldBindJSON(&tokenBatch); err != nil {
@@ -534,13 +628,21 @@ func DeleteTokenBatch(c *gin.Context) {
 	}
 	params["count"] = count
 	common.SetContextKey(c, constant.ContextKeyTokenAuditSucceeded, true)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    count,
-	})
+	common.ApiSuccess(c, count)
 }
 
+type revealedTokenKeys struct {
+	// Keys maps token IDs to full keys.
+	Keys map[int]string `json:"keys"`
+}
+
+// @Summary		批量获取令牌完整密钥
+// @Description	返回完整密钥并记入审计日志；受关键操作的频率限制。
+// @Tags			令牌
+// @Param			body	body		TokenBatch	true	"令牌 ID，最多 100 个"
+// @Success		200		{object}	common.ApiResponse{data=revealedTokenKeys}
+// @Security		UserAuth
+// @Router			/api/token/batch/keys [post]
 func GetTokenKeysBatch(c *gin.Context) {
 	tokenBatch := TokenBatch{}
 	if err := c.ShouldBindJSON(&tokenBatch); err != nil {
@@ -571,5 +673,5 @@ func GetTokenKeysBatch(c *gin.Context) {
 	params["count"] = len(tokens)
 	params["returned_ids"] = returnedIDs
 	common.SetContextKey(c, constant.ContextKeyTokenAuditSucceeded, true)
-	common.ApiSuccess(c, gin.H{"keys": keysMap})
+	common.ApiSuccess(c, revealedTokenKeys{Keys: keysMap})
 }

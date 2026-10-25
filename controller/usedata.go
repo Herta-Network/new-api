@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"net/http"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -28,6 +27,14 @@ func parseFlowQuotaTimeRange(c *gin.Context) (int64, int64, bool) {
 	return startTimestamp, endTimestamp, true
 }
 
+// @Summary	获取全站用量数据
+// @Tags		数据统计
+// @Param		start_timestamp	query		int		false	"起始时间，Unix 秒"
+// @Param		end_timestamp	query		int		false	"结束时间，Unix 秒"
+// @Param		username		query		string	false	"只看此用户"
+// @Success	200				{object}	common.ApiResponse{data=[]model.QuotaData}
+// @Security	AdminAuth
+// @Router		/api/data/ [get]
 func GetAllQuotaDates(c *gin.Context) {
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
@@ -37,14 +44,17 @@ func GetAllQuotaDates(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    dates,
-	})
+	common.ApiSuccess(c, dates)
 	return
 }
 
+// @Summary	按用户汇总用量数据
+// @Tags		数据统计
+// @Param		start_timestamp	query		int	false	"起始时间，Unix 秒"
+// @Param		end_timestamp	query		int	false	"结束时间，Unix 秒"
+// @Success	200				{object}	common.ApiResponse{data=[]model.QuotaData}
+// @Security	AdminAuth
+// @Router		/api/data/users [get]
 func GetQuotaDatesByUser(c *gin.Context) {
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
@@ -53,13 +63,17 @@ func GetQuotaDatesByUser(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    dates,
-	})
+	common.ApiSuccess(c, dates)
 }
 
+// @Summary		获取我的用量数据
+// @Description	时间范围不能超过日志最长查询范围，未传 start_timestamp 时从该范围的起点开始。
+// @Tags			数据统计
+// @Param			start_timestamp	query		int	false	"起始时间，Unix 秒"
+// @Param			end_timestamp	query		int	false	"结束时间，Unix 秒"
+// @Success		200				{object}	common.ApiResponse{data=[]model.QuotaData}
+// @Security		UserAuth
+// @Router			/api/data/self [get]
 func GetUserQuotaDates(c *gin.Context) {
 	userId := c.GetInt("id")
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
@@ -74,14 +88,19 @@ func GetUserQuotaDates(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    dates,
-	})
+	common.ApiSuccess(c, dates)
 	return
 }
 
+// @Summary		获取全站用量流向
+// @Description	按分组和模型汇总；管理员还按用户和渠道拆分，超级管理员再按令牌和节点拆分。
+// @Tags			数据统计
+// @Param			start_timestamp	query		int		true	"起始时间，Unix 秒"
+// @Param			end_timestamp	query		int		true	"结束时间，Unix 秒"
+// @Param			username		query		string	false	"只看此用户"
+// @Success		200				{object}	common.ApiResponse{data=[]model.FlowQuotaData}
+// @Security		AdminAuth
+// @Router			/api/data/flow [get]
 func GetAllFlowQuotaDates(c *gin.Context) {
 	startTimestamp, endTimestamp, ok := parseFlowQuotaTimeRange(c)
 	if !ok {
@@ -93,14 +112,18 @@ func GetAllFlowQuotaDates(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    dates,
-	})
+	common.ApiSuccess(c, dates)
 	return
 }
 
+// @Summary		获取我的用量流向
+// @Description	按令牌、分组和模型汇总；时间范围不能超过日志最长查询范围。
+// @Tags			数据统计
+// @Param			start_timestamp	query		int	true	"起始时间，Unix 秒"
+// @Param			end_timestamp	query		int	true	"结束时间，Unix 秒"
+// @Success		200				{object}	common.ApiResponse{data=[]model.FlowQuotaData}
+// @Security		UserAuth
+// @Router			/api/data/flow/self [get]
 func GetUserFlowQuotaDates(c *gin.Context) {
 	userId := c.GetInt("id")
 	startTimestamp, endTimestamp, ok := parseFlowQuotaTimeRange(c)
@@ -116,10 +139,6 @@ func GetUserFlowQuotaDates(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    dates,
-	})
+	common.ApiSuccess(c, dates)
 	return
 }
