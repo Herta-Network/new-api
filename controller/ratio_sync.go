@@ -208,11 +208,40 @@ func modelPricingSyncValues(data map[string]any, name string) map[string]any {
 	return values
 }
 
+type fetchUpstreamRatiosRequest struct {
+	dto.UpstreamRequest
+	IncludeUnchanged bool `json:"include_unchanged"`
+}
+
+type ratioSyncModelPrices struct {
+	Current   map[string]any            `json:"current"`
+	Upstreams map[string]map[string]any `json:"upstreams"`
+}
+
+type upstreamRatioComparison struct {
+	Differences map[string]map[string]dto.DifferenceItem `json:"differences"`
+	Prices      map[string]ratioSyncModelPrices          `json:"prices"`
+	TestResults []dto.TestResult                         `json:"test_results"`
+}
+
+// fetchUpstreamRatiosResponse is FetchUpstreamRatios' body, which has no
+// message.
+type fetchUpstreamRatiosResponse struct {
+	Success bool                    `json:"success"`
+	Data    upstreamRatioComparison `json:"data"`
+}
+
+// @Summary		获取上游倍率
+// @Description	并发读取各上游（upstreams，或 channel_ids 对应渠道的地址）的定价接口，与本站的模型倍率和价格比较。differences 按模型和字段列出不一致的值，prices 按模型列出本站和各上游的定价（include_unchanged 为 true 时也包含一致的模型），test_results 是各上游的连通结果。成功时响应体没有 message。
+// @Tags			倍率同步
+// @Param			body	body		fetchUpstreamRatiosRequest	true	"上游、渠道 ID 和超时秒数（默认 10）"
+// @Success		200		{object}	fetchUpstreamRatiosResponse
+// @Failure		400		{object}	common.ApiResponse	"请求格式错误"
+// @Failure		500		{object}	common.ApiResponse	"查询渠道失败"
+// @Security		RootAuth
+// @Router			/api/ratio_sync/fetch [post]
 func FetchUpstreamRatios(c *gin.Context) {
-	var req struct {
-		dto.UpstreamRequest
-		IncludeUnchanged bool `json:"include_unchanged"`
-	}
+	var req fetchUpstreamRatiosRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.SysError(common.LogText("failed to bind upstream request: %s", err.Error()))
 		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid request parameter format"))
@@ -601,10 +630,6 @@ func FetchUpstreamRatios(c *gin.Context) {
 	}
 
 	differences := buildDifferences(localData, successfulChannels)
-	type modelSyncPrices struct {
-		Current   map[string]any            `json:"current"`
-		Upstreams map[string]map[string]any `json:"upstreams"`
-	}
 	models := make(map[string]struct{}, len(differences))
 	for name := range differences {
 		models[name] = struct{}{}
@@ -618,9 +643,9 @@ func FetchUpstreamRatios(c *gin.Context) {
 			}
 		}
 	}
-	prices := make(map[string]modelSyncPrices, len(models))
+	prices := make(map[string]ratioSyncModelPrices, len(models))
 	for name := range models {
-		row := modelSyncPrices{Current: modelPricingSyncValues(localData, name), Upstreams: make(map[string]map[string]any)}
+		row := ratioSyncModelPrices{Current: modelPricingSyncValues(localData, name), Upstreams: make(map[string]map[string]any)}
 		expressionPriority := valueMap(localData[billing_setting.BillingModeField])[name] == billing_setting.BillingModeTieredExpr
 		for _, channel := range successfulChannels {
 			if valueMap(channel.data[billing_setting.BillingModeField])[name] == billing_setting.BillingModeTieredExpr {
@@ -645,12 +670,12 @@ func FetchUpstreamRatios(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data": gin.H{
-			"differences":  differences,
-			"prices":       prices,
-			"test_results": testResults,
+	c.JSON(http.StatusOK, fetchUpstreamRatiosResponse{
+		Success: true,
+		Data: upstreamRatioComparison{
+			Differences: differences,
+			Prices:      prices,
+			TestResults: testResults,
 		},
 	})
 }
@@ -1128,6 +1153,12 @@ func convertModelsDevToRatioData(reader io.Reader) (map[string]any, error) {
 	return converted, nil
 }
 
+// @Summary		列出可同步倍率的渠道
+// @Description	设置了地址的渠道，以及两个内置预设：官方倍率预设（ID -100）和 models.dev 价格预设（ID -101）。
+// @Tags			倍率同步
+// @Success		200	{object}	common.ApiResponse{data=[]dto.SyncableChannel}
+// @Security		RootAuth
+// @Router			/api/ratio_sync/channels [get]
 func GetSyncableChannels(c *gin.Context) {
 	channels, err := model.GetAllChannels(0, 0, true, false)
 	if err != nil {
@@ -1165,9 +1196,5 @@ func GetSyncableChannels(c *gin.Context) {
 		Status:  1,
 	})
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    syncableChannels,
-	})
+	common.ApiSuccess(c, syncableChannels)
 }

@@ -17,6 +17,14 @@ import (
 
 // GetCodingPlanChannelUsage reads how much of each window the key of a Kimi
 // For Coding, GLM Coding Plan or MiniMax Coding Plan channel has used.
+//
+//	@Summary		获取编程套餐渠道用量
+//	@Description	需要 channel.read 权限。适用于 Kimi For Coding、GLM Coding Plan 和 MiniMax Coding Plan 渠道，向上游查询各额度窗口的用量。不支持多密钥渠道。
+//	@Tags			渠道
+//	@Param			id	path		int	true	"渠道 ID"
+//	@Success		200	{object}	common.ApiResponse{data=codingplan.Usage}
+//	@Security		AdminAuth
+//	@Router			/api/channel/{id}/coding-plan/usage [get]
 func GetCodingPlanChannelUsage(c *gin.Context) {
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {

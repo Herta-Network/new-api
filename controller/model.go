@@ -298,13 +298,38 @@ func ListModels(c *gin.Context, modelType int) {
 	}
 }
 
+// channelModelListResponse is ChannelListModels' body, which has no message.
+type channelModelListResponse struct {
+	Success bool               `json:"success"`
+	Data    []dto.OpenAIModels `json:"data"`
+}
+
+// @Summary		列出内置模型
+// @Description	需要 channel.read 权限。各渠道适配器内置的模型，按模型名去重。成功时响应体没有 message。
+// @Tags			渠道
+// @Success		200	{object}	channelModelListResponse
+// @Security		AdminAuth
+// @Router			/api/channel/models [get]
 func ChannelListModels(c *gin.Context) {
-	c.JSON(200, gin.H{
-		"success": true,
-		"data":    openAIModels,
+	c.JSON(200, channelModelListResponse{
+		Success: true,
+		Data:    openAIModels,
 	})
 }
 
+// dashboardModelListResponse is DashboardListModels' body, which has no
+// message.
+type dashboardModelListResponse struct {
+	Success bool             `json:"success"`
+	Data    map[int][]string `json:"data"`
+}
+
+// @Summary		列出各渠道类型的模型
+// @Description	data 的键是渠道类型，值是该类型内置或任务插件声明的模型。成功时响应体没有 message。
+// @Tags			模型
+// @Success		200	{object}	dashboardModelListResponse
+// @Security		UserAuth
+// @Router			/api/models [get]
 func DashboardListModels(c *gin.Context) {
 	modelsByChannel := make(map[int][]string, len(channelId2Models))
 	for channelType, models := range channelId2Models {
@@ -315,16 +340,28 @@ func DashboardListModels(c *gin.Context) {
 			modelsByChannel[channelType] = append([]string(nil), plugin.Meta.Models...)
 		}
 	}
-	c.JSON(200, gin.H{
-		"success": true,
-		"data":    modelsByChannel,
+	c.JSON(200, dashboardModelListResponse{
+		Success: true,
+		Data:    modelsByChannel,
 	})
 }
 
+// enabledModelListResponse is EnabledListModels' body, which has no message.
+type enabledModelListResponse struct {
+	Success bool     `json:"success"`
+	Data    []string `json:"data"`
+}
+
+// @Summary		列出已启用的模型
+// @Description	需要 channel.read 权限。已启用渠道提供的全部模型名。成功时响应体没有 message。
+// @Tags			渠道
+// @Success		200	{object}	enabledModelListResponse
+// @Security		AdminAuth
+// @Router			/api/channel/models_enabled [get]
 func EnabledListModels(c *gin.Context) {
-	c.JSON(200, gin.H{
-		"success": true,
-		"data":    model.GetEnabledModels(),
+	c.JSON(200, enabledModelListResponse{
+		Success: true,
+		Data:    model.GetEnabledModels(),
 	})
 }
 
