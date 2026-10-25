@@ -118,7 +118,7 @@ default-src 'self'; script-src 'self' https://telegram.org https://challenges.cl
 
 ## 前后端分开部署
 
-后端不包含也不提供控制台。控制台是独立仓库 [new-api-frontend](https://github.com/Herta-Network/new-api-frontend)，构建产物部署在 Cloudflare Pages 等静态主机上，部署步骤见它的 README。能让前端主机把 `/api`、`/pg` 反向代理到后端时（例如 Nginx 同时托管构建产物和代理接口），页面和接口同源，不涉及 CORS。Cloudflare Pages 这类不能反向代理到外部后端的主机，由浏览器直接访问另一个域名的后端。后端只需要知道一个地址，即系统设置「前端地址」，初始化时会自动填好：
+后端不包含也不提供控制台。控制台是独立仓库 [new-api-frontend](https://github.com/Herta-Network/new-api-frontend)，构建产物部署在 Cloudflare Pages 等静态主机上，部署步骤见它的 README。能让前端主机把 `/api`、`/pg` 反向代理到后端时（例如 Nginx 同时托管构建产物和代理接口，或 Cloudflare Pages 上控制台自带的 Pages Function），页面和接口同源，不涉及 CORS。不转发时，由浏览器直接访问另一个域名的后端。后端只需要知道一个地址，即系统设置「前端地址」，初始化时会自动填好：
 
 1. **前端的后端地址**：`index.html` 旁边的 `runtime-config.json`，例如 `{"apiBaseUrl": "https://api.example.com"}`。前端启动前读取它，所有接口请求、日志导出、Ollama 拉取流和 playground 的 SSE 都发往这个地址；文件缺失、无效或为空时请求保持同源。构建时设置环境变量 `API_BASE_URL` 会写入这个文件（Cloudflare Pages 在项目的构建变量里设置）；能直接修改托管文件的主机也可以改这个文件，不用重新构建。
 2. **系统设置「前端地址」**：控制台的公开地址，只填 Origin。浏览器里完成初始化向导时，后端把发起请求的控制台 Origin 记为「前端地址」（此前未设置时）；用 curl 等不带 Origin 的方式初始化，或控制台换了域名，就在系统设置里手动填写。它的 Origin 自动进入 CORS 白名单；重置密码链接、邮件里的链接、支付完成返回页、OAuth 回调地址（`<前端地址>/oauth/<provider>`）和默认的 Passkey 域名都使用它；不填时回落到「服务器地址」。「服务器地址」只表示后端：AI 接口地址、支付回调、Midjourney 图片和视频等后端提供的文件都用它。在后端域名上打开的非接口路径（例如旧邮件链接、登记在后端地址上的 OAuth 回调）会带着路径和查询参数 302 重定向到「前端地址」，未设置时返回 404。环境变量 `FRONTEND_BASE_URL` 不再使用，设置了它时启动日志会提示。
@@ -159,6 +159,8 @@ SESSION_SECRET=<high-entropy-random-value>
 
 并在系统设置里把「服务器地址」设为 `https://api.example.com`，确认「前端地址」是 `https://app.example.com`。
 
+Cloudflare Pages 同源转发：控制台的 Pages Function（new-api-frontend 的 `functions/`）把 `/api`、`/pg` 转发到后端。Pages 变量设 `API_PROXY_URL=https://api.example.com`，不设 `API_BASE_URL`，`runtime-config.json` 保持空值；后端的环境变量和系统设置与上面相同。函数把访客地址写进 `X-Real-IP`，控制台和后端的域名在同一个 Cloudflare zone 时，Cloudflare 把它作为发往后端的 `CF-Connecting-IP`，后端服务器按下文「经过 Cloudflare」还原访客地址。通过 `*.pages.dev` 访问时子请求跨 zone，Cloudflare 把 `CF-Connecting-IP` 固定为 `2a06:98c0:3600::103`，所有这类访客共用一个地址，正式使用自定义域名。
+
 Cloudflare Pages 和 Netlify 读取构建产物里的 `_headers`，自动发送上文的内容安全策略。其它静态服务器要自己给 `index.html`（以及回落到它的所有前端路由）加上 `_headers` 里的 `Content-Security-Policy`，例如 Nginx：
 
 ```nginx
@@ -179,6 +181,93 @@ Gin 默认会信任所有代理提供的客户端 IP 请求头。本项目改为
 - 其他非空值按英文逗号解析为代理 IP/CIDR，并完全替代默认列表。应填写反向代理自身的地址而不是客户端网段；非法 CIDR、空列表或将 `none` 与其他值混用都会阻止服务启动。
 
 Gin 只在请求的直连来源属于可信代理时解析客户端 IP 请求头，并从转发链右侧向左寻找首个非可信地址。因此常见 Nginx `$proxy_add_x_forwarded_for` 链中的公网客户端地址会阻止更左侧的伪造前缀生效。默认信任私网的残余风险是：能够从同一私网直接访问应用的其他机器或容器仍可伪造这些请求头；需要消除此风险时应使用 `none` 或配置精确代理地址。
+
+### 经过 Cloudflare
+
+后端经过 Cloudflare 代理时（包括控制台的 Pages Function 转发），Nginx 看到的直连地址是 Cloudflare 的节点，访客地址在 `CF-Connecting-IP` 头里。让 Nginx 从这个头还原访客地址，它传给后端的 `X-Real-IP`、`X-Forwarded-For` 才是访客本人。这需要 `ngx_http_realip_module`（`nginx -V` 的输出含 `--with-http_realip_module`，发行版自带的 Nginx 都包含）。在 `http` 段加入：
+
+```nginx
+# Cloudflare Start：只信任 Cloudflare 的地址段，https://www.cloudflare.com/ips/
+set_real_ip_from 173.245.48.0/20;
+set_real_ip_from 103.21.244.0/22;
+set_real_ip_from 103.22.200.0/22;
+set_real_ip_from 103.31.4.0/22;
+set_real_ip_from 141.101.64.0/18;
+set_real_ip_from 108.162.192.0/18;
+set_real_ip_from 190.93.240.0/20;
+set_real_ip_from 188.114.96.0/20;
+set_real_ip_from 197.234.240.0/22;
+set_real_ip_from 198.41.128.0/17;
+set_real_ip_from 162.158.0.0/15;
+set_real_ip_from 104.16.0.0/13;
+set_real_ip_from 104.24.0.0/14;
+set_real_ip_from 172.64.0.0/13;
+set_real_ip_from 131.0.72.0/22;
+set_real_ip_from 2400:cb00::/32;
+set_real_ip_from 2606:4700::/32;
+set_real_ip_from 2803:f800::/32;
+set_real_ip_from 2405:b500::/32;
+set_real_ip_from 2405:8100::/32;
+set_real_ip_from 2a06:98c0::/29;
+set_real_ip_from 2c0f:f248::/32;
+real_ip_header CF-Connecting-IP;
+# Cloudflare End
+```
+
+不要使用 `set_real_ip_from 0.0.0.0/0`：那会让任何客户端伪造自己的地址。只列 Cloudflare 的地址段时，绕过 Cloudflare 直连源站的请求带来的 `CF-Connecting-IP` 会被忽略。Cloudflare 偶尔调整地址段，可以把上面的内容放进单独的文件（Debian 和 Ubuntu 的 `nginx.conf` 在 `http` 段包含 `/etc/nginx/conf.d/*.conf`），用 cron 定期重新生成：
+
+```sh
+#!/bin/sh
+set -eu
+v4=$(curl -fsS https://www.cloudflare.com/ips-v4)
+v6=$(curl -fsS https://www.cloudflare.com/ips-v6)
+conf=/etc/nginx/conf.d/cloudflare-realip.conf
+{
+  echo '# 由脚本生成，来自 https://www.cloudflare.com/ips/'
+  for ip in $v4 $v6; do echo "set_real_ip_from $ip;"; done
+  echo 'real_ip_header CF-Connecting-IP;'
+} > "$conf.new"
+mv "$conf.new" "$conf"
+nginx -t && nginx -s reload
+```
+
+后端的 `server` 段把还原后的地址传给后端，并为 SSE、WebSocket 和较大的请求体留出余量：
+
+```nginx
+# 放在 http 段：WebSocket（/v1/realtime、/v1/responses）需要。
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 443 ssl;
+    server_name api.example.com;
+    # ssl_certificate、ssl_certificate_key：例如 Cloudflare 源站证书
+
+    client_max_body_size 100m;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        # $remote_addr 已是访客地址；不转发客户端自带的 X-Forwarded-For。
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        # 流式响应逐块转发，长时间生成不被切断。
+        proxy_buffering off;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+    }
+}
+```
+
+`TRUSTED_PROXIES` 只填 Nginx 到后端这一跳的地址，保持默认即可：Nginx 与后端同机、Docker 只把端口发布在 `127.0.0.1` 上时，后端看到的直连地址是回环或 Docker 网桥网关，都在默认列表里。不要把 Cloudflare 的地址段填进 `TRUSTED_PROXIES`，后端并不直接接收 Cloudflare 的连接。还可以只让 Cloudflare 回源：防火墙只对上面的地址段开放 443，或启用 Cloudflare 的 Authenticated Origin Pulls。
+
+配置后，Nginx 访问日志的第一列和控制台「登录会话」里的 IP 应是访客的公网地址。看到 Cloudflare 节点的地址，说明 `set_real_ip_from` 没有生效；看到 `2a06:98c0:3600::103`，说明请求来自跨 zone 的 Worker，例如通过 `*.pages.dev` 访问的控制台。
 
 Redis 限流使用原子 Lua 固定窗口，替代旧的近似滑动窗口 List 实现。这是有意的语义变化：窗口边界两侧可分别打满一次，极短时间内通过量最高约为配置值的两倍。例如 `20 次/20 分钟` 在边界可通过约 40 次。帐户级 Session 上限和签发窗口继续控制数据库增长；如未来需要严格抑制边界突发，需单独迁移为 ZSET 滑动窗口。
 
