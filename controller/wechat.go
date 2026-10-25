@@ -56,6 +56,12 @@ func getWeChatIdByCode(code string) (string, error) {
 	return res.Data, nil
 }
 
+// @Summary		微信登录
+// @Description	用公众号验证码登录，未绑定的微信在开放注册时自动注册。成功时 data 为访问令牌、登录会话和用户，并写入 new_api_refresh Cookie；账户需要二次登录验证时 data 改为 {require_verification: true, flow_token, expires_at, methods}。
+// @Tags			第三方登录
+// @Param			code	query		string	true	"微信公众号返回的验证码"
+// @Success		200		{object}	common.ApiResponse{data=loginResult}
+// @Router			/api/oauth/wechat [get]
 func WeChatAuth(c *gin.Context) {
 	if !common.WeChatAuthEnabled {
 		common.ApiErrorT(c, "{{provider}} login and registration has not been enabled by administrator", providerParams("WeChat"))
@@ -108,6 +114,13 @@ type wechatBindRequest struct {
 	Code string `json:"code"`
 }
 
+// @Summary		绑定微信
+// @Description	需要 scope 为 account.binding.bind 的 X-Security-Proof，其 context 为 {provider: "wechat", code}。
+// @Tags			第三方登录
+// @Param			body	body		wechatBindRequest	true	"微信公众号返回的验证码"
+// @Success		200		{object}	common.ApiResponse{data=bindingNotificationResult}
+// @Security		UserAuth && SecurityProof
+// @Router			/api/oauth/wechat/bind [post]
 func WeChatBind(c *gin.Context) {
 	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
@@ -159,10 +172,6 @@ func WeChatBind(c *gin.Context) {
 		return
 	}
 	notificationFailed = service.NotifyAccountSecurityChange(service.AccountMailLanguage(c, user.Id), user.Email, i18n.MsgSecurityEventWeChatLinked) != nil
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    gin.H{"notification_warning": notificationFailed},
-	})
+	common.ApiSuccess(c, bindingNotificationResult{NotificationWarning: notificationFailed})
 	return
 }

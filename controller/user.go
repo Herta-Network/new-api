@@ -33,9 +33,21 @@ type LoginRequest struct {
 	EncryptionKeyID   string `json:"encryption_key_id"`
 }
 
+type passwordEncryptionKey struct {
+	Enabled bool `json:"enabled"`
+	// Kid and PublicKey are present while password encryption is enabled.
+	Kid       string `json:"kid,omitempty"`
+	PublicKey string `json:"public_key,omitempty"`
+}
+
+// @Summary		获取登录密码加密公钥
+// @Description	开启登录密码加密时返回公钥和 kid；登录和密码验证用它加密密码，填入 password_encrypted 和 encryption_key_id。
+// @Tags			认证
+// @Success		200	{object}	common.ApiResponse{data=passwordEncryptionKey}
+// @Router			/api/user/login/encryption-key [get]
 func GetPasswordEncryptionKey(c *gin.Context) {
 	if !common.PasswordLoginEncryptionEnabled {
-		common.ApiSuccess(c, gin.H{"enabled": false})
+		common.ApiSuccess(c, passwordEncryptionKey{Enabled: false})
 		return
 	}
 	keyID, publicKey := common.PasswordEncryptionPublicKey()
@@ -43,13 +55,21 @@ func GetPasswordEncryptionKey(c *gin.Context) {
 		common.ApiErrorT(c, "Database error, please contact the administrator")
 		return
 	}
-	common.ApiSuccess(c, gin.H{
-		"enabled":    true,
-		"kid":        keyID,
-		"public_key": publicKey,
+	common.ApiSuccess(c, passwordEncryptionKey{
+		Enabled:   true,
+		Kid:       keyID,
+		PublicKey: publicKey,
 	})
 }
 
+// @Summary		密码登录
+// @Description	username 可以是用户名或邮箱；开启登录密码加密时提交 password_encrypted 和 encryption_key_id 代替 password。成功时 data 为访问令牌、登录会话和用户，并写入 new_api_refresh Cookie。
+// @Description	账户需要二次登录验证时 data 改为 {require_verification: true, flow_token, expires_at, methods}，再用 POST /api/user/login/verify 或 /api/user/login/passkey/* 完成登录。
+// @Tags			认证
+// @Param			turnstile	query		string			false	"Turnstile 令牌，开启 Turnstile 时必填"
+// @Param			body		body		LoginRequest	true	"用户名或邮箱与密码"
+// @Success		200			{object}	common.ApiResponse{data=loginResult}
+// @Router			/api/user/login [post]
 func Login(c *gin.Context) {
 	if !common.PasswordLoginEnabled {
 		common.ApiErrorT(c, "Password login has been disabled by administrator")
@@ -195,25 +215,30 @@ func setupLoginAtAuthVersion(user *model.User, expectedAuthVersion int64, c *gin
 	writeLoginResponse(c, currentUser, bundle)
 }
 
+// loginResult is the data of a completed login or refresh: the access token,
+// the login session and the signed-in user. The refresh token goes into the
+// new_api_refresh cookie.
+type loginResult struct {
+	*service.AuthBundle
+	User selfUserData `json:"user"`
+}
+
 func writeLoginResponse(c *gin.Context, user *model.User, bundle *service.AuthBundle) {
 	c.Set("login_method", bundle.Session.LoginMethod)
 	model.UpdateUserLastLoginAt(user.Id)
 	service.WriteRefreshCookie(c, bundle.RefreshToken)
 	setAuthNoStore(c)
 	recordLoginAudit(user, c)
-	c.JSON(http.StatusOK, gin.H{
-		"message": "",
-		"success": true,
-		"data": gin.H{
-			"access_token":      bundle.AccessToken,
-			"token_type":        bundle.TokenType,
-			"access_expires_at": bundle.AccessExpiresAt,
-			"session":           bundle.Session,
-			"user":              buildSelfUserData(user),
-		},
-	})
+	common.ApiSuccess(c, loginResult{AuthBundle: bundle, User: buildSelfUserData(user)})
 }
 
+// @Summary		注册
+// @Description	开启邮箱验证时须提交 email 和 verification_code（由 GET /api/verification 发送）；aff_code 填邀请人的邀请码。
+// @Tags			认证
+// @Param			turnstile	query		string		false	"Turnstile 令牌，开启 Turnstile 时必填"
+// @Param			body		body		model.User	true	"username、password，可选 email、verification_code、aff_code"
+// @Success		200			{object}	common.ApiResponse
+// @Router			/api/user/register [post]
 func Register(c *gin.Context) {
 	if !common.RegisterEnabled {
 		common.ApiErrorT(c, "New user registration has been disabled by administrator")
@@ -335,6 +360,15 @@ func Register(c *gin.Context) {
 	return
 }
 
+// @Summary	获取用户列表
+// @Tags		用户管理
+// @Param		p			query		int		false	"页码，从 1 开始"
+// @Param		page_size	query		int		false	"每页条数"
+// @Param		sort_by		query		string	false	"排序字段：id、username、quota、group、created_at、last_login_at，默认 id"
+// @Param		sort_order	query		string	false	"asc 或 desc，默认 desc"
+// @Success	200			{object}	common.ApiResponse{data=common.PageInfo{items=[]model.User}}
+// @Security	AdminAuth
+// @Router		/api/user/ [get]
 func GetAllUsers(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	sortOptions := model.NewUserSortOptions(c.Query("sort_by"), c.Query("sort_order"))
@@ -351,6 +385,19 @@ func GetAllUsers(c *gin.Context) {
 	return
 }
 
+// @Summary	搜索用户
+// @Tags		用户管理
+// @Param		keyword		query		string	false	"匹配用户名、邮箱、显示名，为数字时也匹配用户 ID"
+// @Param		group		query		string	false	"分组"
+// @Param		role		query		int		false	"角色"
+// @Param		status		query		int		false	"状态，-1 表示已删除的用户"
+// @Param		p			query		int		false	"页码，从 1 开始"
+// @Param		page_size	query		int		false	"每页条数"
+// @Param		sort_by		query		string	false	"排序字段：id、username、quota、group、created_at、last_login_at，默认 id"
+// @Param		sort_order	query		string	false	"asc 或 desc，默认 desc"
+// @Success	200			{object}	common.ApiResponse{data=common.PageInfo{items=[]model.User}}
+// @Security	AdminAuth
+// @Router		/api/user/search [get]
 func SearchUsers(c *gin.Context) {
 	keyword := c.Query("keyword")
 	group := c.Query("group")
@@ -384,6 +431,13 @@ func canManageTargetRole(myRole int, targetRole int) bool {
 	return myRole == common.RoleRootUser || myRole > targetRole
 }
 
+// @Summary		获取用户
+// @Description	只能查看角色低于自己的用户，超级管理员不受此限；admin_permissions 为该用户的后台权限。
+// @Tags			用户管理
+// @Param			id	path		int	true	"用户 ID"
+// @Success		200	{object}	common.ApiResponse{data=model.User}
+// @Security		AdminAuth
+// @Router			/api/user/{id} [get]
 func GetUser(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -401,11 +455,7 @@ func GetUser(c *gin.Context) {
 		return
 	}
 	user.AdminPermissions = authz.Capabilities(user.Id, user.Role)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    user,
-	})
+	common.ApiSuccess(c, user)
 	return
 }
 
@@ -413,6 +463,13 @@ type TransferAffQuotaRequest struct {
 	Quota int `json:"quota" binding:"required"`
 }
 
+// @Summary		邀请额度转入余额
+// @Description	需要管理员已确认支付合规。
+// @Tags			个人
+// @Param			body	body		TransferAffQuotaRequest	true	"转入的额度"
+// @Success		200		{object}	common.ApiResponse
+// @Security		UserAuth
+// @Router			/api/user/aff_transfer [post]
 func TransferAffQuota(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
@@ -442,6 +499,12 @@ func TransferAffQuota(c *gin.Context) {
 	common.ApiSuccessT(c, "Transfer successful", nil)
 }
 
+// @Summary		获取邀请码
+// @Description	还没有邀请码时先生成一个。
+// @Tags			个人
+// @Success		200	{object}	common.ApiResponse{data=string}
+// @Security		UserAuth
+// @Router			/api/user/aff [get]
 func GetAffCode(c *gin.Context) {
 	id := c.GetInt("id")
 	user, err := model.GetUserById(id, true)
@@ -456,14 +519,15 @@ func GetAffCode(c *gin.Context) {
 			return
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    user.AffCode,
-	})
+	common.ApiSuccess(c, user.AffCode)
 	return
 }
 
+// @Summary	获取当前用户
+// @Tags		个人
+// @Success	200	{object}	common.ApiResponse{data=selfUserData}
+// @Security	UserAuth
+// @Router		/api/user/self [get]
 func GetSelf(c *gin.Context) {
 	id := c.GetInt("id")
 	userRole := c.GetInt("role")
@@ -476,75 +540,102 @@ func GetSelf(c *gin.Context) {
 	// The authenticated role is loaded from GetUserCache. It should equal the
 	// row role, but use it for capabilities so GetSelf and login/refresh remain
 	// consistent with the authorization decision made for this request.
-	permissions := calculateUserPermissions(userRole)
-	permissions["admin_permissions"] = authz.Capabilities(id, userRole)
-	responseData["permissions"] = permissions
+	responseData.Permissions = calculateUserPermissions(id, userRole)
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    responseData,
-	})
+	common.ApiSuccess(c, responseData)
 	return
 }
 
-// buildSelfUserData is the single safe dashboard-user DTO used by GetSelf,
-// login and refresh. It intentionally excludes password, management PAT and
+// selfUserData is the single safe dashboard-user DTO used by GetSelf, login
+// and refresh. It intentionally excludes password, management PAT and
 // administrator-only remarks.
-func buildSelfUserData(user *model.User) map[string]any {
+type selfUserData struct {
+	Id              int             `json:"id"`
+	Username        string          `json:"username"`
+	DisplayName     string          `json:"display_name"`
+	HasPassword     bool            `json:"has_password"`
+	Role            int             `json:"role"`
+	Status          int             `json:"status"`
+	Email           string          `json:"email"`
+	GitHubId        string          `json:"github_id"`
+	DiscordId       string          `json:"discord_id"`
+	OidcId          string          `json:"oidc_id"`
+	WeChatId        string          `json:"wechat_id"`
+	TelegramId      string          `json:"telegram_id"`
+	Group           string          `json:"group"`
+	Quota           int             `json:"quota"`
+	UsedQuota       int             `json:"used_quota"`
+	RequestCount    int             `json:"request_count"`
+	AffCode         string          `json:"aff_code"`
+	AffCount        int             `json:"aff_count"`
+	AffQuota        int             `json:"aff_quota"`
+	AffHistoryQuota int             `json:"aff_history_quota"`
+	InviterId       int             `json:"inviter_id"`
+	LinuxDOId       string          `json:"linux_do_id"`
+	Setting         string          `json:"setting"`
+	SidebarModules  string          `json:"sidebar_modules"`
+	Permissions     userPermissions `json:"permissions"`
+}
+
+func buildSelfUserData(user *model.User) selfUserData {
 	userSetting := user.GetSetting()
-	permissions := calculateUserPermissions(user.Role)
-	permissions["admin_permissions"] = authz.Capabilities(user.Id, user.Role)
-	return map[string]any{
-		"id":                user.Id,
-		"username":          user.Username,
-		"display_name":      user.DisplayName,
-		"has_password":      user.HasPassword,
-		"role":              user.Role,
-		"status":            user.Status,
-		"email":             user.Email,
-		"github_id":         user.GitHubId,
-		"discord_id":        user.DiscordId,
-		"oidc_id":           user.OidcId,
-		"wechat_id":         user.WeChatId,
-		"telegram_id":       user.TelegramId,
-		"group":             user.Group,
-		"quota":             user.Quota,
-		"used_quota":        user.UsedQuota,
-		"request_count":     user.RequestCount,
-		"aff_code":          user.AffCode,
-		"aff_count":         user.AffCount,
-		"aff_quota":         user.AffQuota,
-		"aff_history_quota": user.AffHistoryQuota,
-		"inviter_id":        user.InviterId,
-		"linux_do_id":       user.LinuxDOId,
-		"setting":           user.Setting,
-		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
-		"permissions":       permissions,
+	return selfUserData{
+		Id:              user.Id,
+		Username:        user.Username,
+		DisplayName:     user.DisplayName,
+		HasPassword:     user.HasPassword,
+		Role:            user.Role,
+		Status:          user.Status,
+		Email:           user.Email,
+		GitHubId:        user.GitHubId,
+		DiscordId:       user.DiscordId,
+		OidcId:          user.OidcId,
+		WeChatId:        user.WeChatId,
+		TelegramId:      user.TelegramId,
+		Group:           user.Group,
+		Quota:           user.Quota,
+		UsedQuota:       user.UsedQuota,
+		RequestCount:    user.RequestCount,
+		AffCode:         user.AffCode,
+		AffCount:        user.AffCount,
+		AffQuota:        user.AffQuota,
+		AffHistoryQuota: user.AffHistoryQuota,
+		InviterId:       user.InviterId,
+		LinuxDOId:       user.LinuxDOId,
+		Setting:         user.Setting,
+		SidebarModules:  userSetting.SidebarModules, // 正确提取sidebar_modules字段
+		Permissions:     calculateUserPermissions(user.Id, user.Role),
 	}
 }
 
+type userPermissions struct {
+	SidebarSettings bool `json:"sidebar_settings"`
+	// SidebarModules marks the sidebar areas the role cannot use.
+	SidebarModules   map[string]any       `json:"sidebar_modules"`
+	AdminPermissions authz.PermissionsMap `json:"admin_permissions"`
+}
+
 // 计算用户权限的辅助函数
-func calculateUserPermissions(userRole int) map[string]any {
-	permissions := map[string]any{}
+func calculateUserPermissions(userID int, userRole int) userPermissions {
+	permissions := userPermissions{AdminPermissions: authz.Capabilities(userID, userRole)}
 
 	// 根据用户角色计算权限
 	if userRole == common.RoleRootUser {
 		// 超级管理员不需要边栏设置功能
-		permissions["sidebar_settings"] = false
-		permissions["sidebar_modules"] = map[string]any{}
+		permissions.SidebarSettings = false
+		permissions.SidebarModules = map[string]any{}
 	} else if userRole == common.RoleAdminUser {
 		// 管理员可以设置边栏，但不包含系统设置功能
-		permissions["sidebar_settings"] = true
-		permissions["sidebar_modules"] = map[string]any{
+		permissions.SidebarSettings = true
+		permissions.SidebarModules = map[string]any{
 			"admin": map[string]any{
 				"setting": false, // 管理员不能访问系统设置
 			},
 		}
 	} else {
 		// 普通用户只能设置个人功能，不包含管理员区域
-		permissions["sidebar_settings"] = true
-		permissions["sidebar_modules"] = map[string]any{
+		permissions.SidebarSettings = true
+		permissions.SidebarModules = map[string]any{
 			"admin": false, // 普通用户不能访问管理员区域
 		}
 	}
@@ -614,6 +705,12 @@ func generateDefaultSidebarConfig(userRole int) string {
 	return string(configBytes)
 }
 
+// @Summary	获取可用模型
+// @Tags		个人
+// @Param		group	query		string	false	"分组；不填时返回所有可用分组的模型，auto 为自动分组"
+// @Success	200		{object}	common.ApiResponse{data=[]string}
+// @Security	UserAuth
+// @Router		/api/user/models [get]
 func GetUserModels(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -641,13 +738,17 @@ func GetUserModels(c *gin.Context) {
 			groupsToQuery = []string{group}
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    model.UsableModelNames(groupsToQuery, model.AcceptsUnpricedModels(user.Id)),
-	})
+	common.ApiSuccess(c, model.UsableModelNames(groupsToQuery, model.AcceptsUnpricedModels(user.Id)))
 }
 
+// @Summary		更新用户
+// @Description	更新 username、display_name、group、remark，password 非空时重置密码，角色不能在这里修改；admin_permissions 只有超级管理员可以提交。重置密码或提交 admin_permissions 时需要 scope 为 admin.user.update 的 X-Security-Proof。只能修改角色低于自己的用户，超级管理员不受此限。
+// @Tags			用户管理
+// @Param			body	body		model.User	true	"用户，id 必填"
+// @Success		200		{object}	common.ApiResponse
+// @Security		AdminAuth
+// @Security		AdminAuth && SecurityProof
+// @Router			/api/user/ [put]
 func UpdateUser(c *gin.Context) {
 	var updatedUser model.User
 	err := common.DecodeJson(c.Request.Body, &updatedUser)
@@ -731,6 +832,21 @@ func UpdateUser(c *gin.Context) {
 	return
 }
 
+// adminBindingClearResponse is the body of a cleared binding, whose message
+// is "success".
+type adminBindingClearResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// @Summary		清除用户绑定
+// @Description	需要 scope 为 admin.user.binding.clear 的 X-Security-Proof，其 context 为 {user_id, binding_type}；只能操作角色低于自己的用户，超级管理员不受此限。
+// @Tags			用户管理
+// @Param			id				path		int		true	"用户 ID"
+// @Param			binding_type	path		string	true	"绑定类型：email、github、discord、oidc、wechat、telegram、linuxdo"
+// @Success		200				{object}	adminBindingClearResponse
+// @Security		AdminAuth && SecurityProof
+// @Router			/api/user/{id}/bindings/{binding_type} [delete]
 func AdminClearUserBinding(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -771,12 +887,30 @@ func AdminClearUserBinding(c *gin.Context) {
 		"verification_method": authorization.Method,
 	})
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "success",
+	c.JSON(http.StatusOK, adminBindingClearResponse{
+		Success: true,
+		Message: "success",
 	})
 }
 
+// passwordChangeResult rotates the current login session after a password
+// change; the session fields are absent when the change came through an
+// access token, which has no browser session.
+type passwordChangeResult struct {
+	*service.AuthBundle
+	HasPassword         bool `json:"has_password"`
+	NotificationWarning bool `json:"notification_warning"`
+}
+
+// @Summary		更新个人资料
+// @Description	请求体有 sidebar_modules 或 language 且不改密码时只保存该项设置；否则更新 username、display_name，password 非空时修改密码，需要 original_password 和 X-Security-Proof（scope 为 account.password.change，首次设置密码为 account.password.set）。
+// @Description	只有修改密码时返回 data：替换当前会话的访问令牌和会话（经个人访问令牌修改时没有）、has_password 和 notification_warning（安全通知邮件是否发送失败）。
+// @Tags			个人
+// @Param			body	body		object	true	"username、display_name、password、original_password，或 sidebar_modules、language"
+// @Success		200		{object}	common.ApiResponse{data=passwordChangeResult}
+// @Security		UserAuth
+// @Security		UserAuth && SecurityProof
+// @Router			/api/user/self [put]
 func UpdateSelf(c *gin.Context) {
 	var requestData map[string]any
 	if err := common.DecodeJson(c.Request.Body, &requestData); err != nil {
@@ -905,13 +1039,10 @@ func UpdateSelf(c *gin.Context) {
 			writeSecurityOperationError(c, err)
 			return
 		}
-		data := authRotationData(bundle)
-		data["has_password"] = true
-		data["notification_warning"] = notificationFailed
-		c.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"message": "",
-			"data":    data,
+		common.ApiSuccess(c, passwordChangeResult{
+			AuthBundle:          bundle,
+			HasPassword:         true,
+			NotificationWarning: notificationFailed,
 		})
 		return
 	}
@@ -924,6 +1055,13 @@ func UpdateSelf(c *gin.Context) {
 	return
 }
 
+// @Summary		删除用户
+// @Description	永久删除用户并撤销其个人访问令牌；需要 scope 为 admin.user.delete 的 X-Security-Proof，只能删除角色低于自己的用户。
+// @Tags			用户管理
+// @Param			id	path		int	true	"用户 ID"
+// @Success		200	{object}	common.ApiResponse
+// @Security		AdminAuth && SecurityProof
+// @Router			/api/user/{id} [delete]
 func DeleteUser(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -962,6 +1100,12 @@ func DeleteUser(c *gin.Context) {
 	return
 }
 
+// @Summary		注销账户
+// @Description	删除当前账户并清除 Refresh Cookie，data 为空对象；需要 scope 为 account.delete 的 X-Security-Proof，超级管理员不能注销。
+// @Tags			个人
+// @Success		200	{object}	common.ApiResponse{data=object}
+// @Security		UserAuth && SecurityProof
+// @Router			/api/user/self [delete]
 func DeleteSelf(c *gin.Context) {
 	setAuthNoStore(c)
 	succeeded := false
@@ -988,13 +1132,17 @@ func DeleteSelf(c *gin.Context) {
 	}
 	succeeded = true
 	service.ClearRefreshCookie(c)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    gin.H{},
-	})
+	common.ApiSuccess(c, struct{}{})
 }
 
+// @Summary		创建用户
+// @Description	只能创建角色低于自己的用户；创建管理员时需要 scope 为 admin.user.create 的 X-Security-Proof；admin_permissions 只有超级管理员可以提交。
+// @Tags			用户管理
+// @Param			body	body		model.User	true	"username、password、display_name、role，可选 admin_permissions"
+// @Success		200		{object}	common.ApiResponse
+// @Security		AdminAuth
+// @Security		AdminAuth && SecurityProof
+// @Router			/api/user/ [post]
 func CreateUser(c *gin.Context) {
 	var user model.User
 	err := common.DecodeJson(c.Request.Body, &user)
@@ -1088,6 +1236,16 @@ type ManageRequest struct {
 }
 
 // ManageUser Only admin user can do this
+//
+//	@Summary		管理用户
+//	@Description	action 为 disable、enable、promote、demote、delete 或 add_quota；只能操作角色低于自己的用户（超级管理员不受此限），promote 仅限超级管理员。除 add_quota 外都需要 X-Security-Proof：delete 的 scope 为 admin.user.delete，其余为 admin.user.manage。
+//	@Description	add_quota 按 mode（add、subtract、override）和 value 调整额度。delete 和 add_quota 不返回 data，其余操作的 data 只有用户新的 role 和 status。
+//	@Tags			用户管理
+//	@Param			body	body		ManageRequest	true	"用户 ID 和操作"
+//	@Success		200		{object}	common.ApiResponse{data=model.User}
+//	@Security		AdminAuth
+//	@Security		AdminAuth && SecurityProof
+//	@Router			/api/user/manage [post]
 func ManageUser(c *gin.Context) {
 	var req ManageRequest
 	err := common.DecodeJson(c.Request.Body, &req)
@@ -1228,11 +1386,7 @@ func ManageUser(c *gin.Context) {
 		Role:   user.Role,
 		Status: user.Status,
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    clearUser,
-	})
+	common.ApiSuccess(c, clearUser)
 	return
 }
 
@@ -1281,15 +1435,33 @@ func getTopUpLock(userID int) *topUpTryLock {
 	return l
 }
 
+type selfTopUpInfo struct {
+	EnableRedemption bool   `json:"enable_redemption"`
+	TopUpLink        string `json:"topup_link"`
+}
+
 // GetTopUpInfo tells the wallet whether redemption codes can be used and
 // where to buy them.
+//
+//	@Summary	获取兑换码充值信息
+//	@Tags		个人
+//	@Success	200	{object}	common.ApiResponse{data=selfTopUpInfo}
+//	@Security	UserAuth
+//	@Router		/api/user/topup/info [get]
 func GetTopUpInfo(c *gin.Context) {
-	common.ApiSuccess(c, gin.H{
-		"enable_redemption": operation_setting.IsPaymentComplianceConfirmed(),
-		"topup_link":        common.TopUpLink,
+	common.ApiSuccess(c, selfTopUpInfo{
+		EnableRedemption: operation_setting.IsPaymentComplianceConfirmed(),
+		TopUpLink:        common.TopUpLink,
 	})
 }
 
+// @Summary		兑换码充值
+// @Description	需要管理员已确认支付合规；data 为到账额度。
+// @Tags			个人
+// @Param			body	body		topUpRequest	true	"兑换码"
+// @Success		200		{object}	common.ApiResponse{data=int}
+// @Security		UserAuth
+// @Router			/api/user/topup [post]
 func TopUp(c *gin.Context) {
 	if !operation_setting.IsPaymentComplianceConfirmed() {
 		common.ApiErrorT(c, "Payment, redemption, subscription, and invitation reward features are disabled. The administrator must confirm compliance terms before enabling them.")
@@ -1316,11 +1488,7 @@ func TopUp(c *gin.Context) {
 		logger.LogError(c, common.LogText("failed to redeem key %s for user %d: %s", req.Key, id, err.Error()))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    quota,
-	})
+	common.ApiSuccess(c, quota)
 }
 
 type UpdateUserSettingRequest struct {
@@ -1340,6 +1508,13 @@ type UpdateUserSettingRequest struct {
 	RecordIpLog                      bool    `json:"record_ip_log"`
 }
 
+// @Summary		更新通知设置
+// @Description	notify_type 为 email、webhook、bark 或 gotify，只保存所选通知方式的配置；upstream_model_update_notify_enabled 和 channel_notify_enabled 只对管理员生效。
+// @Tags			个人
+// @Param			body	body		UpdateUserSettingRequest	true	"通知方式和额度预警设置"
+// @Success		200		{object}	common.ApiResponse
+// @Security		UserAuth
+// @Router			/api/user/setting [put]
 func UpdateUserSetting(c *gin.Context) {
 	var req UpdateUserSettingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
