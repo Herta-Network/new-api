@@ -93,6 +93,11 @@ func answerBuyerOrder(c *gin.Context, order *entity.PaymentOrder, err error) {
 	common.ApiSuccess(c, view)
 }
 
+// buyerOf describes the request that starts a checkout.
+func buyerOf(c *gin.Context) payment.Buyer {
+	return payment.Buyer{IP: c.ClientIP(), UserAgent: c.Request.UserAgent()}
+}
+
 func decodePurchase(c *gin.Context) (payment.PurchaseRequest, bool) {
 	var req payment.PurchaseRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
@@ -132,7 +137,7 @@ type createdPaymentOrder struct {
 // CreatePaymentOrder creates an order and starts its payment.
 //
 //	@Summary		创建支付订单
-//	@Description	创建订单并开始支付：checkout.type 为 url（打开链接）、stripe（用 Stripe.js 确认）、qrcode（展示二维码）或 paid（余额或免费购买已完成）。按用户限流。
+//	@Description	创建订单并开始支付：checkout.type 为 url（打开链接）、stripe（用 Stripe.js 确认）、qrcode（展示二维码）或 paid（余额或免费购买已完成）。按买家设备选择支付形式的 EPay 通道以请求的 User-Agent 区分手机与电脑。按用户限流。
 //	@Tags			支付
 //	@Param			body	body		payment.PurchaseRequest	true	"purpose 为 topup 或 subscription；payment_option_id 为支付方式 ID，-1 为余额；充值时 amount 为站点货币金额，JSON 数字，最多两位小数；订阅时 plan_id 为套餐 ID"
 //	@Success		200		{object}	common.ApiResponse{data=createdPaymentOrder}
@@ -143,7 +148,7 @@ func CreatePaymentOrder(c *gin.Context) {
 	if !ok {
 		return
 	}
-	order, checkout, err := payment.CreateOrder(c.Request.Context(), c.GetInt("id"), req, c.ClientIP())
+	order, checkout, err := payment.CreateOrder(c.Request.Context(), c.GetInt("id"), req, buyerOf(c))
 	var view *payment.BuyerOrder
 	if err == nil {
 		view, err = payment.BuyerOrderOf(order)
@@ -158,14 +163,14 @@ func CreatePaymentOrder(c *gin.Context) {
 // CheckoutPaymentOrder starts the payment of a pending order again.
 //
 //	@Summary		重新发起支付
-//	@Description	按用户限流。
+//	@Description	支付形式按本次请求的 User-Agent 重新判断买家设备。按用户限流。
 //	@Tags			支付
 //	@Param			no	path		string	true	"订单号"
 //	@Success		200	{object}	common.ApiResponse{data=payment.Checkout}
 //	@Security		UserAuth
 //	@Router			/api/payment/orders/{no}/checkout [post]
 func CheckoutPaymentOrder(c *gin.Context) {
-	checkout, err := payment.ResumeCheckout(c.Request.Context(), c.GetInt("id"), c.Param("no"))
+	checkout, err := payment.ResumeCheckout(c.Request.Context(), c.GetInt("id"), c.Param("no"), buyerOf(c))
 	if err != nil {
 		paymentAPIError(c, err)
 		return

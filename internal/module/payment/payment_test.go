@@ -339,7 +339,7 @@ func TestPaymentOptionsRouteOrders(t *testing.T) {
 	assert.Equal(t, "USD", large.PaymentCurrency, "both Stripe channels collect USD")
 	assert.Equal(t, large.Amount, large.PaymentAmount)
 
-	order, checkout, err := CreateOrder(ctx, testUser, topup("100", testEPayMethod), "203.0.113.9")
+	order, checkout, err := CreateOrder(ctx, testUser, topup("100", testEPayMethod), Buyer{IP: "203.0.113.9"})
 	require.NoError(t, err)
 	assert.Equal(t, gateway.ActionStripe, checkout.Type)
 	assert.Equal(t, testEPayMethod, order.PaymentOptionId)
@@ -399,13 +399,13 @@ func TestCheckoutSwitchesChannels(t *testing.T) {
 	// A gateway that refuses one order is switched away from but not held
 	// against the channel.
 	f.epay.setPayment(0, `{"code":-1,"msg":"amount below the minimum"}`)
-	_, checkout, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	_, checkout, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{IP: "203.0.113.9"})
 	require.NoError(t, err)
 	assert.Equal(t, gateway.ActionStripe, checkout.Type)
 	assert.Nil(t, channelHealth(testEPayMethod))
 
 	f.epay.setPayment(http.StatusBadGateway, `bad gateway`)
-	order, checkout, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	order, checkout, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{IP: "203.0.113.9"})
 	require.NoError(t, err)
 	assert.Equal(t, gateway.ActionStripe, checkout.Type)
 	assert.Equal(t, order.OrderNo, checkout.OrderNo, "the buyer keeps one order")
@@ -421,7 +421,7 @@ func TestCheckoutSwitchesChannels(t *testing.T) {
 	assert.Contains(t, channelHealth(testEPayMethod).LastError, "HTTP 502")
 
 	for range 2 {
-		_, _, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+		_, _, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{IP: "203.0.113.9"})
 		require.NoError(t, err)
 	}
 	assert.NotZero(t, channelHealth(testEPayMethod).TrippedUntil)
@@ -431,7 +431,7 @@ func TestCheckoutSwitchesChannels(t *testing.T) {
 
 	now = now.Add(breakerCooldown + time.Second)
 	f.epay.setPayment(0, `{"code":1,"trade_no":"T9","payurl":"https://pay.example/pay/T9"}`)
-	_, checkout, err = CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	_, checkout, err = CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{IP: "203.0.113.9"})
 	require.NoError(t, err)
 	assert.Equal(t, "https://pay.example/pay/T9", checkout.URL, "after its cooldown the channel takes its place again")
 	assert.Nil(t, channelHealth(testEPayMethod), "a checkout that starts clears the failures")
@@ -446,7 +446,7 @@ func TestCheckoutNeverSwitchesToPaymentPages(t *testing.T) {
 	addChannel(t, 22, testEPayMethod, gateway.PlatformEPay, 0, 0, 1, 1)
 	f.epay.setPayment(http.StatusBadGateway, `bad gateway`)
 
-	order, checkout, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	order, checkout, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{IP: "203.0.113.9"})
 	assert.ErrorIs(t, err, errCheckoutFailed)
 	assert.Nil(t, checkout)
 	assert.Equal(t, [][]any{{order.OrderNo, testEPayMethod, entity.PaymentInvoiceClosed, "failed"}}, invoiceStates(t, order.OrderNo))
@@ -465,20 +465,20 @@ func TestPayingAgainTriesOtherChannelsFirst(t *testing.T) {
 	routeRandom = func(int64) int64 { return 0 }
 	addChannel(t, 22, testEPayMethod, gateway.PlatformEPay, 0, 0, 0, 1)
 
-	order, _, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	order, _, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{IP: "203.0.113.9"})
 	require.NoError(t, err)
 	assert.Equal(t, testEPayMethod, invoiceStates(t, order.OrderNo)[0][1])
 	quote, err := QuotePurchase(ctx, testUser, topup("10", testEPayMethod))
 	require.NoError(t, err)
 	assert.Equal(t, []int{22, testEPayMethod}, routedIds(quote))
 
-	_, err = ResumeCheckout(ctx, testUser, order.OrderNo)
+	_, err = ResumeCheckout(ctx, testUser, order.OrderNo, Buyer{})
 	require.NoError(t, err)
 	assert.Len(t, invoiceStates(t, order.OrderNo), 1, "a channel that still works keeps its invoice")
 
 	require.NoError(t, model.DB.Model(&entity.PaymentMethod{}).Where("id = ?", testEPayMethod).Update("enabled", false).Error)
 	f.epay.set(0, `{"code":1,"pid":"1001","out_trade_no":"`+order.OrderNo+`","status":0}`)
-	resumed, err := ResumeCheckout(ctx, testUser, order.OrderNo)
+	resumed, err := ResumeCheckout(ctx, testUser, order.OrderNo, Buyer{})
 	require.NoError(t, err)
 	assert.Equal(t, gateway.ActionURL, resumed.Type)
 	assert.Equal(t, order.OrderNo, resumed.OrderNo)
@@ -497,11 +497,11 @@ func TestRenewalKeepsTheInvoiceTheBuyerHolds(t *testing.T) {
 	useEPayAPI(t)
 	addChannel(t, 20, testEPayMethod, gateway.PlatformStripe, 0, 0, 1, 1)
 	f.epay.setPayment(0, `{"code":1,"trade_no":"T1","payurl":"https://pay.example/pay/T1"}`)
-	order, _, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	order, _, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{IP: "203.0.113.9"})
 	require.NoError(t, err)
 
 	f.epay.setPayment(0, `{"code":-1,"msg":"order number exists"}`)
-	resumed, err := ResumeCheckout(ctx, testUser, order.OrderNo)
+	resumed, err := ResumeCheckout(ctx, testUser, order.OrderNo, Buyer{})
 	require.NoError(t, err)
 	assert.Equal(t, gateway.ActionStripe, resumed.Type)
 	assert.Equal(t, [][]any{
@@ -530,7 +530,7 @@ func TestSyncAsksEveryInvoiceThatReachedTheBuyer(t *testing.T) {
 	useEPayAPI(t)
 	addChannel(t, 20, testEPayMethod, gateway.PlatformStripe, 0, 0, 1, 1)
 	f.epay.setPayment(http.StatusBadGateway, `bad gateway`)
-	order, _, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	order, _, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{IP: "203.0.113.9"})
 	require.NoError(t, err)
 	f.epay.set(http.StatusInternalServerError, `{}`)
 
@@ -644,7 +644,7 @@ func TestFailedCheckoutClosesAtTheGateway(t *testing.T) {
 	addChannel(t, 20, testEPayMethod, gateway.PlatformStripe, 0, 0, 1, 1)
 
 	fake.answer(`<html>502 Bad Gateway</html>`, "0", "")
-	order, checkout, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	order, checkout, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{IP: "203.0.113.9"})
 	require.NoError(t, err)
 	assert.Equal(t, gateway.ActionStripe, checkout.Type)
 	assert.Equal(t, []string{"/api/pay/create " + order.OrderNo}, fake.paths(), "the buyer does not wait for the gateway's close")
@@ -656,13 +656,13 @@ func TestFailedCheckoutClosesAtTheGateway(t *testing.T) {
 	}, invoiceStates(t, order.OrderNo))
 
 	fake.answer(`{"code":-1,"msg":"amount below the minimum"}`, "0", "")
-	refused, _, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	refused, _, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{IP: "203.0.113.9"})
 	require.NoError(t, err)
 	runBackground()
 	assert.Equal(t, []string{"/api/pay/create " + refused.OrderNo}, fake.paths())
 
 	fake.answer(`<html>502 Bad Gateway</html>`, "1", "")
-	paid, _, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	paid, _, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{IP: "203.0.113.9"})
 	require.NoError(t, err)
 	invoice, err := store.GetInvoiceByNo(paid.OrderNo)
 	require.NoError(t, err)
@@ -704,7 +704,7 @@ func TestBuyersSeeOptionsNotChannels(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(listed), "platform")
 
-	order, _, err := CreateOrder(ctx, testUser, topup("10", testStripeMethod), "203.0.113.9")
+	order, _, err := CreateOrder(ctx, testUser, topup("10", testStripeMethod), Buyer{IP: "203.0.113.9"})
 	require.NoError(t, err)
 	view, err := BuyerOrderOf(order)
 	require.NoError(t, err)
@@ -828,7 +828,7 @@ func signEPayCallback(params map[string]string) map[string]string {
 func TestEPayCheckoutAndCallbackChain(t *testing.T) {
 	f := setupPayment(t)
 	ctx := context.Background()
-	order, checkout, err := CreateOrder(ctx, testUser, topup("100", testEPayMethod), "203.0.113.9")
+	order, checkout, err := CreateOrder(ctx, testUser, topup("100", testEPayMethod), Buyer{IP: "203.0.113.9"})
 	require.NoError(t, err)
 	assert.Equal(t, gateway.ActionURL, checkout.Type)
 	payURL, err := url.Parse(checkout.URL)
@@ -892,7 +892,9 @@ func TestEPayCheckoutAndCallbackChain(t *testing.T) {
 // An API checkout asks the gateway for the payment while the buyer waits:
 // the buyer gets what it answers, a gateway that fails is reported instead
 // of a payment page that would not work, and a resumed checkout asks again
-// for the buyer's address the order was made from.
+// for the buyer's address the order was made from. A channel saved before
+// payment forms existed asks for the payment page, which its form shows; one
+// that picks the form by device asks by the device of each request.
 func TestEPayAPICheckout(t *testing.T) {
 	f := setupPayment(t)
 	ctx := context.Background()
@@ -900,35 +902,59 @@ func TestEPayAPICheckout(t *testing.T) {
 	require.NoError(t, err)
 	apiConfig := strings.Replace(method.Config, `"type":""`, `"version":"v1","checkout":"api","type":"alipay"`, 1)
 	require.NoError(t, model.DB.Model(method).Update("config", apiConfig).Error)
+	details, err := AdminMethods()
+	require.NoError(t, err)
+	listed := slices.IndexFunc(details, func(detail *MethodDetail) bool { return detail.Id == testEPayMethod })
+	require.NotEqual(t, -1, listed)
+	assert.Equal(t, gateway.EPayFormJump, details[listed].Config["pay_form"])
 
 	f.epay.setPayment(0, `{"code":1,"trade_no":"T1","payurl":"https://pay.example/pay/T1"}`)
-	_, checkout, err := CreateOrder(ctx, testUser, topup("100", testEPayMethod), "203.0.113.9")
+	_, checkout, err := CreateOrder(ctx, testUser, topup("100", testEPayMethod), Buyer{IP: "203.0.113.9", UserAgent: desktopUserAgent})
 	require.NoError(t, err)
 	assert.Equal(t, &Checkout{Type: gateway.ActionURL, URL: "https://pay.example/pay/T1", OrderNo: checkout.OrderNo}, checkout)
 	created := f.epay.lastPayment()
 	assert.Equal(t, "537.06", created.Get("money"))
 	assert.Equal(t, "203.0.113.9", created.Get("clientip"))
+	assert.Equal(t, "jump", created.Get("device"))
 	assert.Equal(t, "https://www.example.test/api/payment/notify/epay/epay-token", created.Get("notify_url"))
 
 	f.epay.setPayment(0, `{"code":1,"trade_no":"T2","qrcode":"https://qr.alipay.com/abc"}`)
-	_, checkout, err = CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	_, checkout, err = CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{IP: "203.0.113.9"})
 	require.NoError(t, err)
 	assert.Equal(t, gateway.ActionQRCode, checkout.Type)
 	assert.Equal(t, "https://qr.alipay.com/abc", checkout.QRCode)
 
 	f.epay.setPayment(http.StatusBadGateway, `bad gateway`)
-	order, checkout, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.10")
+	order, checkout, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{IP: "203.0.113.10"})
 	assert.ErrorIs(t, err, errCheckoutFailed)
 	assert.Nil(t, checkout)
 	require.NotNil(t, order)
 	assert.Equal(t, entity.PaymentOrderPending, order.Status)
 
 	f.epay.setPayment(0, `{"code":1,"trade_no":"T3","payurl":"https://pay.example/pay/T3"}`)
-	resumed, err := ResumeCheckout(ctx, testUser, order.OrderNo)
+	resumed, err := ResumeCheckout(ctx, testUser, order.OrderNo, Buyer{})
 	require.NoError(t, err)
 	assert.Equal(t, "https://pay.example/pay/T3", resumed.URL)
 	assert.Equal(t, "203.0.113.10", f.epay.lastPayment().Get("clientip"))
+
+	autoConfig := strings.Replace(apiConfig, `"checkout":"api"`, `"checkout":"api","pay_form":"auto"`, 1)
+	require.NoError(t, model.DB.Model(method).Update("config", autoConfig).Error)
+	f.epay.setPayment(0, `{"code":1,"trade_no":"T4","payurl":"https://pay.example/pay/T4"}`)
+	order, checkout, err = CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{IP: "203.0.113.9", UserAgent: desktopUserAgent})
+	require.NoError(t, err)
+	assert.Equal(t, &Checkout{Type: gateway.ActionQRCode, QRCode: "https://pay.example/pay/T4", OrderNo: order.OrderNo}, checkout,
+		"a computer is shown the payment page as a QR code")
+	assert.Equal(t, "pc", f.epay.lastPayment().Get("device"))
+	resumed, err = ResumeCheckout(ctx, testUser, order.OrderNo, Buyer{UserAgent: phoneUserAgent})
+	require.NoError(t, err)
+	assert.Equal(t, &Checkout{Type: gateway.ActionURL, URL: "https://pay.example/pay/T4", OrderNo: order.OrderNo}, resumed)
+	assert.Equal(t, "jump", f.epay.lastPayment().Get("device"))
 }
+
+const (
+	desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+	phoneUserAgent   = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+)
 
 func withParams(base, changes map[string]string) map[string]string {
 	merged := map[string]string{}
@@ -954,16 +980,16 @@ func stripeEvent(t *testing.T, eventType string, intent map[string]any) gateway.
 func TestStripeCheckoutAndWebhook(t *testing.T) {
 	f := setupPayment(t)
 	ctx := context.Background()
-	order, checkout, err := CreateOrder(ctx, testUser, topup("10", testStripeMethod), "")
+	order, checkout, err := CreateOrder(ctx, testUser, topup("10", testStripeMethod), Buyer{})
 	require.NoError(t, err)
 	require.Equal(t, gateway.ActionStripe, checkout.Type)
 	assert.Equal(t, &gateway.StripeAction{PublishableKey: "pk_test_a", ClientSecret: "pi_1_secret", PaymentMethodType: "card"}, checkout.Stripe)
-	again, err := ResumeCheckout(ctx, testUser, order.OrderNo)
+	again, err := ResumeCheckout(ctx, testUser, order.OrderNo, Buyer{})
 	require.NoError(t, err)
 	assert.Equal(t, checkout.Stripe, again.Stripe, "a resumed checkout reuses the order's intent")
 	created, _, _ := f.stripe.Snapshot()
 	assert.Len(t, created, 1)
-	_, err = ResumeCheckout(ctx, testUser+1, order.OrderNo)
+	_, err = ResumeCheckout(ctx, testUser+1, order.OrderNo, Buyer{})
 	assert.ErrorIs(t, err, store.ErrOrderNotFound, "another user's order is not theirs to pay")
 
 	intent := gatewaytest.Intent("pi_1", 830, "usd", "succeeded", order.OrderNo, "11")
@@ -984,7 +1010,7 @@ func TestStripeCheckoutAndWebhook(t *testing.T) {
 
 	// A payment of another payment method type does not settle the order:
 	// it is recorded for an operator, once, and acknowledged.
-	second, _, err := CreateOrder(ctx, testUser, topup("10", testStripeMethod), "")
+	second, _, err := CreateOrder(ctx, testUser, topup("10", testStripeMethod), Buyer{})
 	require.NoError(t, err)
 	wechat := gatewaytest.Intent("pi_2", 830, "usd", "succeeded", second.OrderNo, "11")
 	wechat["amount_received"], wechat["payment_method_types"] = 830, []string{"wechat_pay"}
@@ -1010,7 +1036,7 @@ func TestCloseAndSyncAskTheGateway(t *testing.T) {
 	ctx := context.Background()
 
 	newStripeOrder := func() *entity.PaymentOrder {
-		order, _, err := CreateOrder(ctx, testUser, topup("10", testStripeMethod), "")
+		order, _, err := CreateOrder(ctx, testUser, topup("10", testStripeMethod), Buyer{})
 		require.NoError(t, err)
 		stored, err := store.GetOrderByNo(order.OrderNo)
 		require.NoError(t, err)
@@ -1044,7 +1070,7 @@ func TestCloseAndSyncAskTheGateway(t *testing.T) {
 
 	// EPay cannot cancel: an unpaid order closes by itself only once it is
 	// old enough; its owner may give it up earlier.
-	order, _, err = CreateOrder(ctx, testUser, topup("10", testEPayMethod), "")
+	order, _, err = CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{})
 	require.NoError(t, err)
 	order, err = store.GetOrderByNo(order.OrderNo)
 	require.NoError(t, err)
@@ -1073,20 +1099,20 @@ func TestBalancePurchase(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", testUser).Update("quota", 5_000_000).Error)
 
-	order, checkout, err := CreateOrder(ctx, testUser, subscription(testPlan, entity.BalancePaymentMethodID), "")
+	order, checkout, err := CreateOrder(ctx, testUser, subscription(testPlan, entity.BalancePaymentMethodID), Buyer{})
 	require.NoError(t, err)
 	assert.Equal(t, CheckoutTypePaid, checkout.Type)
 	assert.Equal(t, entity.PaymentOrderFinished, order.Status)
 	assert.Equal(t, 5_000, userQuota(t))
 
-	_, _, err = CreateOrder(ctx, testUser, subscription(testPlan, entity.BalancePaymentMethodID), "")
+	_, _, err = CreateOrder(ctx, testUser, subscription(testPlan, entity.BalancePaymentMethodID), Buyer{})
 	assert.ErrorIs(t, err, model.ErrInsufficientBalance)
 	var orders []entity.PaymentOrder
 	require.NoError(t, model.DB.Order("id").Find(&orders).Error)
 	require.Len(t, orders, 2)
 	assert.Equal(t, entity.PaymentOrderClosed, orders[1].Status, "the failed balance order does not stay pending")
 
-	order, checkout, err = CreateOrder(ctx, testUser, subscription(testFreePlan, 0), "")
+	order, checkout, err = CreateOrder(ctx, testUser, subscription(testFreePlan, 0), Buyer{})
 	require.NoError(t, err)
 	assert.Equal(t, CheckoutTypePaid, checkout.Type)
 	assert.Equal(t, int64(0), order.Amount)
@@ -1132,7 +1158,7 @@ func TestAdminMethodsKeepSecrets(t *testing.T) {
 	// is not, and the method cannot be deleted. The new channel is the only
 	// enabled one of its option.
 	require.NoError(t, model.DB.Model(&entity.PaymentMethod{}).Where("id = ?", testEPayMethod).Update("enabled", false).Error)
-	_, _, err = CreateOrder(ctx, testUser, topup("10", testEPayMethod), "")
+	_, _, err = CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{})
 	require.NoError(t, err)
 	changed := epayInput("")
 	changed.Config["pid"] = "3003"
@@ -1146,7 +1172,7 @@ func TestAdminMethodsKeepSecrets(t *testing.T) {
 	// The same holds for the payment method type of a Stripe method, whose
 	// pending intents collect the old type; a migrated configuration in
 	// another key order is not a change.
-	_, _, err = CreateOrder(ctx, testUser, topup("10", testStripeMethod), "")
+	_, _, err = CreateOrder(ctx, testUser, topup("10", testStripeMethod), Buyer{})
 	require.NoError(t, err)
 	stripeMethod := stripeInput("", "")
 	stripeMethod.Name = "Card 2"

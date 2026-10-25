@@ -9,7 +9,8 @@
 // AGPL-3.0 of new-api, as GPL-3.0 section 13 permits.
 //
 // Changed in new-api: one test file with testify; the fake Stripe API it
-// uses lives in gatewaytest; EPay API checkout and EPay V2 are covered.
+// uses lives in gatewaytest; EPay API checkout with its payment forms, EPay
+// V2 and telling phones by their User-Agent are covered.
 
 package gateway
 
@@ -223,6 +224,7 @@ func TestRegistryDescribesThePlatforms(t *testing.T) {
 	assert.Equal(t, map[string][]string{
 		"epay.version":               {EPayV2, EPayV1},
 		"epay.checkout":              {EPayCheckoutAPI, EPayCheckoutPage},
+		"epay.pay_form":              {EPayFormJump, EPayFormQRCode, EPayFormAuto},
 		"stripe.payment_method_type": {"card", "alipay", "wechat_pay"},
 	}, choices)
 }
@@ -241,7 +243,13 @@ func TestNormalizeConfig(t *testing.T) {
 		// Only the credentials of the version are kept; V2 keys are stored as
 		// Base64 DER, also when PEM lost its line breaks in a one-line field.
 		{PlatformEPay, `{"url":"https://pay.example","pid":"1","version":"v1","checkout":"api","key":"k","type":"wxpay","private_key":"x","platform_public_key":"y"}`,
-			`{"url":"https://pay.example","pid":"1","version":"v1","checkout":"api","key":"k","type":"wxpay"}`},
+			`{"url":"https://pay.example","pid":"1","version":"v1","checkout":"api","key":"k","type":"wxpay","pay_form":"jump"}`},
+		// API orders ask for the payment page unless the method says
+		// otherwise; the payment page has no payment form.
+		{PlatformEPay, `{"url":"https://pay.example","pid":"1","checkout":"api","key":"k","type":"wxpay","pay_form":" auto "}`,
+			`{"url":"https://pay.example","pid":"1","version":"v1","checkout":"api","key":"k","type":"wxpay","pay_form":"auto"}`},
+		{PlatformEPay, `{"url":"https://pay.example","pid":"1","checkout":"page","key":"k","type":"","pay_form":"qrcode"}`,
+			`{"url":"https://pay.example","pid":"1","version":"v1","checkout":"page","key":"k","type":""}`},
 		{PlatformEPay, `{"url":"https://pay.example","pid":"1","version":"v2","checkout":"page","key":"k","type":"",` +
 			`"private_key":"` + strings.ReplaceAll(epayV2PrivatePEM(), "\n", "") + `","platform_public_key":" ` + epayV2PlatformPublicKey() + `\n"}`,
 			`{"url":"https://pay.example","pid":"1","version":"v2","checkout":"page","private_key":"` + epayV2PrivateDER() +
@@ -268,6 +276,8 @@ func TestNormalizeConfig(t *testing.T) {
 			`{"url":"https://pay.example","pid":"1","key":""}`,
 			`{"url":"https://pay.example","pid":"1","key":"k","version":"v3"}`,
 			`{"url":"https://pay.example","pid":"1","key":"k","checkout":"form"}`,
+			// scan charges the buyer's payment code; it shows none.
+			`{"url":"https://pay.example","pid":"1","key":"k","checkout":"api","type":"alipay","pay_form":"scan"}`,
 			`{"url":"https://pay.example","pid":"1","version":"v2","platform_public_key":"` + epayV2PlatformPublicKey() + `"}`,
 			`{"url":"https://pay.example","pid":"1","version":"v2","private_key":"` + epayV2PrivateDER() + `"}`,
 			// The platform's public key is no private key, and a 1024-bit key
@@ -750,6 +760,11 @@ func epayV2Config(checkout, paymentType string) string {
 		`","private_key":"` + epayV2PrivateDER() + `","platform_public_key":"` + epayV2PlatformPublicKey() + `"}`
 }
 
+// epayV2FormConfig is an EPay V2 method of API orders in the payment form.
+func epayV2FormConfig(form string) string {
+	return strings.Replace(epayV2Config(EPayCheckoutAPI, "alipay"), `"checkout":"api"`, `"checkout":"api","pay_form":"`+form+`"`, 1)
+}
+
 // signEPayV2 signs params with key, adding the current timestamp and the
 // RSA sign_type unless params carry them.
 func signEPayV2(t *testing.T, key *rsa.PrivateKey, params map[string]string) map[string]string {
@@ -909,6 +924,124 @@ func TestEPayV2Checkout(t *testing.T) {
 	})
 	_, err = plain.StartPayment(context.Background(), checkout)
 	assert.ErrorContains(t, err, "HTTPS")
+}
+
+// An API order asks for the payment form its method sets: the payment page
+// (V1 device=jump, V2 method=jump), what a computer pays with (V1 device=pc,
+// V2 method=web with device=pc), or by the buyer's device. A method saved
+// before payment forms existed asks for the page. Asked for a QR code, the
+// buyer gets one whatever link the gateway answers.
+func TestEPayAPIPaymentForm(t *testing.T) {
+	checkout := Checkout{Order: &Order{OrderNo: "order-1", PaymentAmount: 1990, PaymentCurrency: "CNY", ClientIP: "203.0.113.9"}, Charge: Charge{1990, "CNY"},
+		NotifyURL: "https://www.example.test/api/payment/notify/epay/tok"}
+	const page = "https://pay.example/pay/T1"
+	v1Config := func(form string) string {
+		return `{"url":"SERVER","pid":"1001","key":"secret","version":"v1","checkout":"api","type":"wxpay","pay_form":"` + form + `"}`
+	}
+	tests := []struct {
+		form   string
+		mobile bool
+		// v1 is the device asked of mapi.php, v2 the method and device asked
+		// of api/pay/create.
+		v1 string
+		v2 [2]string
+	}{
+		{"", false, "jump", [2]string{"jump", ""}},
+		{EPayFormJump, false, "jump", [2]string{"jump", ""}},
+		{EPayFormJump, true, "jump", [2]string{"jump", ""}},
+		{EPayFormQRCode, false, "pc", [2]string{"web", "pc"}},
+		{EPayFormQRCode, true, "pc", [2]string{"web", "pc"}},
+		{EPayFormAuto, false, "pc", [2]string{"web", "pc"}},
+		{EPayFormAuto, true, "jump", [2]string{"jump", ""}},
+	}
+	for _, tt := range tests {
+		name := fmt.Sprintf("form %q, mobile %v", tt.form, tt.mobile)
+		checkout.Mobile = tt.mobile
+		want := &Action{Type: ActionURL, URL: page}
+		if tt.v1 == "pc" {
+			want = &Action{Type: ActionQRCode, QRCode: page}
+		}
+
+		var v1Sent map[string]string
+		v1 := epayServer(t, v1Config(tt.form), func(w http.ResponseWriter, r *http.Request) {
+			v1Sent = epayRequest(t, r)
+			_, _ = w.Write([]byte(`{"code":1,"trade_no":"T1","payurl":"` + page + `"}`))
+		})
+		action, err := v1.StartPayment(context.Background(), checkout)
+		require.NoError(t, err, name)
+		assert.Equal(t, want, action, name)
+		assert.Equal(t, tt.v1, v1Sent["device"], name)
+		assert.Equal(t, "19.90", v1Sent["money"], name)
+		assert.Equal(t, v1.(*epayGateway).sign(v1Sent), v1Sent["sign"], name)
+
+		var v2Sent map[string]string
+		v2 := epayV2Server(t, epayV2FormConfig(tt.form), func(_ string, params map[string]string) (map[string]string, bool) {
+			v2Sent = params
+			return map[string]string{"code": "0", "trade_no": "T1", "pay_type": "jump", "pay_info": page}, true
+		})
+		action, err = v2.StartPayment(context.Background(), checkout)
+		require.NoError(t, err, name)
+		assert.Equal(t, want, action, name)
+		assert.Equal(t, tt.v2, [2]string{v2Sent["method"], v2Sent["device"]}, name)
+		assert.Equal(t, "19.90", v2Sent["money"], name)
+	}
+
+	// Links are checked as for the payment page, and HTML is still refused.
+	checkout.Mobile = false
+	answers := []struct {
+		name string
+		// v1 is what mapi.php answers, if V1 has the answer; v2 the pay_type
+		// and pay_info of api/pay/create.
+		v1   string
+		v2   [2]string
+		want *Action
+	}{
+		{"QR code", `{"code":1,"trade_no":"T1","qrcode":"weixin://wxpay/bizpayurl?pr=abc"}`, [2]string{"qrcode", "weixin://wxpay/bizpayurl?pr=abc"},
+			&Action{Type: ActionQRCode, QRCode: "weixin://wxpay/bizpayurl?pr=abc"}},
+		{"app link", `{"code":1,"trade_no":"T1","urlscheme":"alipays://platformapi/startapp?appId=1"}`, [2]string{"urlscheme", "alipays://platformapi/startapp?appId=1"},
+			&Action{Type: ActionQRCode, QRCode: "alipays://platformapi/startapp?appId=1"}},
+		{"script page", `{"code":1,"trade_no":"T1","payurl":"javascript:alert(1)"}`, [2]string{"jump", "javascript:alert(1)"}, nil},
+		{"script app link", `{"code":1,"trade_no":"T1","urlscheme":"javascript:alert(1)"}`, [2]string{"urlscheme", "javascript:alert(1)"}, nil},
+		{"page that is no web address", `{"code":1,"trade_no":"T1","payurl":"alipays://platformapi/startapp"}`, [2]string{"jump", "alipays://platformapi/startapp"}, nil},
+		{"HTML", "", [2]string{"html", "<form></form>"}, nil},
+	}
+	for _, tt := range answers {
+		var gateways []Gateway
+		if tt.v1 != "" {
+			gateways = append(gateways, epayServer(t, v1Config(EPayFormQRCode), func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(tt.v1))
+			}))
+		}
+		gateways = append(gateways, epayV2Server(t, epayV2FormConfig(EPayFormQRCode), func(string, map[string]string) (map[string]string, bool) {
+			return map[string]string{"code": "0", "trade_no": "T1", "pay_type": tt.v2[0], "pay_info": tt.v2[1]}, true
+		}))
+		for _, gw := range gateways {
+			action, err := gw.StartPayment(context.Background(), checkout)
+			if tt.want == nil {
+				assert.Error(t, err, tt.name)
+				continue
+			}
+			require.NoError(t, err, tt.name)
+			assert.Equal(t, tt.want, action, tt.name)
+		}
+	}
+}
+
+func TestMobileUserAgent(t *testing.T) {
+	for userAgent, mobile := range map[string]bool{
+		"Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1":                                                      true,
+		"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36":                                                                              true,
+		"Mozilla/5.0 (Linux; Android 14; SM-X710) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36":                                                                               true,
+		"Mozilla/5.0 (iPad; CPU OS 12_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/12.1.2 Mobile/15E148 Safari/604.1":                                                             true,
+		"Mozilla/5.0 (Phone; OpenHarmony 5.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 ArkWeb/4.1.6.1":                                                                    true,
+		"Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.50(0x1800323c) NetType/WIFI":                                 true,
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36":                                                                              false,
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15":                                                                        false,
+		"Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36 NetType/WIFI MicroMessenger/7.0.20.1781(0x6700143B) WindowsWechat(0x63090c11)": false,
+		"": false,
+	} {
+		assert.Equal(t, mobile, MobileUserAgent(userAgent), userAgent)
+	}
 }
 
 func withField(fields map[string]string, pairs ...string) map[string]string {

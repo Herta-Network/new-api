@@ -284,10 +284,14 @@ func (g *epayGateway) v2PageAction(params map[string]string) (*Action, error) {
 }
 
 // createV2Payment creates the payment at /api/pay/create, asking for a
-// payment page; the gateway may answer with a QR code or an app link
-// instead.
-func (g *epayGateway) createV2Payment(ctx context.Context, params map[string]string) (*Action, error) {
+// payment page (method=jump) or, when qrCode is set, for what a computer
+// pays with (method=web, device=pc); the gateway may answer with a QR code,
+// a page or an app link.
+func (g *epayGateway) createV2Payment(ctx context.Context, params map[string]string, qrCode bool) (*Action, error) {
 	params["method"] = "jump"
+	if qrCode {
+		params["method"], params["device"] = "web", "pc"
+	}
 	answer, err := g.callV2(ctx, "api/pay/create", params)
 	if err != nil {
 		return nil, err
@@ -295,7 +299,7 @@ func (g *epayGateway) createV2Payment(ctx context.Context, params map[string]str
 	if answer["trade_no"] == "" {
 		return nil, fmt.Errorf("EPay payment answer of order %s has no trade number", params["out_trade_no"])
 	}
-	return epayPayAction(answer["pay_type"], answer["pay_info"])
+	return epayPayAction(answer["pay_type"], answer["pay_info"], qrCode)
 }
 
 func (g *epayGateway) queryV2Order(ctx context.Context, orderNo string) (*epayQueryResult, error) {

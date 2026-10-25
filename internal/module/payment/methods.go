@@ -99,7 +99,13 @@ func methodDetail(method *entity.PaymentMethod) *MethodDetail {
 	if method.Platform == entity.PaymentPlatformBalance {
 		return detail
 	}
-	_ = common.UnmarshalJsonStr(method.Config, &detail.Config)
+	// The canonical form shows a field added since the channel was saved
+	// with the value the channel works with.
+	config := method.Config
+	if canonical, err := gatewayRegistry().NormalizeConfig(method.Platform, []byte(config)); err == nil {
+		config = canonical
+	}
+	_ = common.UnmarshalJsonStr(config, &detail.Config)
 	for _, field := range platformFields(method.Platform) {
 		if field.Secret {
 			value, _ := detail.Config[field.Key].(string)
