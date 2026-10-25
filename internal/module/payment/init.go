@@ -6,11 +6,15 @@ import (
 )
 
 // Init runs the payment module's startup data steps on the master node,
-// after the database migrations: it seeds the wallet balance method and
-// gives every Stripe method a payment method type. Both are idempotent.
+// after the database migrations: it seeds the wallet balance method, gives
+// every Stripe method a payment method type and every EPay method a
+// protocol version and checkout mode. All are idempotent.
 func Init() error {
 	if err := store.EnsureBalanceMethod(model.DB); err != nil {
 		return err
 	}
-	return store.EnsureStripeMethodTypes(model.DB)
+	if err := store.EnsureStripeMethodTypes(model.DB); err != nil {
+		return err
+	}
+	return store.EnsureEPayProtocols(model.DB)
 }

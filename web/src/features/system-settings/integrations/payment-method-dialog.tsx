@@ -56,8 +56,8 @@ import {
   SettingsSwitchItem,
 } from '../components/settings-form-layout'
 import {
+  applicablePaymentFields,
   createPaymentMethodSchema,
-  editablePaymentFields,
   paymentMethodFormDefaults,
   toPaymentMethodRequest,
   usesFeeRate,
@@ -101,11 +101,12 @@ export function PaymentMethodDialog(props: PaymentMethodDialogProps) {
       )(values, context, options),
     defaultValues: paymentMethodFormDefaults([], null, ''),
   })
-  const [platform, feeMode] = useWatch({
+  const [platform, feeMode, config] = useWatch({
     control: form.control,
-    name: ['platform', 'fee_mode'],
+    name: ['platform', 'fee_mode', 'config'],
   })
-  const fields = editablePaymentFields(fieldsOf(platform))
+  // A field shown only under a choice of another one follows that choice.
+  const fields = applicablePaymentFields(fieldsOf(platform), config ?? {})
   // An empty icon shows the platform's own icon to buyers.
   const iconOptions = useMemo(
     () => [
@@ -360,77 +361,93 @@ export function PaymentMethodDialog(props: PaymentMethodDialogProps) {
                   key={`${platform}-${platformField.key}`}
                   control={form.control}
                   name={`config.${platformField.key}`}
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className='flex items-center gap-2'>
-                        {t(platformField.label)}
-                        {platformField.secret &&
-                          secretsSet[platformField.key] && (
-                            <StatusBadge
-                              label={t('Configured')}
-                              variant='success'
-                              copyable={false}
-                            />
-                          )}
-                      </FormLabel>
-                      {platformField.type === 'select' ? (
-                        <Select
-                          items={(platformField.options ?? []).map(
-                            (option) => ({
-                              value: option.value,
-                              label: t(option.label),
-                            })
-                          )}
+                  render={({ field }) => {
+                    let input = <Input {...field} value={field.value ?? ''} />
+                    if (platformField.secret) {
+                      input = (
+                        <PasswordInput
+                          {...field}
                           value={field.value ?? ''}
-                          onValueChange={(value) =>
-                            field.onChange(String(value ?? ''))
+                          autoComplete='new-password'
+                          placeholder={
+                            secretsSet[platformField.key]
+                              ? t('Enter new key to update')
+                              : undefined
                           }
-                        >
-                          <FormControl>
-                            <SelectTrigger className='w-full'>
-                              <SelectValue />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent alignItemWithTrigger={false}>
-                            <SelectGroup>
-                              {(platformField.options ?? []).map((option) => (
-                                <SelectItem
-                                  key={option.value}
-                                  value={option.value}
-                                >
-                                  {t(option.label)}
-                                </SelectItem>
-                              ))}
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <FormControl>
-                          {platformField.secret ? (
-                            <PasswordInput
-                              {...field}
-                              value={field.value ?? ''}
-                              autoComplete='new-password'
-                              placeholder={
-                                secretsSet[platformField.key]
-                                  ? t('Enter new key to update')
-                                  : undefined
-                              }
-                            />
-                          ) : (
-                            <Input {...field} value={field.value ?? ''} />
-                          )}
-                        </FormControl>
-                      )}
-                      {platformField.secret &&
-                        secretsSet[platformField.key] && (
+                        />
+                      )
+                    } else if (platformField.type === 'textarea') {
+                      input = (
+                        <Textarea
+                          {...field}
+                          value={field.value ?? ''}
+                          rows={4}
+                          className='font-mono text-xs break-all'
+                        />
+                      )
+                    }
+                    return (
+                      <FormItem>
+                        <FormLabel className='flex items-center gap-2'>
+                          {t(platformField.label)}
+                          {platformField.secret &&
+                            secretsSet[platformField.key] && (
+                              <StatusBadge
+                                label={t('Configured')}
+                                variant='success'
+                                copyable={false}
+                              />
+                            )}
+                        </FormLabel>
+                        {platformField.type === 'select' ? (
+                          <Select
+                            items={(platformField.options ?? []).map(
+                              (option) => ({
+                                value: option.value,
+                                label: t(option.label),
+                              })
+                            )}
+                            value={field.value ?? ''}
+                            onValueChange={(value) =>
+                              field.onChange(String(value ?? ''))
+                            }
+                          >
+                            <FormControl>
+                              <SelectTrigger className='w-full'>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent alignItemWithTrigger={false}>
+                              <SelectGroup>
+                                {(platformField.options ?? []).map((option) => (
+                                  <SelectItem
+                                    key={option.value}
+                                    value={option.value}
+                                  >
+                                    {t(option.label)}
+                                  </SelectItem>
+                                ))}
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <FormControl>{input}</FormControl>
+                        )}
+                        {platformField.description && (
                           <FormDescription>
-                            {t('Leave blank to keep the existing key')}
+                            {t(platformField.description)}
                           </FormDescription>
                         )}
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                        {platformField.secret &&
+                          secretsSet[platformField.key] && (
+                            <FormDescription>
+                              {t('Leave blank to keep the existing key')}
+                            </FormDescription>
+                          )}
+                        <FormMessage />
+                      </FormItem>
+                    )
+                  }}
                 />
               ))}
 

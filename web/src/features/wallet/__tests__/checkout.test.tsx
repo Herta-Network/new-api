@@ -528,6 +528,72 @@ it('shows the Alipay QR code, offers to open it on this device and follows the o
   ).not.toBeInTheDocument()
 })
 
+it('shows the QR code a gateway checkout answers with, offers its web page on this device and follows the order until it settles', async () => {
+  const qrCode = 'https://qr.alipay.com/bax01'
+  let settle: (settled: PaymentOrder) => void = () => {}
+  mockServer({
+    methods: { topup: [alipay] },
+    quote: topupQuote,
+    checkout: { type: 'qrcode', qr_code: qrCode, order_no: 'P8' },
+    orders: { P8: order('P8', 1, { platform: 'epay' }) },
+    synced: new Promise((resolve) => {
+      settle = resolve
+    }),
+  })
+  renderWallet()
+
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Pay $11.55' })
+  )
+  const dialog = await screen.findByRole('dialog', { name: 'Scan to pay' })
+  expect(
+    within(dialog).getByRole('img', {
+      name: 'Scan the QR code with your payment app',
+    })
+  ).toBeVisible()
+  expect(
+    within(dialog).getByRole('button', {
+      name: 'Open the payment page on this device',
+    })
+  ).toHaveAttribute('href', qrCode)
+
+  settle(order('P8', 5, { platform: 'epay' }))
+  const result = await screen.findByRole('dialog', { name: 'Payment status' })
+  expect(await within(result).findByText('Payment successful')).toBeVisible()
+  expect(
+    screen.queryByRole('dialog', { name: 'Scan to pay' })
+  ).not.toBeInTheDocument()
+})
+
+it('does not offer to open a gateway QR code that is no web page', async () => {
+  mockServer({
+    methods: { topup: [alipay] },
+    quote: topupQuote,
+    checkout: {
+      type: 'qrcode',
+      qr_code: 'weixin://wxpay/bizpayurl?pr=abc',
+      order_no: 'P9',
+    },
+    orders: { P9: order('P9', 1, { platform: 'epay' }) },
+  })
+  renderWallet()
+
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Pay $11.55' })
+  )
+  const dialog = await screen.findByRole('dialog', { name: 'Scan to pay' })
+  expect(
+    within(dialog).getByRole('img', {
+      name: 'Scan the QR code with your payment app',
+    })
+  ).toBeVisible()
+  expect(
+    within(dialog).queryByRole('button', {
+      name: 'Open the payment page on this device',
+    })
+  ).not.toBeInTheDocument()
+})
+
 it('shows the WeChat Pay QR image Stripe returns', async () => {
   const image = 'data:image/png;base64,iVBORw0KGgo='
   stripe.confirmWechatPayPayment.mockResolvedValue({

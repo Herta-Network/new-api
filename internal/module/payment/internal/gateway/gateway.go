@@ -12,7 +12,8 @@
 // order records its payment expectation), ChargeFor takes the rate as a
 // decimal string, notices carry plain string details for the log, and a
 // notice can report an authentic payment that must not settle its order as
-// unmatched.
+// unmatched. The Order view carries the buyer's IP address, and an Action
+// can be a QR code to show.
 
 // Package gateway is the protocol layer of new-api payments. A Gateway
 // speaks one payment provider's protocol for one configured payment method:
@@ -67,7 +68,10 @@ type Order struct {
 	PaymentAmount   int64
 	PaymentCurrency string
 	// TradeNo is the provider payment bound to the order, if any.
-	TradeNo   string
+	TradeNo string
+	// ClientIP is the buyer's address when the order was made, which
+	// providers that create the payment from the server ask for.
+	ClientIP  string
 	CreatedAt time.Time
 	// ExpiresAt ends the payment window of the pending order.
 	ExpiresAt time.Time
@@ -102,6 +106,8 @@ const (
 	ActionURL = "url"
 	// ActionStripe confirms the payment in the page with Stripe.js.
 	ActionStripe = "stripe"
+	// ActionQRCode shows QRCode for the buyer to scan with the payment app.
+	ActionQRCode = "qrcode"
 )
 
 // Action is what the buyer needs to pay a started checkout.
@@ -109,6 +115,8 @@ type Action struct {
 	Type   string        `json:"type"`
 	URL    string        `json:"url,omitempty"`
 	Stripe *StripeAction `json:"stripe,omitempty"`
+	// QRCode is the content of the QR code, not an image.
+	QRCode string `json:"qr_code,omitempty"`
 }
 
 // StripeAction is the client-side handle of a Stripe PaymentIntent.

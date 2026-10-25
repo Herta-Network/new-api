@@ -59,6 +59,45 @@ func EnsureStripeMethodTypes(db *gorm.DB) error {
 	return nil
 }
 
+// EnsureEPayProtocols pins the EPay methods saved before EPay V2 and API
+// checkout existed to what they used: V1 through the gateway's payment
+// page. Deleted methods are included because late callbacks still open
+// their gateway. A method that names its version and checkout mode keeps
+// them, so running it again changes nothing.
+func EnsureEPayProtocols(db *gorm.DB) error {
+	var methods []*entity.PaymentMethod
+	if err := db.Unscoped().Where("platform = ?", "epay").Find(&methods).Error; err != nil {
+		return fmt.Errorf("list EPay payment methods: %w", err)
+	}
+	for _, method := range methods {
+		var config map[string]any
+		if err := common.UnmarshalJsonStr(method.Config, &config); err != nil || config == nil {
+			common.SysError(common.LogText("EPay payment method %d has no readable configuration; set its protocol version by hand", method.Id))
+			continue
+		}
+		version, _ := config["version"].(string)
+		checkout, _ := config["checkout"].(string)
+		if version != "" && checkout != "" {
+			continue
+		}
+		if version == "" {
+			config["version"] = "v1"
+		}
+		if checkout == "" {
+			config["checkout"] = "page"
+		}
+		content, err := common.Marshal(config)
+		if err != nil {
+			return err
+		}
+		if err := db.Unscoped().Model(&entity.PaymentMethod{}).Where("id = ?", method.Id).Update("config", string(content)).Error; err != nil {
+			return fmt.Errorf("pin the protocol of EPay payment method %d: %w", method.Id, err)
+		}
+		common.SysLog(common.LogText("EPay payment method %d keeps EPay V1 through the gateway payment page", method.Id))
+	}
+	return nil
+}
+
 // GetMethod loads a method that is not deleted.
 func GetMethod(id int) (*entity.PaymentMethod, error) {
 	var method entity.PaymentMethod

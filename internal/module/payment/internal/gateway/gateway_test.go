@@ -9,12 +9,19 @@
 // AGPL-3.0 of new-api, as GPL-3.0 section 13 permits.
 //
 // Changed in new-api: one test file with testify; the fake Stripe API it
-// uses lives in gatewaytest.
+// uses lives in gatewaytest; EPay API checkout and EPay V2 are covered.
 
 package gateway
 
 import (
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -23,7 +30,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -177,27 +186,45 @@ func TestRegistryDescribesThePlatforms(t *testing.T) {
 		}
 	}
 	assert.Equal(t, map[string][]string{
-		PlatformEPay:      {"key"},
+		PlatformEPay:      {"key", "private_key"},
 		PlatformStripe:    {"secret_key", "webhook_secret"},
 		PlatformCryptomus: {"api_key"},
 	}, secrets)
 
-	// The Stripe form offers exactly the payment method types a save accepts.
-	var stripeTypes []string
+	// Each form offers exactly the choices a save accepts, and a field shown
+	// only under a choice names one that exists.
+	base := map[string]map[string]string{
+		PlatformEPay: {"url": "https://pay.example", "pid": "1", "key": "k", "type": "alipay",
+			"private_key": epayV2PrivatePEM(), "platform_public_key": epayV2PlatformPublicKey()},
+		PlatformStripe: {"public_key": "pk_test_a", "secret_key": "sk_test_b"},
+	}
+	choices := map[string][]string{}
 	for _, info := range Platforms() {
 		for _, field := range info.Fields {
 			if field.Type != FieldSelect {
 				continue
 			}
-			assert.Equal(t, PlatformStripe+".payment_method_type", info.Platform+"."+field.Key)
 			for _, option := range field.Options {
-				stripeTypes = append(stripeTypes, option.Value)
-				_, err := registry.NormalizeConfig(info.Platform, []byte(`{"public_key":"pk_test_a","secret_key":"sk_test_b","payment_method_type":"`+option.Value+`"}`))
-				assert.NoError(t, err, option.Value)
+				choices[info.Platform+"."+field.Key] = append(choices[info.Platform+"."+field.Key], option.Value)
+				config := maps.Clone(base[info.Platform])
+				config[field.Key] = option.Value
+				raw, err := common.Marshal(config)
+				require.NoError(t, err)
+				_, err = registry.NormalizeConfig(info.Platform, raw)
+				assert.NoError(t, err, "%s.%s=%s", info.Platform, field.Key, option.Value)
+			}
+		}
+		for _, field := range info.Fields {
+			for key, value := range field.When {
+				assert.Contains(t, choices[info.Platform+"."+key], value, "%s.%s is shown under an unknown choice", info.Platform, field.Key)
 			}
 		}
 	}
-	assert.Equal(t, []string{"card", "alipay", "wechat_pay"}, stripeTypes)
+	assert.Equal(t, map[string][]string{
+		"epay.version":               {EPayV1, EPayV2},
+		"epay.checkout":              {EPayCheckoutAPI, EPayCheckoutPage},
+		"stripe.payment_method_type": {"card", "alipay", "wechat_pay"},
+	}, choices)
 }
 
 func TestNormalizeConfig(t *testing.T) {
@@ -205,10 +232,20 @@ func TestNormalizeConfig(t *testing.T) {
 	valid := []struct {
 		platform, raw, want string
 	}{
+		// A configuration saved before versions and checkout modes speaks V1
+		// through the payment page.
 		{PlatformEPay, `{"url":" https://pay.example/ ","pid":" 1001 ","key":" k ","type":"","extra":1}`,
-			`{"url":"https://pay.example/","pid":"1001","key":"k","type":""}`},
+			`{"url":"https://pay.example/","pid":"1001","version":"v1","checkout":"page","key":"k","type":""}`},
 		{PlatformEPay, `{"url":"http://pay.example/submit.php","pid":"1","key":"k","type":"alipay"}`,
-			`{"url":"http://pay.example/submit.php","pid":"1","key":"k","type":"alipay"}`},
+			`{"url":"http://pay.example/submit.php","pid":"1","version":"v1","checkout":"page","key":"k","type":"alipay"}`},
+		// Only the credentials of the version are kept; V2 keys are stored as
+		// Base64 DER, also when PEM lost its line breaks in a one-line field.
+		{PlatformEPay, `{"url":"https://pay.example","pid":"1","version":"v1","checkout":"api","key":"k","type":"wxpay","private_key":"x","platform_public_key":"y"}`,
+			`{"url":"https://pay.example","pid":"1","version":"v1","checkout":"api","key":"k","type":"wxpay"}`},
+		{PlatformEPay, `{"url":"https://pay.example","pid":"1","version":"v2","checkout":"page","key":"k","type":"",` +
+			`"private_key":"` + strings.ReplaceAll(epayV2PrivatePEM(), "\n", "") + `","platform_public_key":" ` + epayV2PlatformPublicKey() + `\n"}`,
+			`{"url":"https://pay.example","pid":"1","version":"v2","checkout":"page","private_key":"` + epayV2PrivateDER() +
+				`","platform_public_key":"` + epayV2PlatformPublicKey() + `","type":""}`},
 		{PlatformStripe, `{"public_key":"pk_test_a","secret_key":"sk_test_b","payment_method_type":" wechat_pay "}`,
 			`{"public_key":"pk_test_a","secret_key":"sk_test_b","payment_method_type":"wechat_pay","webhook_endpoint_id":"","webhook_url":"","webhook_secret":""}`},
 		{PlatformStripe, `{"public_key":"pk_live_a","secret_key":"rk_live_b","payment_method_type":"card"}`,
@@ -229,6 +266,14 @@ func TestNormalizeConfig(t *testing.T) {
 			`{"url":"https://pay.example/#x","pid":"1","key":"k"}`,
 			`{"url":"https://pay.example","pid":" ","key":"k"}`,
 			`{"url":"https://pay.example","pid":"1","key":""}`,
+			`{"url":"https://pay.example","pid":"1","key":"k","version":"v3"}`,
+			`{"url":"https://pay.example","pid":"1","key":"k","checkout":"form"}`,
+			`{"url":"https://pay.example","pid":"1","version":"v2","platform_public_key":"` + epayV2PlatformPublicKey() + `"}`,
+			`{"url":"https://pay.example","pid":"1","version":"v2","private_key":"` + epayV2PrivateDER() + `"}`,
+			// The platform's public key is no private key, and a 1024-bit key
+			// is too weak.
+			`{"url":"https://pay.example","pid":"1","version":"v2","private_key":"` + epayV2PlatformPublicKey() + `","platform_public_key":"` + epayV2PlatformPublicKey() + `"}`,
+			`{"url":"https://pay.example","pid":"1","version":"v2","private_key":"` + epayV2PrivateDER() + `","platform_public_key":"` + weakPublicKey() + `"}`,
 		},
 		PlatformStripe: {
 			`{"public_key":"pk_test_a","secret_key":"sk_live_b","payment_method_type":"card"}`,
@@ -260,6 +305,12 @@ func TestNormalizeConfig(t *testing.T) {
 		require.ErrorAs(t, err, &message, raw)
 		assert.Equal(t, "Select the Stripe payment method type: card, Alipay or WeChat Pay", message.Key)
 	}
+	// An API checkout cannot let the buyer choose the payment type, which
+	// the administrator reads.
+	_, err := registry.NormalizeConfig(PlatformEPay, []byte(`{"url":"https://pay.example","pid":"1","key":"k","checkout":"api","type":" "}`))
+	var message *common.Message
+	require.ErrorAs(t, err, &message)
+	assert.Equal(t, "EPay API checkout needs a payment type", message.Key)
 	for platform, config := range map[string]string{
 		PlatformEPay:      `{"url":"https://pay.example","pid":"","key":"k"}`,
 		PlatformStripe:    `{"public_key":"pk_test_a","secret_key":"sk_test_b"}`,
@@ -573,6 +624,373 @@ func TestEPayReconcile(t *testing.T) {
 	got, err = gw.Reconcile(context.Background(), CloseRequest{Order: &Order{OrderNo: "order-1"}})
 	require.NoError(t, err)
 	assert.Equal(t, Reconciliation{RequireStableCheckout: true}, got)
+}
+
+// epayRequest reads the single-valued parameters of a request to a fake
+// gateway: the query of a GET, the form of a POST.
+func epayRequest(t *testing.T, r *http.Request) map[string]string {
+	t.Helper()
+	require.NoError(t, r.ParseForm())
+	params := map[string]string{}
+	for key, values := range r.Form {
+		require.Len(t, values, 1, key)
+		params[key] = values[0]
+	}
+	return params
+}
+
+// An API checkout creates the payment at mapi.php for the buyer's address
+// and turns the one way to pay the gateway answers into the buyer's action.
+// A gateway that refuses or fails is noticed before the buyer leaves.
+func TestEPayV1APICheckout(t *testing.T) {
+	checkout := Checkout{
+		Order: &Order{OrderNo: "order-1", PaymentAmount: 1990, PaymentCurrency: "CNY", ClientIP: "203.0.113.9"}, Charge: Charge{1990, "CNY"},
+		Subject:   strings.Repeat("会员", 30),
+		NotifyURL: "https://www.example.test/api/payment/notify/epay/tok", ReturnURL: "https://www.example.test/wallet?payment_order=order-1",
+	}
+	tests := []struct {
+		name, answer string
+		status       int
+		want         *Action
+	}{
+		{"payment page", `{"code":1,"trade_no":"T1","payurl":"https://pay.example/pay/T1"}`, http.StatusOK, &Action{Type: ActionURL, URL: "https://pay.example/pay/T1"}},
+		{"QR code with a string code", `{"code":"1","trade_no":20240101,"qrcode":"weixin://wxpay/bizpayurl?pr=abc"}`, http.StatusOK, &Action{Type: ActionQRCode, QRCode: "weixin://wxpay/bizpayurl?pr=abc"}},
+		{"app link", `{"code":1,"trade_no":"T1","urlscheme":"alipays://platformapi/startapp?appId=1"}`, http.StatusOK, &Action{Type: ActionURL, URL: "alipays://platformapi/startapp?appId=1"}},
+		{"refused", `{"code":-1,"msg":"merchant disabled"}`, http.StatusOK, nil},
+		{"gateway failure", `bad gateway`, http.StatusBadGateway, nil},
+		{"no trade", `{"code":1,"payurl":"https://pay.example/pay/T1"}`, http.StatusOK, nil},
+		{"two ways to pay", `{"code":1,"trade_no":"T1","payurl":"https://pay.example/pay/T1","qrcode":"x"}`, http.StatusOK, nil},
+		{"script page", `{"code":1,"trade_no":"T1","payurl":"javascript:alert(1)"}`, http.StatusOK, nil},
+		{"script app link", `{"code":1,"trade_no":"T1","urlscheme":"javascript:alert(1)"}`, http.StatusOK, nil},
+	}
+	for _, tt := range tests {
+		var sent map[string]string
+		gw := epayServer(t, `{"url":"SERVER/submit.php","pid":"1001","key":"secret","version":"v1","checkout":"api","type":"wxpay"}`, func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, http.MethodPost, r.Method)
+			assert.Equal(t, "/mapi.php", r.URL.Path)
+			sent = epayRequest(t, r)
+			w.WriteHeader(tt.status)
+			_, _ = w.Write([]byte(tt.answer))
+		})
+		action, err := gw.StartPayment(context.Background(), checkout)
+		if tt.want == nil {
+			assert.Error(t, err, tt.name)
+			continue
+		}
+		require.NoError(t, err, tt.name)
+		assert.Equal(t, tt.want, action, tt.name)
+		assert.Equal(t, "19.90", sent["money"])
+		assert.Equal(t, "203.0.113.9", sent["clientip"])
+		assert.Equal(t, "jump", sent["device"])
+		assert.Equal(t, "wxpay", sent["type"])
+		assert.Equal(t, strings.Repeat("会员", 21), sent["name"], "the name is cut to the 127 bytes the gateway keeps")
+		assert.Equal(t, "MD5", sent["sign_type"])
+		assert.Equal(t, gw.(*epayGateway).sign(sent), sent["sign"])
+	}
+
+	gw := epayServer(t, `{"url":"SERVER","pid":"1001","key":"secret","version":"v1","checkout":"api","type":"wxpay"}`, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("an order without the buyer's address must not reach the gateway")
+	})
+	_, err := gw.StartPayment(context.Background(), Checkout{Order: &Order{OrderNo: "order-1"}, Charge: Charge{1990, "CNY"}})
+	assert.Error(t, err)
+}
+
+// ---- EPay V2 ----
+
+// epayV2Keys are the merchant's and the platform's RSA keys of the EPay V2
+// tests.
+var epayV2TestKeys = sync.OnceValue(func() [2]*rsa.PrivateKey {
+	var keys [2]*rsa.PrivateKey
+	for i := range keys {
+		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			panic(err)
+		}
+		keys[i] = key
+	}
+	return keys
+})
+
+func epayV2PrivateDER() string {
+	der, err := x509.MarshalPKCS8PrivateKey(epayV2TestKeys()[0])
+	if err != nil {
+		panic(err)
+	}
+	return base64.StdEncoding.EncodeToString(der)
+}
+
+// epayV2PrivatePEM is the merchant's private key as a PEM file holds it.
+func epayV2PrivatePEM() string {
+	der, _ := base64.StdEncoding.DecodeString(epayV2PrivateDER())
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+}
+
+func epayV2PlatformPublicKey() string {
+	der, err := x509.MarshalPKIXPublicKey(&epayV2TestKeys()[1].PublicKey)
+	if err != nil {
+		panic(err)
+	}
+	return base64.StdEncoding.EncodeToString(der)
+}
+
+func weakPublicKey() string {
+	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		panic(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		panic(err)
+	}
+	return base64.StdEncoding.EncodeToString(der)
+}
+
+func epayV2Config(checkout, paymentType string) string {
+	return `{"url":"SERVER","pid":"1001","version":"v2","checkout":"` + checkout + `","type":"` + paymentType +
+		`","private_key":"` + epayV2PrivateDER() + `","platform_public_key":"` + epayV2PlatformPublicKey() + `"}`
+}
+
+// signEPayV2 signs params with key, adding the current timestamp unless
+// params carry one.
+func signEPayV2(t *testing.T, key *rsa.PrivateKey, params map[string]string) map[string]string {
+	t.Helper()
+	signed := maps.Clone(params)
+	if _, ok := signed["timestamp"]; !ok {
+		signed["timestamp"] = strconv.FormatInt(time.Now().Unix(), 10)
+	}
+	signed["sign_type"] = "RSA"
+	canonical, err := epayV2Canonical(signed)
+	require.NoError(t, err)
+	digest := sha256.Sum256([]byte(canonical))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
+	require.NoError(t, err)
+	signed["sign"] = base64.StdEncoding.EncodeToString(signature)
+	return signed
+}
+
+// verifiesEPayV2 reports whether params carry a valid signature of key.
+func verifiesEPayV2(t *testing.T, key *rsa.PublicKey, params map[string]string) bool {
+	t.Helper()
+	canonical, err := epayV2Canonical(params)
+	require.NoError(t, err)
+	signature, err := base64.StdEncoding.DecodeString(params["sign"])
+	require.NoError(t, err)
+	digest := sha256.Sum256([]byte(canonical))
+	return params["sign_type"] == "RSA" && rsa.VerifyPKCS1v15(key, crypto.SHA256, digest[:], signature) == nil
+}
+
+// epayV2Server is an EPay V2 gateway that checks every request's merchant
+// signature and answers with what answer returns for its API path, signed
+// with the platform's key when sign is set. Integer values are sent as JSON
+// numbers.
+func epayV2Server(t *testing.T, config string, answer func(path string, params map[string]string) (fields map[string]string, sign bool)) Gateway {
+	t.Helper()
+	keys := epayV2TestKeys()
+	return epayServer(t, config, func(w http.ResponseWriter, r *http.Request) {
+		params := epayRequest(t, r)
+		assert.True(t, verifiesEPayV2(t, &keys[0].PublicKey, params), "the request is signed by the merchant")
+		assert.Equal(t, "1001", params["pid"])
+		fields, sign := answer(r.URL.Path, params)
+		if sign {
+			fields = signEPayV2(t, keys[1], fields)
+		}
+		body := map[string]any{}
+		for key, value := range fields {
+			if number, err := strconv.Atoi(value); err == nil && key != "trade_no" && key != "out_trade_no" && key != "timestamp" {
+				body[key] = number
+				continue
+			}
+			body[key] = value
+		}
+		raw, err := common.Marshal(body)
+		require.NoError(t, err)
+		_, _ = w.Write(raw)
+	})
+}
+
+// The V2 signature covers the scalar parameters except sign, sign_type and
+// blank values, in name order, with their bytes as they are.
+func TestEPayV2Canonical(t *testing.T) {
+	canonical, err := epayV2Canonical(map[string]string{
+		"name": "会员 A&B", "money": "1.00", "fee_mode": "0", "param": "", "blank": " \t\r\n", "sign_type": "RSA", "sign": "x",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "fee_mode=0&money=1.00&name=会员 A&B", canonical)
+	_, err = epayV2Canonical(map[string]string{"images[0]": "x"})
+	assert.Error(t, err, "a parameter PHP reads as an array cannot be signed as a scalar")
+}
+
+// The payment page and an API order are signed with the merchant's key; the
+// gateway's answer must carry its own valid, fresh signature.
+func TestEPayV2Checkout(t *testing.T) {
+	keys := epayV2TestKeys()
+	order := &Order{OrderNo: "order-1", PaymentAmount: 1990, PaymentCurrency: "CNY", ClientIP: "203.0.113.9"}
+	checkout := Checkout{Order: order, Charge: Charge{1990, "CNY"}, Subject: "Top-up",
+		NotifyURL: "https://www.example.test/api/payment/notify/epay/tok", ReturnURL: "https://www.example.test/wallet?payment_order=order-1"}
+
+	page := mustOpen(t, NewRegistry(), Method{Platform: PlatformEPay, Config: strings.ReplaceAll(epayV2Config("page", ""), "SERVER", "https://pay.example")})
+	action, err := page.StartPayment(context.Background(), checkout)
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(action.URL, "https://pay.example/api/pay/submit?"), action.URL)
+	parsed, err := url.Parse(action.URL)
+	require.NoError(t, err)
+	params := map[string]string{}
+	for key := range parsed.Query() {
+		params[key] = parsed.Query().Get(key)
+	}
+	assert.True(t, verifiesEPayV2(t, &keys[0].PublicKey, params))
+	assert.Equal(t, "19.90", params["money"])
+	assert.Equal(t, "1001", params["pid"])
+	assert.NotContains(t, params, "type", "an empty payment type lets the buyer choose")
+
+	created := map[string]string{"code": "0", "msg": "", "trade_no": "T1", "pay_type": "jump", "pay_info": "https://pay.example/pay/T1"}
+	tests := []struct {
+		name   string
+		answer map[string]string
+		sign   bool
+		want   *Action
+	}{
+		{"payment page", created, true, &Action{Type: ActionURL, URL: "https://pay.example/pay/T1"}},
+		{"QR code", withField(created, "pay_type", "qrcode", "pay_info", "https://qr.alipay.com/abc"), true, &Action{Type: ActionQRCode, QRCode: "https://qr.alipay.com/abc"}},
+		{"unsigned success", created, false, nil},
+		{"stale signature", withField(created, "timestamp", strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10)), true, nil},
+		{"another merchant", withField(created, "pid", "2002"), true, nil},
+		{"refused unsigned", map[string]string{"code": "-1", "msg": "channel closed"}, false, nil},
+		{"HTML payment", withField(created, "pay_type", "html", "pay_info", "<form></form>"), true, nil},
+	}
+	for _, tt := range tests {
+		var sent map[string]string
+		gw := epayV2Server(t, epayV2Config("api", "alipay"), func(path string, params map[string]string) (map[string]string, bool) {
+			assert.Equal(t, "/api/pay/create", path)
+			sent = params
+			return tt.answer, tt.sign
+		})
+		action, err := gw.StartPayment(context.Background(), checkout)
+		if tt.want == nil {
+			assert.Error(t, err, tt.name)
+			continue
+		}
+		require.NoError(t, err, tt.name)
+		assert.Equal(t, tt.want, action, tt.name)
+		assert.Equal(t, "jump", sent["method"])
+		assert.Equal(t, "203.0.113.9", sent["clientip"])
+		assert.Equal(t, "alipay", sent["type"])
+	}
+
+	// A signature that does not verify is not trusted, whatever it says.
+	gw := epayServer(t, epayV2Config("api", "alipay"), func(w http.ResponseWriter, r *http.Request) {
+		signed := signEPayV2(t, keys[1], created)
+		signed["pay_info"] = "https://evil.example/pay"
+		raw, err := common.Marshal(signed)
+		require.NoError(t, err)
+		_, _ = w.Write(raw)
+	})
+	_, err = gw.StartPayment(context.Background(), checkout)
+	assert.Error(t, err)
+}
+
+func withField(fields map[string]string, pairs ...string) map[string]string {
+	changed := maps.Clone(fields)
+	for i := 0; i < len(pairs); i += 2 {
+		changed[pairs[i]] = pairs[i+1]
+	}
+	return changed
+}
+
+func TestEPayV2Callback(t *testing.T) {
+	ctx := context.Background()
+	platform := epayV2TestKeys()[1]
+	gw := mustOpen(t, NewRegistry(), Method{Platform: PlatformEPay, Config: strings.ReplaceAll(epayV2Config("api", "alipay"), "SERVER", "https://pay.example")})
+	callback := map[string]string{
+		"pid": "1001", "trade_no": "T1", "out_trade_no": "order-1", "api_trade_no": "2026102522001", "type": "alipay",
+		"trade_status": "TRADE_SUCCESS", "name": "Top-up", "money": "19.90", "param": " ", "buyer": "b***@example.test",
+	}
+	notice, err := gw.ParseCallback(ctx, Notification{Params: signEPayV2(t, platform, callback)})
+	require.NoError(t, err)
+	assert.Equal(t, Notice{OrderNo: "order-1", TradeNo: "T1", Amount: 1990, Currency: "CNY", Paid: true, Status: "TRADE_SUCCESS",
+		Details: map[string]string{"type": "alipay"}}, *notice)
+
+	tampered := signEPayV2(t, platform, callback)
+	tampered["money"] = "0.01"
+	stale := withField(callback, "timestamp", strconv.FormatInt(time.Now().Add(-6*time.Minute).Unix(), 10))
+	md5Signed := signEPay(gw, callback)
+	for name, params := range map[string]map[string]string{
+		"tampered":         tampered,
+		"stale":            signEPayV2(t, platform, stale),
+		"merchant key":     signEPayV2(t, epayV2TestKeys()[0], callback),
+		"MD5":              md5Signed,
+		"another merchant": signEPayV2(t, platform, withField(callback, "pid", "2002")),
+		"another type":     signEPayV2(t, platform, withField(callback, "type", "wxpay")),
+		"not paid":         signEPayV2(t, platform, withField(callback, "trade_status", "WAIT_BUYER_PAY")),
+	} {
+		_, err := gw.ParseCallback(ctx, Notification{Params: params})
+		assert.Error(t, err, name)
+	}
+}
+
+// A V2 gateway's signed query decides a close: a paid order settles, an
+// unpaid one is closed at the gateway and closes at once, and one the
+// gateway cannot close waits like a V1 order. The query is always asked; a
+// missing query API confirms nothing.
+func TestEPayV2QueryAndClose(t *testing.T) {
+	young, old := time.Now(), time.Now().Add(-2*EPayUnpaidCloseAge)
+	paid := map[string]string{"code": "0", "pid": "1001", "trade_no": "T1", "out_trade_no": "order-1", "type": "alipay", "money": "19.90", "status": "1"}
+	unpaid := withField(paid, "status", "0")
+	closed := map[string]string{"code": "0", "msg": "succ"}
+	cannotClose := map[string]string{"code": "-1", "msg": "channel cannot close orders"}
+	tests := []struct {
+		name          string
+		query, close  map[string]string
+		createdAt     time.Time
+		explicit      bool
+		want          Reconciliation
+		wantErr       string
+		wantCloseCall bool
+	}{
+		{name: "paid", query: paid, createdAt: young, want: Reconciliation{TradeNo: "T1"}},
+		{name: "paid another amount", query: withField(paid, "money", "1.00"), createdAt: young, wantErr: "error"},
+		{name: "unpaid and closed", query: unpaid, close: closed, createdAt: young, wantCloseCall: true},
+		{name: "unpaid, cannot close, young", query: unpaid, close: cannotClose, createdAt: young, wantErr: "unconfirmed", wantCloseCall: true},
+		{name: "unpaid, cannot close, old", query: unpaid, close: cannotClose, createdAt: old, wantCloseCall: true},
+		{name: "explicit close", query: unpaid, close: cannotClose, createdAt: young, explicit: true, wantCloseCall: true},
+		{name: "frozen", query: withField(paid, "status", "3"), createdAt: old, wantErr: "unconfirmed"},
+		{name: "another order", query: withField(unpaid, "out_trade_no", "order-2"), createdAt: old, wantErr: "unconfirmed"},
+	}
+	for _, tt := range tests {
+		closeCalled := false
+		gw := epayV2Server(t, epayV2Config("api", "alipay"), func(path string, params map[string]string) (map[string]string, bool) {
+			assert.Equal(t, "order-1", params["out_trade_no"])
+			if path == "/api/pay/close" {
+				closeCalled = true
+				return tt.close, true
+			}
+			assert.Equal(t, "/api/pay/query", path)
+			return tt.query, true
+		})
+		order := &Order{OrderNo: "order-1", PaymentAmount: 1990, PaymentCurrency: "CNY", CreatedAt: tt.createdAt}
+		got, err := gw.Reconcile(context.Background(), CloseRequest{Order: order, Explicit: tt.explicit})
+		assert.Equal(t, tt.wantCloseCall, closeCalled, tt.name)
+		switch tt.wantErr {
+		case "unconfirmed":
+			assert.ErrorIs(t, err, ErrUnconfirmed, tt.name)
+		case "error":
+			assert.Error(t, err, tt.name)
+			assert.NotErrorIs(t, err, ErrUnconfirmed, tt.name)
+		default:
+			require.NoError(t, err, tt.name)
+			assert.Equal(t, tt.want.TradeNo, got.TradeNo, tt.name)
+		}
+	}
+
+	notice := &Notice{OrderNo: "order-1", TradeNo: "T1", Amount: 1990, Currency: "CNY", Paid: true}
+	order := &Order{OrderNo: "order-1", PaymentAmount: 1990, PaymentCurrency: "CNY"}
+	gw := epayV2Server(t, epayV2Config("api", "alipay"), func(string, map[string]string) (map[string]string, bool) { return paid, true })
+	require.NoError(t, gw.ConfirmPayment(context.Background(), order, notice))
+	tradeNo, err := gw.QueryPayment(context.Background(), order)
+	require.NoError(t, err)
+	assert.Equal(t, "T1", tradeNo)
+	missing := epayServer(t, epayV2Config("api", "alipay"), http.NotFound)
+	assert.Error(t, missing.ConfirmPayment(context.Background(), order, notice), "V2 has a query API: its absence is a failure")
 }
 
 // ---- Cryptomus ----

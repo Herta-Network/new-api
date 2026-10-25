@@ -54,11 +54,55 @@ const platforms: PaymentPlatformsInfo = {
           managed: false,
         },
         {
+          key: 'version',
+          label: 'Protocol version',
+          type: 'select',
+          required: true,
+          secret: false,
+          managed: false,
+          options: [
+            { value: 'v1', label: 'EPay V1 (MD5 merchant key)' },
+            { value: 'v2', label: 'EPay V2 (RSA keys)' },
+          ],
+        },
+        {
+          key: 'checkout',
+          label: 'Checkout mode',
+          description:
+            'An API order is created by the server, which notices a failing gateway before the buyer leaves.',
+          type: 'select',
+          required: true,
+          secret: false,
+          managed: false,
+          options: [
+            { value: 'api', label: 'API order' },
+            { value: 'page', label: 'Gateway payment page' },
+          ],
+        },
+        {
           key: 'key',
           label: 'Merchant key',
           required: true,
           secret: true,
           managed: false,
+          when: { version: 'v1' },
+        },
+        {
+          key: 'private_key',
+          label: 'Merchant private key',
+          required: true,
+          secret: true,
+          managed: false,
+          when: { version: 'v2' },
+        },
+        {
+          key: 'platform_public_key',
+          label: 'Platform public key',
+          type: 'textarea',
+          required: true,
+          secret: false,
+          managed: false,
+          when: { version: 'v2' },
         },
         {
           key: 'type',
@@ -143,6 +187,8 @@ const epay = method({
   config: {
     url: 'https://pay.example.com',
     pid: '1001',
+    version: 'v1',
+    checkout: 'page',
     key: '',
     type: 'alipay',
   },
@@ -239,6 +285,8 @@ describe('payment methods', () => {
         config: {
           url: 'https://pay.example.com',
           pid: '1001',
+          version: 'v1',
+          checkout: 'api',
           key: 'secret',
           type: '',
         },
@@ -307,7 +355,89 @@ describe('payment methods', () => {
         config: {
           url: 'https://pay.example.com',
           pid: '1001',
+          version: 'v1',
+          checkout: 'page',
           key: '',
+          type: 'alipay',
+        },
+      })
+    )
+  })
+
+  it('asks for the RSA keys instead of the merchant key once EPay V2 is chosen and saves only those', async () => {
+    const request = mockApi([balance])
+    const user = renderSection()
+    await user.click(
+      await screen.findByRole('button', { name: 'Add payment method' })
+    )
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByLabelText('Merchant key')).toBeVisible()
+    expect(
+      within(dialog).queryByLabelText('Merchant private key')
+    ).not.toBeInTheDocument()
+    expect(
+      within(dialog).getByText(
+        'An API order is created by the server, which notices a failing gateway before the buyer leaves.'
+      )
+    ).toBeVisible()
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Name' }),
+      'Alipay'
+    )
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Gateway URL' }),
+      'https://pay.example.com'
+    )
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Merchant ID' }),
+      '1001'
+    )
+    await user.type(within(dialog).getByLabelText('Merchant key'), 'v1-secret')
+    await user.click(
+      within(dialog).getByRole('combobox', { name: 'Protocol version' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'EPay V2 (RSA keys)' })
+    )
+
+    expect(
+      within(dialog).queryByLabelText('Merchant key')
+    ).not.toBeInTheDocument()
+    expect(
+      within(dialog).getByLabelText('Merchant private key')
+    ).toHaveAttribute('type', 'password')
+    const publicKey = within(dialog).getByRole('textbox', {
+      name: 'Platform public key',
+    })
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(
+      await within(dialog).findAllByText('This field is required')
+    ).toHaveLength(2)
+    expect(publicKey).toHaveAttribute('aria-invalid', 'true')
+    expect(request.post).not.toHaveBeenCalled()
+
+    await user.type(
+      within(dialog).getByLabelText('Merchant private key'),
+      'MIIEv-private'
+    )
+    await user.type(publicKey, 'MIIBI-public')
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Payment type' }),
+      'alipay'
+    )
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(request.post).toHaveBeenCalledTimes(1))
+    expect(request.post).toHaveBeenCalledWith(
+      '/api/payment/settings/methods',
+      expect.objectContaining({
+        config: {
+          url: 'https://pay.example.com',
+          pid: '1001',
+          version: 'v2',
+          checkout: 'api',
+          private_key: 'MIIEv-private',
+          platform_public_key: 'MIIBI-public',
           type: 'alipay',
         },
       })

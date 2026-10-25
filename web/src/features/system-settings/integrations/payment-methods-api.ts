@@ -35,8 +35,13 @@ export type PaymentPlatformField = {
   key: string
   /** English source text; the frontend translates it. */
   label: string
-  /** 'select' takes one of options; absent for a text field. */
-  type?: 'select'
+  /** A hint under the field, English source text. */
+  description?: string
+  /**
+   * 'select' takes one of options, 'textarea' is text of several lines;
+   * absent for a one-line text field.
+   */
+  type?: 'select' | 'textarea'
   required: boolean
   /** Never returned by the server; empty input keeps the stored value. */
   secret: boolean
@@ -44,6 +49,8 @@ export type PaymentPlatformField = {
   managed: boolean
   /** The values of a select field, in display order. */
   options?: PaymentPlatformFieldOption[]
+  /** The field applies only while these fields hold these values. */
+  when?: Record<string, string>
 }
 
 export type PaymentPlatformFieldOption = {

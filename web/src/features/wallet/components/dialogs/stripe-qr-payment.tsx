@@ -17,8 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { PaymentIntentResult, Stripe } from '@stripe/stripe-js'
-import { ExternalLink, Loader2 } from 'lucide-react'
-import { QRCodeSVG } from 'qrcode.react'
+import { Loader2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -28,6 +27,7 @@ import { Button } from '@/components/ui/button'
 import type { StripeSession } from '../../hooks/use-payment-checkout'
 import { usePaymentOrderResult } from '../../hooks/use-payment-order-result'
 import { PAYMENT_ORDER_STATUS } from '../../types'
+import { PaymentQrCode } from './payment-qr-code'
 
 interface StripeQrPaymentProps {
   stripe: Stripe
@@ -150,38 +150,13 @@ export function StripeQrPayment(props: StripeQrPaymentProps) {
         </Alert>
       )}
       {state.status === 'shown' && (
-        <div className='flex flex-col items-center gap-3'>
-          <div className='rounded-lg bg-white p-3'>
-            {state.imageUrl ? (
-              <img
-                src={state.imageUrl}
-                alt={scanText}
-                width={208}
-                height={208}
-                className='h-52 w-52'
-              />
-            ) : (
-              <QRCodeSVG
-                value={state.qrValue ?? ''}
-                size={208}
-                title={scanText}
-              />
-            )}
-          </div>
-          <p className='text-muted-foreground text-center text-sm'>
-            {scanText}
-          </p>
-          {isAlipay && state.qrValue && (
-            <Button
-              variant='outline'
-              className='w-full sm:w-auto'
-              render={<a href={state.qrValue} />}
-            >
-              <ExternalLink data-icon='inline-start' />
-              {t('Open Alipay on this device')}
-            </Button>
-          )}
-        </div>
+        <PaymentQrCode
+          value={state.qrValue}
+          imageUrl={state.imageUrl}
+          label={scanText}
+          openUrl={isAlipay ? state.qrValue : undefined}
+          openLabel={t('Open Alipay on this device')}
+        />
       )}
       <div className='flex justify-end'>
         <Button type='button' variant='outline' onClick={props.onCancel}>

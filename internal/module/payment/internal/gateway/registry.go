@@ -9,9 +9,11 @@
 // are lowercase names; NormalizeConfig validates the configuration a
 // method is saved with (EPay endpoint and credentials, Stripe key prefixes
 // and mode, Cryptomus credentials) instead of only re-encoding it; the
-// field descriptions mark secret and server-managed fields and can offer a
-// fixed set of choices (the Stripe payment method type); an injected HTTP
-// client also carries Stripe traffic.
+// field descriptions mark secret and server-managed fields, can offer a
+// fixed set of choices (the Stripe payment method type, the EPay version and
+// checkout mode), take several lines, carry a hint, and apply only under a
+// choice of another field (the credentials of each EPay version); an
+// injected HTTP client also carries Stripe traffic.
 
 package gateway
 
@@ -142,17 +144,22 @@ func (r *Registry) NormalizeConfig(platform string, raw []byte) (string, error) 
 	return spec.normalize(raw)
 }
 
-// FieldSelect is the type of a field whose value is one of its Options; a
-// field without a type is free text.
-const FieldSelect = "select"
+// Field types: FieldSelect takes one of its Options, FieldTextarea is text of
+// several lines; a field without a type is one line of text.
+const (
+	FieldSelect   = "select"
+	FieldTextarea = "textarea"
+)
 
 // Field describes one configuration field of a platform for the
 // administrator's form.
 type Field struct {
 	Key string `json:"key"`
-	// Label is English source text the frontend translates.
-	Label string `json:"label"`
-	// Type is FieldSelect or empty for a text field.
+	// Label and Description are English source text the frontend
+	// translates.
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	// Type is FieldSelect, FieldTextarea or empty for a text field.
 	Type     string `json:"type,omitempty"`
 	Required bool   `json:"required"`
 	// Secret fields are never returned to the browser.
@@ -161,6 +168,9 @@ type Field struct {
 	Managed bool `json:"managed"`
 	// Options are the values a FieldSelect field takes, in display order.
 	Options []FieldOption `json:"options,omitempty"`
+	// When limits the field to configurations whose fields hold these
+	// values; the configuration drops it otherwise.
+	When map[string]string `json:"when,omitempty"`
 }
 
 // FieldOption is one value of a FieldSelect field.
@@ -187,8 +197,21 @@ func Platforms() []PlatformInfo {
 			Fields: []Field{
 				{Key: "url", Label: "Gateway URL", Required: true},
 				{Key: "pid", Label: "Merchant ID", Required: true},
-				{Key: "key", Label: "Merchant key", Required: true, Secret: true},
-				{Key: "type", Label: "Payment type"},
+				{Key: "version", Label: "Protocol version", Type: FieldSelect, Required: true, Options: []FieldOption{
+					{Value: EPayV1, Label: "EPay V1 (MD5 merchant key)"},
+					{Value: EPayV2, Label: "EPay V2 (RSA keys)"},
+				}},
+				{Key: "checkout", Label: "Checkout mode", Type: FieldSelect, Required: true,
+					Description: "An API order is created by the server, which notices a failing gateway before the buyer leaves.",
+					Options: []FieldOption{
+						{Value: EPayCheckoutAPI, Label: "API order"},
+						{Value: EPayCheckoutPage, Label: "Gateway payment page"},
+					}},
+				{Key: "key", Label: "Merchant key", Required: true, Secret: true, When: map[string]string{"version": EPayV1}},
+				{Key: "private_key", Label: "Merchant private key", Required: true, Secret: true, When: map[string]string{"version": EPayV2}},
+				{Key: "platform_public_key", Label: "Platform public key", Type: FieldTextarea, Required: true, When: map[string]string{"version": EPayV2}},
+				{Key: "type", Label: "Payment type",
+					Description: "alipay, wxpay, qqpay and so on. API orders need one; on the payment page an empty type lets the buyer choose."},
 			},
 		},
 		{

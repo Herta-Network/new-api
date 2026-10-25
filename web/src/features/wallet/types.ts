@@ -164,10 +164,14 @@ export interface StripeCheckout {
   payment_method_type: StripePaymentMethodType
 }
 
-/** How to pay an order: open a URL, confirm with Stripe.js, or nothing left to pay. */
+/**
+ * How to pay an order: open a URL, confirm with Stripe.js, scan a QR code
+ * (its content, not an image), or nothing left to pay.
+ */
 export type CheckoutAction =
   | { type: 'url'; url: string; order_no: string }
   | { type: 'stripe'; stripe: StripeCheckout; order_no: string }
+  | { type: 'qrcode'; qr_code: string; order_no: string }
   | { type: 'paid'; order_no: string }
 
 export const PAYMENT_ORDER_STATUS = {
