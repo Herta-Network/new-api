@@ -13,7 +13,8 @@
 // and key required); empty parameters are left out of the payment URL;
 // unpaid orders close after EPayUnpaidCloseAge; JSON goes through the
 // common wrappers. A method speaks EPay V1 or EPay V2 (epay_v2.go: RSA
-// signatures, signed answers, closing an unpaid order at the gateway) and
+// signatures, signed answers but for the unsigned payment creation NiuNiu
+// Pay answers over HTTPS, closing an unpaid order at the gateway) and
 // starts its payments either with the gateway's payment page or with the
 // API (mapi.php, /api/pay/create), which reports a gateway failure before
 // the buyer leaves and can answer with a QR code; answers read the code,
