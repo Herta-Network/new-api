@@ -67,6 +67,9 @@ email.security_event.email_confirmed: "Email address confirmed"
 email.security_event.login_linked: "Login account linked: {{.Provider}}"
 email.security_event.login_unlinked: "Login account unlinked"
 email.security_event.wechat_linked: "WeChat account linked"
+email.layout.footer: "This email was sent automatically by {{.SystemName}}. Please do not reply."
+email.test.subject: "{{.SystemName}} test email"
+email.test.content: "This is a test email from {{.SystemName}}. If you received it, email sending works."
 
 # Low-quota notices
 notify.quota_low_title: "Your quota is running low"

@@ -9,6 +9,7 @@ import (
 	"testing/fstest"
 
 	currencyentity "github.com/QuantumNous/new-api/internal/module/currency/entity"
+	mailentity "github.com/QuantumNous/new-api/internal/module/mail/entity"
 	"github.com/QuantumNous/new-api/internal/module/payment/entity"
 	"github.com/QuantumNous/new-api/pkg/pgtest"
 	"github.com/stretchr/testify/assert"
@@ -26,7 +27,7 @@ var schemaModels = []any{
 	&SubscriptionPreConsumeRecord{}, &CustomOAuthProvider{}, &UserOAuthBinding{}, &PerfMetric{},
 	&SystemInstance{}, &SystemTask{}, &SystemTaskLock{}, &CasbinRule{}, &AuthzRole{},
 	&UserAccessToken{}, &SubscriptionPlan{}, &entity.PaymentOption{}, &entity.PaymentMethod{}, &entity.PaymentOrder{}, &entity.PaymentInvoice{},
-	&entity.PaymentUnmatched{}, &currencyentity.ExchangeRate{},
+	&entity.PaymentUnmatched{}, &currencyentity.ExchangeRate{}, &mailentity.EmailTemplate{},
 	&Log{}, &AuditLog{},
 }
 

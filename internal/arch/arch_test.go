@@ -25,6 +25,7 @@ var tableOwners = map[string]string{
 	"payment_orders":         "payment",
 	"payment_unmatched":      "payment",
 	"payment_exchange_rates": "currency",
+	"email_templates":        "mail",
 }
 
 // skippedDirs are not Go code of the root module.
