@@ -267,7 +267,7 @@ bun run dev -- --port 5173
 | [plugins/tasks/](./plugins/tasks/) | JavaScript 任務外掛；編寫方式與宿主邊界見 [Task Plugin API v1](./docs/plugin-api/v1.md) |
 | `web/` | Web 控制台，參閱[前端開發約定](./web/AGENTS.md) |
 
-貢獻前請閱讀 [AGENTS.md](./AGENTS.md)。依改動範圍執行檢查：Go 模組使用 `make test`（資料庫測試需要 `TEST_POSTGRES_DSN`，可用 `make test-db` 啟動本機 PostgreSQL 18 並輸出該變數）；前端在 `web/` 下執行 `bun run typecheck`、`bun run lint`、`bun run test` 和 `bun run build`。修改 RelayKit 後還必須在 `relaykit/` 下執行 `GOWORK=off go build ./...`。
+貢獻前請閱讀 [AGENTS.md](./AGENTS.md)。依改動範圍執行檢查：Go 模組使用 `make test`（資料庫測試需要 `TEST_POSTGRES_DSN`，可用 `make test-db` 啟動本機 PostgreSQL 18 並輸出該變數）；前端在 `web/` 下執行 `bun check -b`、`bun run lint`、`bun run test` 和 `bun run build`。修改 RelayKit 後還必須在 `relaykit/` 下執行 `GOWORK=off go build ./...`。
 
 <a id="documentation"></a>
 

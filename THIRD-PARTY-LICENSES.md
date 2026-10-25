@@ -98,15 +98,15 @@ Transitive dependencies should be audited before a final external release.
 | web      | production  | npm       | `@visactor/vchart`                                      | `2.1.4`                              | MIT                     |
 | web      | production  | npm       | `ai`                                                    | `7.0.136`                            | Apache-2.0              |
 | web      | production  | npm       | `auto-skeleton-react`                                   | `1.0.5`                              | MIT                     |
-| web      | production  | npm       | `axios`                                                 | `1.18.1`                             | MIT                     |
+| web      | production  | npm       | `axios`                                                 | `1.20.0`                             | MIT                     |
 | web      | production  | npm       | `class-variance-authority`                              | `0.7.1`                              | Apache-2.0              |
 | web      | production  | npm       | `clsx`                                                  | `2.1.1`                              | MIT                     |
 | web      | production  | npm       | `cmdk`                                                  | `1.1.1`                              | MIT                     |
 | web      | production  | npm       | `dayjs`                                                 | `1.11.21`                            | MIT                     |
 | web      | production  | npm       | `dompurify`                                             | `3.4.16`                             | Apache-2.0 OR MPL-2.0   |
-| web      | production  | npm       | `i18next`                                               | `26.3.6`                             | MIT                     |
+| web      | production  | npm       | `i18next`                                               | `26.5.3`                             | MIT                     |
 | web      | production  | npm       | `i18next-browser-languagedetector`                      | `8.2.1`                              | MIT                     |
-| web      | production  | npm       | `input-otp`                                             | `1.4.2`                              | MIT                     |
+| web      | production  | npm       | `input-otp`                                             | `1.5.0`                              | MIT                     |
 | web      | production  | npm       | `katex`                                                 | `0.18.2`                             | MIT                     |
 | web      | production  | npm       | `lucide-react`                                          | `1.25.0`                             | ISC                     |
 | web      | production  | npm       | `marked`                                                | `18.0.6`                             | MIT                     |
@@ -119,9 +119,9 @@ Transitive dependencies should be audited before a final external release.
 | web      | production  | npm       | `react-day-picker`                                      | `10.0.1`                             | MIT                     |
 | web      | production  | npm       | `react-dom`                                             | `19.2.7`                             | MIT                     |
 | web      | production  | npm       | `react-hook-form`                                       | `7.82.0`                             | MIT                     |
-| web      | production  | npm       | `react-i18next`                                         | `17.0.10`                            | MIT                     |
+| web      | production  | npm       | `react-i18next`                                         | `17.1.0`                             | MIT                     |
 | web      | production  | npm       | `react-icons`                                           | `5.7.0`                              | MIT                     |
-| web      | production  | npm       | `react-resizable-panels`                                | `4.12.2`                             | MIT                     |
+| web      | production  | npm       | `react-resizable-panels`                                | `4.14.6`                             | MIT                     |
 | web      | production  | npm       | `react-top-loading-bar`                                 | `3.0.2`                              | MIT                     |
 | web      | production  | npm       | `recharts`                                              | `3.9.1`                              | MIT                     |
 | web      | production  | npm       | `shiki`                                                 | `4.3.1`                              | MIT                     |
@@ -151,7 +151,6 @@ Transitive dependencies should be audited before a final external release.
 | web      | development | npm       | `@types/node-forge`                                     | `1.3.14`                             | MIT                     |
 | web      | development | npm       | `@types/react`                                          | `19.2.17`                            | MIT                     |
 | web      | development | npm       | `@types/react-dom`                                      | `19.2.3`                             | MIT                     |
-| web      | development | npm       | `@typescript/native-preview`                            | `7.0.0-dev.20260707.2`               | Apache-2.0              |
 | web      | development | npm       | `@xyflow/react`                                         | `12.11.2`                            | MIT                     |
 | web      | development | npm       | `embla-carousel-react`                                  | `8.6.0`                              | MIT                     |
 | web      | development | npm       | `jsdom`                                                 | `29.1.1`                             | MIT                     |

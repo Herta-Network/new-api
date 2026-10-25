@@ -4808,6 +4808,9 @@
                 "ignore_eos": {
                     "type": "object"
                 },
+                "imageConfig": {
+                    "type": "object"
+                },
                 "include_reasoning": {
                     "type": "object"
                 },
@@ -5154,6 +5157,10 @@
             "type": "object",
             "properties": {
                 "audio_tokens": {
+                    "type": "integer"
+                },
+                "cache_creation_input_tokens": {
+                    "description": "CacheCreationInputTokens is already included in prompt_tokens. Billing\ntakes the larger of this value, CacheWriteTokens, and CachedCreationTokens,\nand does not add them.",
                     "type": "integer"
                 },
                 "cache_write_tokens": {

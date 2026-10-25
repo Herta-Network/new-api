@@ -287,7 +287,7 @@ Open [http://localhost:5173](http://localhost:5173); the development server prox
 | [plugins/tasks/](./plugins/tasks/) | JavaScript task plugins; see [Task Plugin API v1](./docs/plugin-api/v1.md) for authoring and host boundaries |
 | `web/` | Web console; see [frontend conventions](./web/AGENTS.md) |
 
-Read [AGENTS.md](./AGENTS.md) before contributing. Run checks appropriate to your change, including `make test` for the Go modules (database tests need `TEST_POSTGRES_DSN`; `make test-db` starts a local PostgreSQL 18 and prints it) and `bun run typecheck`, `bun run lint`, `bun run test`, and `bun run build` in `web/` for frontend changes. Changes to RelayKit must also pass `GOWORK=off go build ./...` from `relaykit/`.
+Read [AGENTS.md](./AGENTS.md) before contributing. Run checks appropriate to your change, including `make test` for the Go modules (database tests need `TEST_POSTGRES_DSN`; `make test-db` starts a local PostgreSQL 18 and prints it) and `bun check -b`, `bun run lint`, `bun run test`, and `bun run build` in `web/` for frontend changes. Changes to RelayKit must also pass `GOWORK=off go build ./...` from `relaykit/`.
 
 <a id="documentation"></a>
 
