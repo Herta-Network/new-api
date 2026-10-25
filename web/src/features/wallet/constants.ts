@@ -33,16 +33,6 @@ export const PAYMENT_PLATFORMS = {
 } as const
 
 /**
- * Platform names shown when an order's method is not at hand
- */
-export const PAYMENT_PLATFORM_LABELS: Record<string, string> = {
-  [PAYMENT_PLATFORMS.EPAY]: 'EPay',
-  [PAYMENT_PLATFORMS.STRIPE]: 'Stripe',
-  [PAYMENT_PLATFORMS.CRYPTOMUS]: 'Cryptomus',
-  [PAYMENT_PLATFORMS.BALANCE]: 'Balance',
-}
-
-/**
  * Stripe brand color for its built-in icon
  */
 export const STRIPE_ICON_COLOR = '#635BFF'

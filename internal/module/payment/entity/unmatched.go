@@ -1,15 +1,19 @@
 package entity
 
 // PaymentUnmatched records money a gateway confirmed that could not settle
-// its order: a second payment of a paid order, an amount that differs from
-// the expectation, a fulfilment that failed. The callback is still
+// its order: a second payment of a paid order (also through another of its
+// invoices), an amount that differs from the expectation, a fulfilment that
+// failed. The callback is still
 // acknowledged so the gateway stops retrying; an operator refunds or
 // fulfils by hand and resolves the record. One payment is recorded once.
 type PaymentUnmatched struct {
-	Id              int    `json:"id"`
-	Platform        string `json:"platform" gorm:"type:varchar(32);not null;uniqueIndex:idx_payment_unmatched_payment,priority:1"`
-	TradeNo         string `json:"trade_no" gorm:"type:varchar(255);not null;uniqueIndex:idx_payment_unmatched_payment,priority:2"`
-	OrderNo         string `json:"order_no" gorm:"type:varchar(64);not null;uniqueIndex:idx_payment_unmatched_payment,priority:3"`
+	Id       int    `json:"id"`
+	Platform string `json:"platform" gorm:"type:varchar(32);not null;uniqueIndex:idx_payment_unmatched_payment,priority:1"`
+	TradeNo  string `json:"trade_no" gorm:"type:varchar(255);not null;uniqueIndex:idx_payment_unmatched_payment,priority:2"`
+	OrderNo  string `json:"order_no" gorm:"type:varchar(64);not null;uniqueIndex:idx_payment_unmatched_payment,priority:3"`
+	// InvoiceNo is the invoice the payment was made for; empty for a manual
+	// completion.
+	InvoiceNo       string `json:"invoice_no" gorm:"type:varchar(64);not null;default:''"`
 	PaymentMethodId int    `json:"payment_method_id" gorm:"not null;default:0"`
 	UserId          int    `json:"user_id" gorm:"not null;default:0"`
 	Amount          int64  `json:"amount" gorm:"not null;default:0"`

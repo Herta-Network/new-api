@@ -43,15 +43,23 @@ export interface StripeSession {
   paymentMethodType: StripePaymentMethodType
 }
 
+/** A QR code a gateway answered for the buyer to scan. */
+export interface QrSession {
+  orderNo: string
+  qrCode: string
+}
+
 /**
  * Create orders and follow their checkout: a URL is opened in this tab, a
- * Stripe intent opens the Stripe dialog, and an order that needs no payment
- * (balance or free) goes straight to onSettling.
+ * Stripe intent opens the Stripe dialog, a QR code opens the QR dialog, and
+ * an order that needs no payment (balance or free) goes straight to
+ * onSettling.
  */
 export function usePaymentCheckout(onSettling: (orderNo: string) => void) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [stripeSession, setStripeSession] = useState<StripeSession | null>(null)
+  const [qrSession, setQrSession] = useState<QrSession | null>(null)
 
   const follow = useCallback(
     (checkout: CheckoutAction) => {
@@ -68,6 +76,9 @@ export function usePaymentCheckout(onSettling: (orderNo: string) => void) {
             clientSecret: checkout.stripe.client_secret,
             paymentMethodType: checkout.stripe.payment_method_type,
           })
+          return
+        case 'qrcode':
+          setQrSession({ orderNo: checkout.order_no, qrCode: checkout.qr_code })
           return
         default:
           onSettling(checkout.order_no)
@@ -118,5 +129,7 @@ export function usePaymentCheckout(onSettling: (orderNo: string) => void) {
     starting: creating || resuming,
     stripeSession,
     closeStripe: () => setStripeSession(null),
+    qrSession,
+    closeQr: () => setQrSession(null),
   }
 }

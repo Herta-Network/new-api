@@ -11,9 +11,17 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// EnsureBalanceMethod seeds the wallet balance method. An existing
-// row keeps what the administrator set.
+// EnsureBalanceMethod seeds the wallet balance option and its channel, the
+// balance method. An existing row keeps what the administrator set.
 func EnsureBalanceMethod(db *gorm.DB) error {
+	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&entity.PaymentOption{
+		Id:      entity.BalancePaymentOptionID,
+		Name:    "Balance",
+		Icon:    "FaWallet",
+		Enabled: true,
+	}).Error; err != nil {
+		return err
+	}
 	token, err := common.GenerateRandomCharsKey(40)
 	if err != nil {
 		return err
@@ -22,6 +30,7 @@ func EnsureBalanceMethod(db *gorm.DB) error {
 		Id:       entity.BalancePaymentMethodID,
 		Name:     "Balance",
 		Platform: entity.PaymentPlatformBalance,
+		OptionId: entity.BalancePaymentOptionID,
 		Enabled:  true,
 		Token:    token,
 	}).Error
@@ -59,6 +68,45 @@ func EnsureStripeMethodTypes(db *gorm.DB) error {
 	return nil
 }
 
+// EnsureEPayProtocols pins the EPay methods saved before EPay V2 and API
+// checkout existed to what they used: V1 through the gateway's payment
+// page. Deleted methods are included because late callbacks still open
+// their gateway. A method that names its version and checkout mode keeps
+// them, so running it again changes nothing.
+func EnsureEPayProtocols(db *gorm.DB) error {
+	var methods []*entity.PaymentMethod
+	if err := db.Unscoped().Where("platform = ?", "epay").Find(&methods).Error; err != nil {
+		return fmt.Errorf("list EPay payment methods: %w", err)
+	}
+	for _, method := range methods {
+		var config map[string]any
+		if err := common.UnmarshalJsonStr(method.Config, &config); err != nil || config == nil {
+			common.SysError(common.LogText("EPay payment method %d has no readable configuration; set its protocol version by hand", method.Id))
+			continue
+		}
+		version, _ := config["version"].(string)
+		checkout, _ := config["checkout"].(string)
+		if version != "" && checkout != "" {
+			continue
+		}
+		if version == "" {
+			config["version"] = "v1"
+		}
+		if checkout == "" {
+			config["checkout"] = "page"
+		}
+		content, err := common.Marshal(config)
+		if err != nil {
+			return err
+		}
+		if err := db.Unscoped().Model(&entity.PaymentMethod{}).Where("id = ?", method.Id).Update("config", string(content)).Error; err != nil {
+			return fmt.Errorf("pin the protocol of EPay payment method %d: %w", method.Id, err)
+		}
+		common.SysLog(common.LogText("EPay payment method %d keeps EPay V1 through the gateway payment page", method.Id))
+	}
+	return nil
+}
+
 // GetMethod loads a method that is not deleted.
 func GetMethod(id int) (*entity.PaymentMethod, error) {
 	var method entity.PaymentMethod
@@ -87,11 +135,19 @@ func GetMethodByToken(token string) (*entity.PaymentMethod, error) {
 	return &method, nil
 }
 
-// ListMethods returns the methods that are not deleted, in display
-// order.
+// ListMethods returns the methods that are not deleted, by option, then in
+// the order the option tries them.
 func ListMethods() ([]*entity.PaymentMethod, error) {
 	var methods []*entity.PaymentMethod
-	err := model.DB.Order("sort desc, id asc").Find(&methods).Error
+	err := model.DB.Order("option_id asc, priority asc, id asc").Find(&methods).Error
+	return methods, err
+}
+
+// ListOptionMethods returns the methods of an option that are not deleted,
+// in the order the option tries them.
+func ListOptionMethods(optionID int) ([]*entity.PaymentMethod, error) {
+	var methods []*entity.PaymentMethod
+	err := model.DB.Where("option_id = ?", optionID).Order("priority asc, id asc").Find(&methods).Error
 	return methods, err
 }
 
@@ -103,7 +159,7 @@ func CreateMethod(method *entity.PaymentMethod) error {
 // the token never change.
 func UpdateMethod(method *entity.PaymentMethod) error {
 	return model.DB.Model(method).
-		Select("name", "icon", "description", "sort", "enabled", "domain", "config", "fee_mode", "fee_rate_bp", "fee_fixed").
+		Select("name", "option_id", "enabled", "min_amount", "max_amount", "priority", "weight", "domain", "config").
 		Updates(method).Error
 }
 
@@ -111,12 +167,12 @@ func DeleteMethod(method *entity.PaymentMethod) error {
 	return model.DB.Delete(method).Error
 }
 
-// CountPendingOrders counts the pending orders of a method: their
+// CountPendingInvoices counts the pending invoices of a method: their
 // checkout and callbacks depend on its configuration.
-func CountPendingOrders(methodID int) (int64, error) {
+func CountPendingInvoices(methodID int) (int64, error) {
 	var count int64
-	err := model.DB.Model(&entity.PaymentOrder{}).
-		Where("payment_method_id = ? AND status = ?", methodID, entity.PaymentOrderPending).
+	err := model.DB.Model(&entity.PaymentInvoice{}).
+		Where("payment_method_id = ? AND status = ?", methodID, entity.PaymentInvoicePending).
 		Count(&count).Error
 	return count, err
 }

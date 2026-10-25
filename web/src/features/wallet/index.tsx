@@ -24,6 +24,7 @@ import { SectionPageLayout } from '@/components/layout'
 
 import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
+import { GatewayQrPaymentDialog } from './components/dialogs/gateway-qr-payment-dialog'
 import { PaymentResultDialog } from './components/dialogs/payment-result-dialog'
 import { StripePaymentDialog } from './components/dialogs/stripe-payment-dialog'
 import { TransferDialog } from './components/dialogs/transfer-dialog'
@@ -197,6 +198,15 @@ export function Wallet(props: WalletProps) {
         onClose={checkout.closeStripe}
         onConfirmed={(orderNo) => {
           checkout.closeStripe()
+          props.onPaymentOrderChange(orderNo)
+        }}
+      />
+
+      <GatewayQrPaymentDialog
+        session={checkout.qrSession}
+        onClose={checkout.closeQr}
+        onConfirmed={(orderNo) => {
+          checkout.closeQr()
           props.onPaymentOrderChange(orderNo)
         }}
       />

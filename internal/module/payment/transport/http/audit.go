@@ -14,8 +14,10 @@ import (
 var auditContentTemplates = map[string]string{
 	"payment.order_complete":    "Marked payment order ${order_no} as paid: ${note}",
 	"payment.unmatched_resolve": "Resolved unmatched payment ${id}: ${note}",
-	"payment.method_create":     "Created payment method ${name} (${platform}, ID: ${id})",
-	"payment.method_update":     "Updated payment method ${name} (${platform}, ID: ${id})",
+	"payment.method_create":     "Created payment channel ${name} (${platform}, ID: ${id})",
+	"payment.method_update":     "Updated payment channel ${name} (${platform}, ID: ${id})",
+	"payment.option_create":     "Created payment method ${name} (ID: ${id})",
+	"payment.option_update":     "Updated payment method ${name} (ID: ${id})",
 }
 
 // recordAudit records an administrator's payment operation with its

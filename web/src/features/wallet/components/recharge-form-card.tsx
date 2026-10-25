@@ -35,7 +35,12 @@ import { cn } from '@/lib/utils'
 
 import { usePaymentQuote } from '../hooks/use-payment-queries'
 import { getDiscountLabel } from '../lib/format'
-import { getAmountDiscount, parseMinorAmount } from '../lib/payment'
+import {
+  describeAmountRanges,
+  getAmountDiscount,
+  parseMinorAmount,
+  takesAmount,
+} from '../lib/payment'
 import type {
   PaymentInfo,
   PaymentMethodOption,
@@ -79,10 +84,19 @@ export function RechargeFormCard(props: RechargeFormCardProps) {
     ''
   const amount = parseMinorAmount(amountText)
   const belowMinimum = amount !== null && amount < minimum
-  const availableMethods = props.methods.filter((method) => method.available)
+  // Until the amount is valid every method may take it.
+  const takes = (method: PaymentMethodOption) =>
+    amount === null || belowMinimum || takesAmount(method, amount)
+  const availableMethods = props.methods.filter(
+    (method) => method.available && takes(method)
+  )
   const selectedMethod =
     availableMethods.find((method) => method.id === methodId) ??
     availableMethods[0]
+  const noMethodTakesAmount =
+    !props.methodsLoading &&
+    availableMethods.length === 0 &&
+    props.methods.some((method) => method.available)
 
   const request = useMemo<PurchaseRequest | null>(() => {
     if (!selectedMethod || amount === null || amount <= 0 || belowMinimum) {
@@ -90,7 +104,7 @@ export function RechargeFormCard(props: RechargeFormCardProps) {
     }
     return {
       purpose: 'topup',
-      payment_method_id: selectedMethod.id,
+      payment_option_id: selectedMethod.id,
       amount: amount / 100,
     }
   }, [amount, belowMinimum, selectedMethod])
@@ -228,7 +242,28 @@ export function RechargeFormCard(props: RechargeFormCardProps) {
               onSelect={(method) => setMethodId(method.id)}
               loading={props.methodsLoading}
               disabled={props.purchasing}
+              getDisabledReason={(method) =>
+                takes(method)
+                  ? undefined
+                  : t('Takes {{amounts}}', {
+                      amounts: describeAmountRanges(
+                        method.amount_ranges,
+                        currency,
+                        locale,
+                        t
+                      ),
+                    })
+              }
             />
+            {noMethodTakesAmount && (
+              <Alert>
+                <AlertDescription>
+                  {t(
+                    'No payment method takes this amount. Choose another amount.'
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
 
           {request && (

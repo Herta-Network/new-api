@@ -22,7 +22,6 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
-import { STRIPE_PAYMENT_METHOD_TYPE_LABELS } from '../constants'
 import { getPaymentIcon } from '../lib/ui'
 import type { PaymentMethodOption } from '../types'
 
@@ -38,8 +37,7 @@ interface PaymentMethodPickerProps {
 
 /**
  * The payment methods of a purchase as a group of toggle buttons. An
- * unavailable method stays listed, disabled, with the server's reason; a
- * Stripe method names the payment method type it collects.
+ * unavailable method stays listed, disabled, with the server's reason.
  */
 export function PaymentMethodPicker(props: PaymentMethodPickerProps) {
   const { t } = useTranslation()
@@ -68,12 +66,7 @@ export function PaymentMethodPicker(props: PaymentMethodPickerProps) {
               method.unavailable?.params
             )
         const selected = props.selectedId === method.id
-        const paymentType = method.payment_method_type
-          ? t(STRIPE_PAYMENT_METHOD_TYPE_LABELS[method.payment_method_type])
-          : undefined
-        const detail =
-          reason ||
-          [paymentType, method.description].filter(Boolean).join(' · ')
+        const detail = reason || method.description
         return (
           <Button
             key={method.id}
@@ -91,11 +84,10 @@ export function PaymentMethodPicker(props: PaymentMethodPickerProps) {
           >
             <span className='shrink-0'>
               {getPaymentIcon(
-                method.platform,
+                method.balance ? 'balance' : undefined,
                 'h-4 w-4',
                 method.icon,
-                method.name,
-                method.payment_method_type
+                method.name
               )}
             </span>
             <span className='flex min-w-0 flex-col items-start gap-0.5'>

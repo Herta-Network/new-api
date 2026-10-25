@@ -63,6 +63,29 @@ export type PaymentOrder = {
   closed_at: number
 }
 
+/**
+ * One request to a payment method to collect an order; the first invoice
+ * paid completes the order. Amounts count hundredths of their currency.
+ */
+export type PaymentInvoice = {
+  id: number
+  /** The order number the gateway knows */
+  invoice_no: string
+  order_id: number
+  payment_method_id: number
+  platform: string
+  /** What the gateway was asked to collect; empty currency = no checkout. */
+  payment_amount: number
+  payment_currency: string
+  exchange_rate: string
+  trade_no: string
+  status: number
+  close_reason: string
+  created_at: number
+  paid_at: number
+  closed_at: number
+}
+
 export type PaymentOrderFilters = {
   p: number
   page_size: number
@@ -79,6 +102,8 @@ export type PaymentUnmatched = {
   platform: string
   trade_no: string
   order_no: string
+  /** The invoice the payment was made for; empty for a manual completion. */
+  invoice_no: string
   payment_method_id: number
   user_id: number
   amount: number

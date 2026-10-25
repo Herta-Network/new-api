@@ -976,6 +976,34 @@ export const STATIC_I18N_KEYS = [
   'Secret key',
   'Merchant UUID',
   'Payment API key',
+  // Payment methods and the channels that collect them: the save and
+  // purchase messages of the server.
+  'Payment channel not found',
+  'The payment channel name is required',
+  'The platform of a payment channel cannot be changed',
+  'This payment channel has pending orders. Change or delete it after they are paid or closed.',
+  'Choose the payment method this channel collects',
+  'Enter a lowest and highest amount with at most two decimal places; the highest must not be below the lowest',
+  'Use a priority from 0 to 1000 and a weight from 1 to 1000',
+  'The balance channel cannot be changed. Change the balance payment method instead.',
+  'Set a public callback domain for this payment channel, or a public server address, first',
+  'Move or delete the channels of this payment method first',
+  'This payment method does not take this amount',
+  // EPay protocol versions and checkout modes: the platform fields, their
+  // options and hints, and the save validation messages.
+  'Protocol version',
+  'EPay V1 (MD5 merchant key)',
+  'EPay V2 (RSA keys)',
+  'Checkout mode',
+  'An API order is created by the server, which notices a failing gateway before the buyer leaves.',
+  'API order',
+  'Gateway payment page',
+  'Merchant private key',
+  'Platform public key',
+  'alipay, wxpay, qqpay and so on. API orders need one; on the payment page an empty type lets the buyer choose.',
+  'EPay API checkout needs a payment type',
+  'The EPay V2 merchant private key must be an unencrypted RSA private key of at least 2048 bits',
+  'The EPay V2 platform public key must be an RSA public key of at least 2048 bits',
   // Stripe payment method types: the platform field, its options (also the
   // wallet's type labels) and the save validation message.
   'Payment method type',

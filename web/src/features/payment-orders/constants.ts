@@ -76,6 +76,25 @@ export const PAYMENT_CLOSE_REASONS: Record<string, string> = {
   admin: 'Closed by an administrator',
 }
 
+/** Invoice statuses (entity.PaymentInvoice*). */
+export const PAYMENT_INVOICE_STATUSES: Record<
+  number,
+  { labelKey: string; variant: StatusVariant }
+> = {
+  1: { labelKey: 'Awaiting payment', variant: 'info' },
+  2: { labelKey: 'Paid', variant: 'success' },
+  3: { labelKey: 'Closed', variant: 'neutral' },
+}
+
+/** Why an invoice closed, beyond the reasons its order closed for. */
+export const PAYMENT_INVOICE_CLOSE_REASONS: Record<string, string> = {
+  ...PAYMENT_CLOSE_REASONS,
+  order_paid: 'The order was paid through another invoice',
+  manual: 'The order was marked as paid',
+  failed: 'The channel could not start the payment',
+  replaced: 'Replaced by a newer invoice',
+}
+
 export const PAYMENT_UNMATCHED_STATES = [
   { value: 'false', labelKey: 'Unresolved' },
   { value: 'true', labelKey: 'Resolved' },

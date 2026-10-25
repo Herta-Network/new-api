@@ -16,7 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { PaymentInfo } from '../types'
+import type { TFunction } from 'i18next'
+
+import { formatMinorAmount } from '@/lib/currency'
+
+import type { AmountRange, PaymentInfo, PaymentMethodOption } from '../types'
 
 // ============================================================================
 // Payment Helpers
@@ -47,4 +51,38 @@ export function getAmountDiscount(
   if (!info || minor % 100 !== 0) return 1
   const discount = info.amount_discount?.[String(minor / 100)]
   return typeof discount === 'number' && discount > 0 ? discount : 1
+}
+
+/**
+ * Whether a payment method takes a price in hundredths; one without ranges
+ * takes any.
+ */
+export function takesAmount(method: PaymentMethodOption, minor: number) {
+  return (
+    method.amount_ranges.length === 0 ||
+    method.amount_ranges.some(
+      (range) => minor >= range.min && (range.max === 0 || minor <= range.max)
+    )
+  )
+}
+
+/**
+ * The prices a payment method takes, as "1.00 – 50.00 or 100.00 and above".
+ * `locale` must already be an Intl locale (see `toIntlLocale`).
+ */
+export function describeAmountRanges(
+  ranges: AmountRange[],
+  currency: string,
+  locale: string | undefined,
+  t: TFunction
+) {
+  return ranges
+    .map((range) => {
+      const min = formatMinorAmount(range.min, currency, locale)
+      const max = formatMinorAmount(range.max, currency, locale)
+      if (range.max === 0) return t('{{min}} and above', { min })
+      if (range.min === 0) return t('up to {{max}}', { max })
+      return t('{{min}} – {{max}}', { min, max })
+    })
+    .join(t(' or '))
 }

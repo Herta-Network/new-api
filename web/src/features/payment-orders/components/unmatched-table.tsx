@@ -95,7 +95,17 @@ export function PaymentUnmatchedTable() {
       header: t('Order number'),
       meta: { mobileTitle: true },
       cell: ({ row }) => (
-        <span className='font-mono text-xs'>{row.original.order_no}</span>
+        <span className='flex min-w-0 flex-col gap-0.5'>
+          <span className='font-mono text-xs'>{row.original.order_no}</span>
+          {row.original.invoice_no &&
+            row.original.invoice_no !== row.original.order_no && (
+              <span className='text-muted-foreground font-mono text-xs'>
+                {t('Invoice {{invoiceNo}}', {
+                  invoiceNo: row.original.invoice_no,
+                })}
+              </span>
+            )}
+        </span>
       ),
       size: 220,
     },

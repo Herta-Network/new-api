@@ -101,11 +101,11 @@ export function StripePaymentDialog(props: StripePaymentDialogProps) {
     <Dialog
       open={!!session}
       onOpenChange={(open) => !open && props.onClose()}
-      title={t('Pay with Stripe')}
+      title={t('Complete payment')}
       description={
         isCard
           ? t(
-              'Your payment details go straight to Stripe and never reach this site.'
+              'Your payment details go straight to the payment provider and never reach this site.'
             )
           : t(
               'This page updates by itself once the payment provider confirms the payment.'
@@ -120,7 +120,9 @@ export function StripePaymentDialog(props: StripePaymentDialogProps) {
       {stripeInstance === null && (
         <Alert variant='destructive'>
           <AlertDescription>
-            {t('Stripe could not be loaded. Check your network and try again.')}
+            {t(
+              'The payment form could not be loaded. Check your network and try again.'
+            )}
           </AlertDescription>
         </Alert>
       )}

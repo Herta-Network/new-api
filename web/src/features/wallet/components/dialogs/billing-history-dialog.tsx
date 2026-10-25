@@ -44,11 +44,7 @@ import { handleServerError } from '@/lib/handle-server-error'
 
 import { closePaymentOrder } from '../../api'
 import { useBillingHistory } from '../../hooks/use-billing-history'
-import {
-  getOrderStatusConfig,
-  getPlatformLabel,
-  isOrderPayable,
-} from '../../lib/billing'
+import { getOrderStatusConfig, isOrderPayable } from '../../lib/billing'
 import { paymentQueryKeys } from '../../lib/wallet-queries'
 
 interface BillingHistoryDialogProps {
@@ -222,7 +218,7 @@ export function BillingHistoryDialog(props: BillingHistoryDialogProps) {
                             {t('Payment Method')}
                           </dt>
                           <dd className='text-sm font-medium'>
-                            {t(getPlatformLabel(order.platform))}
+                            {order.payment_option || '-'}
                           </dd>
                         </div>
                         <div className='space-y-1'>

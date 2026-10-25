@@ -21,6 +21,7 @@ import { api } from '@/lib/api'
 import type {
   ApiResponse,
   PageData,
+  PaymentInvoice,
   PaymentOrder,
   PaymentOrderFilters,
   PaymentUnmatched,
@@ -31,6 +32,14 @@ export async function listPaymentOrders(filters: PaymentOrderFilters) {
   const res = await api.get<ApiResponse<PageData<PaymentOrder>>>(
     '/api/payment/admin/orders',
     { params: filters }
+  )
+  return res.data
+}
+
+/** The invoices of an order in the order they were issued. */
+export async function listPaymentOrderInvoices(orderNo: string) {
+  const res = await api.get<ApiResponse<PaymentInvoice[]>>(
+    `/api/payment/admin/orders/${encodeURIComponent(orderNo)}/invoices`
   )
   return res.data
 }

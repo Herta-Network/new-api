@@ -1,5 +1,5 @@
 // Package store keeps the payment module's tables: payment methods,
-// orders and their settlement, and unmatched payments. It writes the shared
+// orders, their invoices and settlement, and unmatched payments. It writes the shared
 // kernel's tables (wallets, subscriptions, logs) only through the exported
 // functions of package model.
 package store
@@ -23,8 +23,9 @@ var (
 	// ErrOrderNotPending reports an order that left the pending state
 	// before the operation could apply.
 	ErrOrderNotPending = errors.New("payment order is no longer pending")
-	// ErrCheckoutChanged reports that the checkout of an order
-	// changed after a gateway verdict on it was made.
+	// ErrCheckoutChanged reports that the checkout of an invoice changed
+	// after a gateway verdict on it was made, or that its order got another
+	// invoice meanwhile.
 	ErrCheckoutChanged = errors.New("payment order checkout changed")
 
 	ErrTooManyPendingOrders error = common.NewMessage("You have too many unpaid orders. Pay or close one first.")
@@ -41,9 +42,10 @@ type OrderLimits struct {
 	MaxPlanPurchases int
 }
 
-// CreateOrder inserts a pending order. The user row is locked so
+// CreateOrder inserts a pending order and, for a gateway order, its first
+// invoice, which takes the order's number. The user row is locked so
 // concurrent orders of one user are counted against the limits one by one.
-func CreateOrder(order *entity.PaymentOrder, limits OrderLimits) error {
+func CreateOrder(order *entity.PaymentOrder, limits OrderLimits, invoice *entity.PaymentInvoice) error {
 	order.Status = entity.PaymentOrderPending
 	return model.DB.Transaction(func(tx *gorm.DB) error {
 		if err := model.LockUserTx(tx, order.UserId); err != nil {
@@ -76,13 +78,32 @@ func CreateOrder(order *entity.PaymentOrder, limits OrderLimits) error {
 				return ErrPlanPurchaseLimit
 			}
 		}
-		return tx.Create(order).Error
+		if err := tx.Create(order).Error; err != nil {
+			return err
+		}
+		if invoice == nil {
+			return nil
+		}
+		invoice.InvoiceNo, invoice.OrderId, invoice.Status, invoice.CreatedAt = order.OrderNo, order.Id, entity.PaymentInvoicePending, order.CreatedAt
+		return tx.Create(invoice).Error
 	})
 }
 
 func GetOrderByNo(orderNo string) (*entity.PaymentOrder, error) {
 	var order entity.PaymentOrder
 	err := model.DB.Where("order_no = ?", orderNo).First(&order).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrOrderNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
+func GetOrderByID(id int) (*entity.PaymentOrder, error) {
+	var order entity.PaymentOrder
+	err := model.DB.Where("id = ?", id).First(&order).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrOrderNotFound
 	}
@@ -128,43 +149,6 @@ func ListOrders(filter OrderFilter, pageInfo *common.PageInfo) ([]*entity.Paymen
 	return orders, total, err
 }
 
-// SetPaymentExpectation records the payment expectation of a pending order
-// whose checkout has not started. It reports whether this call recorded it;
-// otherwise the order already holds one (or is no longer pending) and the
-// caller reloads it.
-func SetPaymentExpectation(orderID int, amount int64, currency, rate string) (bool, error) {
-	result := model.DB.Model(&entity.PaymentOrder{}).
-		Where("id = ? AND status = ? AND payment_currency = ''", orderID, entity.PaymentOrderPending).
-		Updates(map[string]any{"payment_amount": amount, "payment_currency": currency, "exchange_rate": rate})
-	return result.RowsAffected == 1, result.Error
-}
-
-// ClaimPaymentTrade binds tradeNo as the only gateway payment of a pending
-// order and returns the trade the order holds afterwards: tradeNo when the
-// claim won, the trade a concurrent checkout claimed otherwise.
-func ClaimPaymentTrade(orderID int, tradeNo string) (string, error) {
-	if tradeNo == "" {
-		return "", errors.New("empty trade number")
-	}
-	result := model.DB.Model(&entity.PaymentOrder{}).
-		Where("id = ? AND status = ? AND trade_no = ''", orderID, entity.PaymentOrderPending).
-		Update("trade_no", tradeNo)
-	if result.Error != nil {
-		return "", result.Error
-	}
-	if result.RowsAffected == 1 {
-		return tradeNo, nil
-	}
-	var order entity.PaymentOrder
-	if err := model.DB.Select("trade_no", "status").Where("id = ?", orderID).First(&order).Error; err != nil {
-		return "", err
-	}
-	if order.TradeNo != "" {
-		return order.TradeNo, nil
-	}
-	return "", ErrOrderNotPending
-}
-
 // ListDueOrders returns pending orders past their expiry whose next
 // gateway check is due.
 func ListDueOrders(now int64, limit int) ([]*entity.PaymentOrder, error) {
@@ -182,35 +166,30 @@ func DeferOrderCheck(orderID int, attempts int, nextCheckAt int64) error {
 		Updates(map[string]any{"check_attempts": attempts, "next_check_at": nextCheckAt}).Error
 }
 
-// checkoutChanged reports whether the checkout of an order differs
-// from the snapshot a gateway verdict was made on.
-func checkoutChanged(current, snapshot *entity.PaymentOrder) bool {
-	return current.PaymentCurrency != snapshot.PaymentCurrency || current.PaymentAmount != snapshot.PaymentAmount ||
-		current.TradeNo != snapshot.TradeNo || current.PaymentMethodId != snapshot.PaymentMethodId
-}
-
-// CloseOrder closes a pending order and reports whether this call
-// closed it. With requireStableCheckout the order is locked first and must
-// still have the checkout of snapshot, or ErrCheckoutChanged is
-// returned: the gateway verdict the close relies on covers only that
-// checkout.
-func CloseOrder(snapshot *entity.PaymentOrder, requireStableCheckout bool, reason string) (bool, error) {
+// CloseOrder closes a pending order whose invoices are all closed and
+// reports whether this call closed it. An invoice that is still pending,
+// issued while the close was decided, fails it with ErrCheckoutChanged.
+func CloseOrder(order *entity.PaymentOrder, reason string) (bool, error) {
 	closed := false
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
-		if requireStableCheckout {
-			var current entity.PaymentOrder
-			if err := model.LockForUpdate(tx).Where("id = ?", snapshot.Id).First(&current).Error; err != nil {
-				return err
-			}
-			if current.Status != entity.PaymentOrderPending {
-				return nil
-			}
-			if checkoutChanged(&current, snapshot) {
-				return ErrCheckoutChanged
-			}
+		var current entity.PaymentOrder
+		if err := model.LockForUpdate(tx).Where("id = ?", order.Id).First(&current).Error; err != nil {
+			return err
+		}
+		if current.Status != entity.PaymentOrderPending {
+			return nil
+		}
+		var pending int64
+		if err := tx.Model(&entity.PaymentInvoice{}).
+			Where("order_id = ? AND status = ?", order.Id, entity.PaymentInvoicePending).
+			Count(&pending).Error; err != nil {
+			return err
+		}
+		if pending > 0 {
+			return ErrCheckoutChanged
 		}
 		result := tx.Model(&entity.PaymentOrder{}).
-			Where("id = ? AND status = ?", snapshot.Id, entity.PaymentOrderPending).
+			Where("id = ? AND status = ?", order.Id, entity.PaymentOrderPending).
 			Updates(map[string]any{"status": entity.PaymentOrderClosed, "closed_at": common.GetTimestamp(), "close_reason": reason})
 		closed = result.RowsAffected == 1
 		return result.Error
@@ -218,33 +197,27 @@ func CloseOrder(snapshot *entity.PaymentOrder, requireStableCheckout bool, reaso
 	return closed, err
 }
 
-// Settlement is a confirmed gateway payment to settle an order with.
+// Settlement is a confirmed gateway payment of an invoice.
 type Settlement struct {
-	OrderNo string
-	TradeNo string
+	InvoiceNo string
+	TradeNo   string
 	// Amount and Currency are what the gateway collected; they must equal
-	// the order's payment expectation.
+	// the invoice's payment expectation.
 	Amount   int64
 	Currency string
 	// ClientIp is recorded in the top-up log.
 	ClientIp string
-	// Manual marks an administrator's completion of an order the gateway
-	// cannot report as paid (a transfer, for example). It needs no TradeNo,
-	// Amount or Currency: the order's own expectation, or its amount when no
-	// checkout started, is taken as paid under the trade number
-	// ManualTradeNo.
-	Manual bool
 }
 
 // Settlement outcomes.
 const (
 	// SettleFinished: the order was paid and fulfilled by this call.
 	SettleFinished = iota + 1
-	// SettleDuplicate: the order already holds this payment.
+	// SettleDuplicate: the invoice already holds this payment.
 	SettleDuplicate
-	// SettleUnmatched: the payment cannot settle the order (it was paid with
-	// another trade, the amount differs, ...) and was recorded in
-	// payment_unmatched for an operator.
+	// SettleUnmatched: the payment cannot settle the order (its order was
+	// paid through another invoice, the amount differs, ...) and was
+	// recorded in payment_unmatched for an operator.
 	SettleUnmatched
 	// SettleFulfilFailed: the order is paid but its fulfilment failed for a
 	// business reason; it keeps FulfilError and the payment was recorded in
@@ -252,7 +225,7 @@ const (
 	SettleFulfilFailed
 )
 
-// SettleResult reports what SettleOrder did.
+// SettleResult reports what SettleInvoice or CompleteOrderManually did.
 type SettleResult struct {
 	Outcome int
 	// Reason explains SettleUnmatched and SettleFulfilFailed.
@@ -267,88 +240,89 @@ type fulfilment struct {
 	upgradedGroup bool
 }
 
-// SettleOrder settles a confirmed gateway payment in one transaction:
-// the order is locked, bound to the payment, marked paid and fulfilled in a
-// savepoint. A business failure of the fulfilment (wallet ceiling, plan
-// purchase limit, missing plan or user) rolls back to the savepoint and
-// leaves the order paid with FulfilError; any other error rolls the whole
-// transaction back so the gateway retries. A payment that cannot settle the
-// order is recorded in payment_unmatched once.
-func SettleOrder(s Settlement) (*SettleResult, error) {
+// SettleInvoice settles a confirmed gateway payment in one transaction: the
+// invoice's order is locked, the invoice is bound to the payment and marked
+// paid, and the order, if no other invoice paid it yet, is marked paid and
+// fulfilled in a savepoint. A business failure of the fulfilment (wallet
+// ceiling, plan purchase limit, missing plan or user) rolls back to the
+// savepoint and leaves the order paid with FulfilError; any other error
+// rolls the whole transaction back so the gateway retries. A payment that
+// cannot settle the order is recorded in payment_unmatched once; a paid
+// invoice whose order another invoice paid first stays paid, for the
+// refund.
+func SettleInvoice(s Settlement) (*SettleResult, error) {
 	result := &SettleResult{}
 	var done *fulfilment
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
-		var order entity.PaymentOrder
-		if err := model.LockForUpdate(tx).Where("order_no = ?", s.OrderNo).First(&order).Error; err != nil {
+		var invoice entity.PaymentInvoice
+		if err := tx.Where("invoice_no = ?", s.InvoiceNo).First(&invoice).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrOrderNotFound
 			}
 			return err
 		}
-		result.Order = &order
-		if s.Manual {
-			if order.Status != entity.PaymentOrderPending && order.Status != entity.PaymentOrderClosed {
-				return ErrOrderNotPending
-			}
-			if order.TradeNo != "" {
-				return common.NewMessage("The order is bound to a gateway payment. Reconcile it instead.")
-			}
-			if order.PaymentCurrency == "" {
-				order.PaymentAmount, order.PaymentCurrency = order.Amount, order.Currency
-			}
-			s.TradeNo, s.Amount, s.Currency = ManualTradeNo(order.OrderNo), order.PaymentAmount, order.PaymentCurrency
+		var order entity.PaymentOrder
+		if err := model.LockForUpdate(tx).Where("id = ?", invoice.OrderId).First(&order).Error; err != nil {
+			return err
 		}
+		// The order lock serializes the settlements of its invoices; read the
+		// invoice again under it.
+		if err := model.LockForUpdate(tx).Where("id = ?", invoice.Id).First(&invoice).Error; err != nil {
+			return err
+		}
+		result.Order = &order
 		unmatched := func(reason string) error {
 			result.Outcome, result.Reason = SettleUnmatched, reason
-			return recordUnmatchedTx(tx, &order, s, reason)
+			return recordUnmatchedTx(tx, &order, &invoice, s, reason)
 		}
-		switch order.Status {
-		case entity.PaymentOrderFinished, entity.PaymentOrderPaid:
-			if order.TradeNo == s.TradeNo {
+		switch invoice.Status {
+		case entity.PaymentInvoicePaid:
+			if invoice.TradeNo == s.TradeNo {
 				result.Outcome = SettleDuplicate
 				return nil
 			}
-			return unmatched("the order was already paid with another trade")
-		case entity.PaymentOrderPending:
-		case entity.PaymentOrderClosed:
-			// A payment that arrives after the order closed settles it when it
-			// is exactly the expectation the closed checkout asked for.
-			if order.PaymentCurrency == "" && !s.Manual {
-				return unmatched("the order closed before its checkout started")
+			return unmatched("the invoice was already paid with another trade")
+		case entity.PaymentInvoicePending:
+		case entity.PaymentInvoiceClosed:
+			// A payment that arrives after the invoice closed counts when it is
+			// exactly the expectation the closed checkout asked for.
+			if invoice.PaymentCurrency == "" {
+				return unmatched("the invoice closed before its checkout started")
 			}
 		default:
-			return unmatched(fmt.Sprintf("the order has status %d", order.Status))
+			return unmatched(fmt.Sprintf("the invoice has status %d", invoice.Status))
 		}
-		if order.TradeNo != "" && order.TradeNo != s.TradeNo {
-			return unmatched("the order is bound to another trade")
+		if invoice.TradeNo != "" && invoice.TradeNo != s.TradeNo {
+			return unmatched("the invoice is bound to another trade")
 		}
-		if order.PaymentCurrency == "" || order.PaymentAmount != s.Amount || !strings.EqualFold(order.PaymentCurrency, s.Currency) {
+		if invoice.PaymentAmount != s.Amount || !strings.EqualFold(invoice.PaymentCurrency, s.Currency) {
 			return unmatched("the paid amount differs from the payment expectation")
 		}
 		var holders int64
-		if err := tx.Model(&entity.PaymentOrder{}).
-			Where("platform = ? AND trade_no = ? AND id <> ?", order.Platform, s.TradeNo, order.Id).
+		if err := tx.Model(&entity.PaymentInvoice{}).
+			Where("platform = ? AND trade_no = ? AND id <> ?", invoice.Platform, s.TradeNo, invoice.Id).
 			Count(&holders).Error; err != nil {
 			return err
 		}
 		if holders > 0 {
-			return unmatched("the trade already settled another order")
+			return unmatched("the trade already paid another invoice")
 		}
-		now := common.GetTimestamp()
-		order.Status, order.TradeNo, order.PaidAt = entity.PaymentOrderPaid, s.TradeNo, now
-		if err := tx.Model(&order).Updates(map[string]any{
-			"status": order.Status, "trade_no": order.TradeNo, "paid_at": now,
-			"payment_amount": order.PaymentAmount, "payment_currency": order.PaymentCurrency,
-		}).Error; err != nil {
+		invoice.Status, invoice.TradeNo, invoice.PaidAt = entity.PaymentInvoicePaid, s.TradeNo, common.GetTimestamp()
+		if err := tx.Model(&invoice).Updates(map[string]any{"status": invoice.Status, "trade_no": invoice.TradeNo, "paid_at": invoice.PaidAt}).Error; err != nil {
 			return err
 		}
-		fulfilled, businessErr, err := fulfilOrderTx(tx, &order)
+		if order.Status != entity.PaymentOrderPending && order.Status != entity.PaymentOrderClosed {
+			return unmatched("the order was already paid through another invoice")
+		}
+		order.PaymentMethodId, order.Platform, order.TradeNo = invoice.PaymentMethodId, invoice.Platform, invoice.TradeNo
+		order.PaymentAmount, order.PaymentCurrency, order.ExchangeRate = invoice.PaymentAmount, invoice.PaymentCurrency, invoice.ExchangeRate
+		fulfilled, businessErr, err := payOrderTx(tx, &order)
 		if err != nil {
 			return err
 		}
 		if businessErr != nil {
 			result.Outcome, result.Reason = SettleFulfilFailed, businessErr.Error()
-			return recordUnmatchedTx(tx, &order, s, "fulfilment failed: "+businessErr.Error())
+			return recordUnmatchedTx(tx, &order, &invoice, s, "fulfilment failed: "+businessErr.Error())
 		}
 		result.Outcome = SettleFinished
 		done = fulfilled
@@ -361,6 +335,85 @@ func SettleOrder(s Settlement) (*SettleResult, error) {
 		afterFulfilment(result.Order, done, s.ClientIp)
 	}
 	return result, nil
+}
+
+// CompleteOrderManually marks a pending or closed order paid on an
+// administrator's word (a bank transfer, for example) and fulfils it, under
+// the trade number ManualTradeNo. The amount paid is the expectation of its
+// latest invoice, or the order's amount when no checkout started. An order
+// with an invoice bound to a gateway payment is reconciled instead.
+func CompleteOrderManually(orderNo string, clientIp string) (*SettleResult, error) {
+	result := &SettleResult{}
+	var done *fulfilment
+	s := Settlement{ClientIp: clientIp}
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		var order entity.PaymentOrder
+		if err := model.LockForUpdate(tx).Where("order_no = ?", orderNo).First(&order).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrOrderNotFound
+			}
+			return err
+		}
+		result.Order = &order
+		if order.Status != entity.PaymentOrderPending && order.Status != entity.PaymentOrderClosed {
+			return ErrOrderNotPending
+		}
+		var invoices []entity.PaymentInvoice
+		if err := tx.Where("order_id = ?", order.Id).Order("id").Find(&invoices).Error; err != nil {
+			return err
+		}
+		order.PaymentAmount, order.PaymentCurrency, order.ExchangeRate = order.Amount, order.Currency, ""
+		for _, invoice := range invoices {
+			if invoice.TradeNo != "" {
+				return common.NewMessage("The order is bound to a gateway payment. Reconcile it instead.")
+			}
+			if invoice.PaymentCurrency != "" {
+				order.PaymentAmount, order.PaymentCurrency, order.ExchangeRate = invoice.PaymentAmount, invoice.PaymentCurrency, invoice.ExchangeRate
+			}
+		}
+		order.TradeNo = ManualTradeNo(order.OrderNo)
+		s.TradeNo, s.Amount, s.Currency = order.TradeNo, order.PaymentAmount, order.PaymentCurrency
+		fulfilled, businessErr, err := payOrderTx(tx, &order)
+		if err != nil {
+			return err
+		}
+		if businessErr != nil {
+			result.Outcome, result.Reason = SettleFulfilFailed, businessErr.Error()
+			return recordUnmatchedTx(tx, &order, nil, s, "fulfilment failed: "+businessErr.Error())
+		}
+		result.Outcome = SettleFinished
+		done = fulfilled
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if done != nil {
+		afterFulfilment(result.Order, done, s.ClientIp)
+	}
+	return result, nil
+}
+
+// payOrderTx marks a locked order paid with the payment its fields name and
+// fulfils it (see fulfilOrderTx). Its invoices that are still pending are
+// closed: the order needs no other payment, and one that arrives anyway is
+// recorded as unmatched.
+func payOrderTx(tx *gorm.DB, order *entity.PaymentOrder) (done *fulfilment, businessErr error, err error) {
+	now := common.GetTimestamp()
+	order.Status, order.PaidAt = entity.PaymentOrderPaid, now
+	if err := tx.Model(order).Updates(map[string]any{
+		"status": order.Status, "paid_at": now, "payment_method_id": order.PaymentMethodId, "platform": order.Platform,
+		"trade_no": order.TradeNo, "payment_amount": order.PaymentAmount, "payment_currency": order.PaymentCurrency,
+		"exchange_rate": order.ExchangeRate,
+	}).Error; err != nil {
+		return nil, nil, err
+	}
+	if err := tx.Model(&entity.PaymentInvoice{}).
+		Where("order_id = ? AND status = ?", order.Id, entity.PaymentInvoicePending).
+		Updates(map[string]any{"status": entity.PaymentInvoiceClosed, "closed_at": now, "close_reason": "order_paid"}).Error; err != nil {
+		return nil, nil, err
+	}
+	return fulfilOrderTx(tx, order)
 }
 
 // FulfilOrder retries the fulfilment of a paid order whose
@@ -571,10 +624,11 @@ func ManualTradeNo(orderNo string) string {
 	return "manual:" + orderNo
 }
 
-// recordUnmatchedTx keeps the durable record of a confirmed payment
-// that could not settle order, once per payment.
-func recordUnmatchedTx(tx *gorm.DB, order *entity.PaymentOrder, s Settlement, reason string) error {
-	return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&entity.PaymentUnmatched{
+// recordUnmatchedTx keeps the durable record of a confirmed payment of
+// invoice (nil for a manual completion) that could not settle order, once
+// per payment.
+func recordUnmatchedTx(tx *gorm.DB, order *entity.PaymentOrder, invoice *entity.PaymentInvoice, s Settlement, reason string) error {
+	record := &entity.PaymentUnmatched{
 		Platform:        order.Platform,
 		TradeNo:         s.TradeNo,
 		OrderNo:         order.OrderNo,
@@ -583,7 +637,11 @@ func recordUnmatchedTx(tx *gorm.DB, order *entity.PaymentOrder, s Settlement, re
 		Amount:          s.Amount,
 		Currency:        strings.ToUpper(s.Currency),
 		Reason:          reason,
-	}).Error
+	}
+	if invoice != nil {
+		record.Platform, record.PaymentMethodId, record.InvoiceNo = invoice.Platform, invoice.PaymentMethodId, invoice.InvoiceNo
+	}
+	return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(record).Error
 }
 
 // refreshGroupCache reloads the cached group of a user whose subscription

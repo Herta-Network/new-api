@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/internal/module/payment"
+	"github.com/QuantumNous/new-api/internal/module/payment/entity"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
@@ -45,19 +46,32 @@ func GetPaymentInfo(c *gin.Context) {
 	})
 }
 
-// GetBuyerPaymentMethods lists the methods the purpose in the query can be
-// paid with.
+// GetBuyerPaymentMethods lists the payment options the purpose in the
+// query can be paid with.
 func GetBuyerPaymentMethods(c *gin.Context) {
 	if !operation_setting.IsPaymentComplianceConfirmed() {
-		common.ApiSuccess(c, []payment.MethodOption{})
+		common.ApiSuccess(c, []payment.OptionView{})
 		return
 	}
-	methods, err := payment.BuyerMethods(c.Request.Context(), c.Query("purpose"))
+	options, err := payment.BuyerOptions(c.Request.Context(), c.Query("purpose"))
 	if err != nil {
 		paymentAPIError(c, err)
 		return
 	}
-	common.ApiSuccess(c, methods)
+	common.ApiSuccess(c, options)
+}
+
+// answerBuyerOrder answers with the buyer's view of an order, or err.
+func answerBuyerOrder(c *gin.Context, order *entity.PaymentOrder, err error) {
+	var view *payment.BuyerOrder
+	if err == nil {
+		view, err = payment.BuyerOrderOf(order)
+	}
+	if err != nil {
+		paymentAPIError(c, err)
+		return
+	}
+	common.ApiSuccess(c, view)
 }
 
 func decodePurchase(c *gin.Context) (payment.PurchaseRequest, bool) {
@@ -90,11 +104,15 @@ func CreatePaymentOrder(c *gin.Context) {
 		return
 	}
 	order, checkout, err := payment.CreateOrder(c.Request.Context(), c.GetInt("id"), req, c.ClientIP())
+	var view *payment.BuyerOrder
+	if err == nil {
+		view, err = payment.BuyerOrderOf(order)
+	}
 	if err != nil {
 		paymentAPIError(c, err)
 		return
 	}
-	common.ApiSuccess(c, gin.H{"order": order, "checkout": checkout})
+	common.ApiSuccess(c, gin.H{"order": view, "checkout": checkout})
 }
 
 // CheckoutPaymentOrder starts the payment of a pending order again.
@@ -114,11 +132,7 @@ func SyncPaymentOrder(c *gin.Context) {
 	if err == nil {
 		order, err = payment.SyncOrder(c.Request.Context(), order, c.ClientIP())
 	}
-	if err != nil {
-		paymentAPIError(c, err)
-		return
-	}
-	common.ApiSuccess(c, order)
+	answerBuyerOrder(c, order, err)
 }
 
 // CloseUserPaymentOrder gives up a pending order of the user.
@@ -127,32 +141,28 @@ func CloseUserPaymentOrder(c *gin.Context) {
 	if err == nil {
 		order, err = payment.CloseOrder(c.Request.Context(), order, payment.CloseByOwner)
 	}
-	if err != nil {
-		paymentAPIError(c, err)
-		return
-	}
-	common.ApiSuccess(c, order)
+	answerBuyerOrder(c, order, err)
 }
 
 // ListUserPaymentOrders lists the user's orders, newest first.
 func ListUserPaymentOrders(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	orders, total, err := payment.ListOrders(payment.OrderFilter{UserId: c.GetInt("id")}, pageInfo)
+	var views []*payment.BuyerOrder
+	if err == nil {
+		views, err = payment.BuyerOrders(orders)
+	}
 	if err != nil {
 		paymentAPIError(c, err)
 		return
 	}
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(orders)
+	pageInfo.SetItems(views)
 	common.ApiSuccess(c, pageInfo)
 }
 
 // GetUserPaymentOrder returns one of the user's orders.
 func GetUserPaymentOrder(c *gin.Context) {
 	order, err := payment.UserOrder(c.GetInt("id"), c.Param("no"))
-	if err != nil {
-		paymentAPIError(c, err)
-		return
-	}
-	common.ApiSuccess(c, order)
+	answerBuyerOrder(c, order, err)
 }

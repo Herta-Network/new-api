@@ -161,7 +161,7 @@ export function StripeCardForm(props: StripeCardFormProps) {
       )}
       <p className='text-muted-foreground flex items-center gap-1.5 text-xs'>
         <LockKeyhole className='h-3.5 w-3.5' aria-hidden='true' />
-        {t('Secured by Stripe')}
+        {t('Secured by the payment provider')}
       </p>
       <div className='flex flex-col-reverse gap-2 sm:flex-row sm:justify-end'>
         <Button

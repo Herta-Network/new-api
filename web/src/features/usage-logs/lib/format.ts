@@ -567,10 +567,13 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'payment.order_complete':
     'Marked payment order {{order_no}} as paid: {{note}}',
   'payment.unmatched_resolve': 'Resolved unmatched payment {{id}}: {{note}}',
-  'payment.method_create': 'Created payment method {{name}} ({{platform}})',
-  'payment.method_update': 'Updated payment method {{name}} ({{platform}})',
-  'payment.method_delete': 'Deleted a payment method',
-  'payment.webhook_sync': 'Synced the Stripe webhook of a payment method',
+  'payment.option_create': 'Created payment method {{name}}',
+  'payment.option_update': 'Updated payment method {{name}}',
+  'payment.option_delete': 'Deleted a payment method',
+  'payment.method_create': 'Created payment channel {{name}} ({{platform}})',
+  'payment.method_update': 'Updated payment channel {{name}} ({{platform}})',
+  'payment.method_delete': 'Deleted a payment channel',
+  'payment.webhook_sync': 'Synced the Stripe webhook of a payment channel',
   // Logs
   'log.clear': 'Cleared historical logs',
   'log.cleanup_start': 'Log cleanup task started.',
