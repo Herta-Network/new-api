@@ -781,15 +781,15 @@ func verifiesEPayV2(t *testing.T, key *rsa.PublicKey, params map[string]string) 
 	return params["sign_type"] == "RSA" && rsa.VerifyPKCS1v15(key, crypto.SHA256, digest[:], signature) == nil
 }
 
-// epayV2Server is an EPay V2 gateway that checks every request's merchant
-// signature and answers with what answer returns for its API path, signed
-// with the platform's key when sign is set. Integer values are sent as JSON
-// numbers, and a blank sign_type is left out, as gateways that default it to
-// RSA answer.
+// epayV2Server is an EPay V2 gateway, served over HTTPS, that checks every
+// request's merchant signature and answers with what answer returns for its
+// API path, signed with the platform's key when sign is set. Integer values
+// are sent as JSON numbers, and a blank sign_type is left out, as gateways
+// that default it to RSA answer.
 func epayV2Server(t *testing.T, config string, answer func(path string, params map[string]string) (fields map[string]string, sign bool)) Gateway {
 	t.Helper()
 	keys := epayV2TestKeys()
-	return epayServer(t, config, func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		params := epayRequest(t, r)
 		assert.True(t, verifiesEPayV2(t, &keys[0].PublicKey, params), "the request is signed by the merchant")
 		assert.Equal(t, "1001", params["pid"])
@@ -811,7 +811,10 @@ func epayV2Server(t *testing.T, config string, answer func(path string, params m
 		raw, err := common.Marshal(body)
 		require.NoError(t, err)
 		_, _ = w.Write(raw)
-	})
+	}))
+	t.Cleanup(server.Close)
+	config = strings.ReplaceAll(config, "SERVER", server.URL)
+	return mustOpen(t, NewRegistry(WithHTTPClient(server.Client())), Method{Platform: PlatformEPay, Config: config})
 }
 
 // The V2 signature covers the scalar parameters except sign, sign_type and
@@ -826,9 +829,10 @@ func TestEPayV2Canonical(t *testing.T) {
 	assert.Error(t, err, "a parameter PHP reads as an array cannot be signed as a scalar")
 }
 
-// The payment page and an API order are signed with the merchant's key; the
-// gateway's answer must carry its own valid, fresh signature. Its sign_type
-// defaults to RSA: gateways such as NiuNiu Pay leave it out.
+// The payment page and an API order are signed with the merchant's key; a
+// signed answer must carry the gateway's valid, fresh signature, whose
+// sign_type defaults to RSA. NiuNiu Pay answers a payment creation without
+// any signature, which is taken over HTTPS only.
 func TestEPayV2Checkout(t *testing.T) {
 	keys := epayV2TestKeys()
 	order := &Order{OrderNo: "order-1", PaymentAmount: 1990, PaymentCurrency: "CNY", ClientIP: "203.0.113.9"}
@@ -861,7 +865,9 @@ func TestEPayV2Checkout(t *testing.T) {
 		{"QR code", withField(created, "pay_type", "qrcode", "pay_info", "https://qr.alipay.com/abc"), true, &Action{Type: ActionQRCode, QRCode: "https://qr.alipay.com/abc"}},
 		{"no signature type", withField(created, "sign_type", ""), true, &Action{Type: ActionURL, URL: "https://pay.example/pay/T1"}},
 		{"another signature type", withField(created, "sign_type", "MD5"), true, nil},
-		{"unsigned success", created, false, nil},
+		{"unsigned success, as NiuNiu Pay answers", map[string]string{"code": "0", "trade_no": "2026102522575628450", "pay_type": "jump", "pay_info": "https://pay.example/pay/submit/2026102522575628450/"},
+			false, &Action{Type: ActionURL, URL: "https://pay.example/pay/submit/2026102522575628450/"}},
+		{"signed without a signature", withField(created, "sign", ""), false, nil},
 		{"stale signature", withField(created, "timestamp", strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10)), true, nil},
 		{"another merchant", withField(created, "pid", "2002"), true, nil},
 		{"refused unsigned", map[string]string{"code": "-1", "msg": "channel closed"}, false, nil},
@@ -896,6 +902,13 @@ func TestEPayV2Checkout(t *testing.T) {
 	})
 	_, err = gw.StartPayment(context.Background(), checkout)
 	assert.Error(t, err)
+
+	// Over plain HTTP an unsigned answer may come from anyone on the way.
+	plain := epayServer(t, epayV2Config("api", "alipay"), func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"trade_no":"T1","pay_type":"jump","pay_info":"https://evil.example/pay"}`))
+	})
+	_, err = plain.StartPayment(context.Background(), checkout)
+	assert.ErrorContains(t, err, "HTTPS")
 }
 
 func withField(fields map[string]string, pairs ...string) map[string]string {
@@ -1005,6 +1018,20 @@ func TestEPayV2QueryAndClose(t *testing.T) {
 	assert.Equal(t, "T1", tradeNo)
 	missing := epayServer(t, epayV2Config("api", "alipay"), http.NotFound)
 	assert.Error(t, missing.ConfirmPayment(context.Background(), order, notice), "V2 has a query API: its absence is a failure")
+
+	// Only a payment creation may answer unsigned: an unsigned query proves
+	// no payment, and an unsigned close does not close the order.
+	unsignedQuery := epayV2Server(t, epayV2Config("api", "alipay"), func(string, map[string]string) (map[string]string, bool) { return paid, false })
+	_, err = unsignedQuery.QueryPayment(context.Background(), order)
+	assert.ErrorContains(t, err, "not signed")
+	unsignedClose := epayV2Server(t, epayV2Config("api", "alipay"), func(path string, _ map[string]string) (map[string]string, bool) {
+		if path == "/api/pay/close" {
+			return closed, false
+		}
+		return unpaid, true
+	})
+	_, err = unsignedClose.Reconcile(context.Background(), CloseRequest{Order: &Order{OrderNo: "order-1", PaymentAmount: 1990, PaymentCurrency: "CNY", CreatedAt: young}})
+	assert.ErrorIs(t, err, ErrUnconfirmed)
 }
 
 // ---- Cryptomus ----

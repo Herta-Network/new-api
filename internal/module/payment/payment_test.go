@@ -550,7 +550,7 @@ func TestSyncAsksEveryInvoiceThatReachedTheBuyer(t *testing.T) {
 
 // fakeEPayV2 is an EPay V2 gateway that answers a payment creation with
 // whatever the test set and the query and close of an order with signed
-// answers, without sign_type as NiuNiu Pay answers. It records the API paths
+// answers, without sign_type, which defaults to RSA. It records the API paths
 // it was asked and the order each named.
 type fakeEPayV2 struct {
 	mu       sync.Mutex
