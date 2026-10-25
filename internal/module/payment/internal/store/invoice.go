@@ -89,6 +89,13 @@ func RecentUnpaidMethods(userID, optionID int, since int64) ([]int, error) {
 	return methods, err
 }
 
+// lockInvoiceOrderTx locks the order of an invoice. Every transaction that
+// changes an invoice and its order locks the order first, as settlement
+// does, so they cannot deadlock.
+func lockInvoiceOrderTx(tx *gorm.DB, invoice *entity.PaymentInvoice) error {
+	return model.LockForUpdate(tx).Select("id").Where("id = ?", invoice.OrderId).First(&entity.PaymentOrder{}).Error
+}
+
 // orderMirrorTx copies fields of invoice onto its order while the order is
 // pending and invoice is its latest invoice: the order shows its current
 // checkout in lists.
@@ -107,6 +114,9 @@ func orderMirrorTx(tx *gorm.DB, invoice *entity.PaymentInvoice, fields map[strin
 func SetInvoiceExpectation(invoice *entity.PaymentInvoice, amount int64, currency, rate string) (bool, error) {
 	recorded := false
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockInvoiceOrderTx(tx, invoice); err != nil {
+			return err
+		}
 		fields := map[string]any{"payment_amount": amount, "payment_currency": currency, "exchange_rate": rate}
 		result := tx.Model(&entity.PaymentInvoice{}).
 			Where("id = ? AND status = ? AND payment_currency = ''", invoice.Id, entity.PaymentInvoicePending).
@@ -129,6 +139,9 @@ func ClaimInvoiceTrade(invoice *entity.PaymentInvoice, tradeNo string) (string, 
 	}
 	claimed := false
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockInvoiceOrderTx(tx, invoice); err != nil {
+			return err
+		}
 		result := tx.Model(&entity.PaymentInvoice{}).
 			Where("id = ? AND status = ? AND trade_no = ''", invoice.Id, entity.PaymentInvoicePending).
 			Update("trade_no", tradeNo)
