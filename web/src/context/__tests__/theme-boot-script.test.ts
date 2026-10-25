@@ -21,18 +21,14 @@ import { resolve } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { themeBootstrapScript } from '@/lib/theme-bootstrap'
 import { THEME_STORAGE_KEYS } from '@/lib/theme-storage'
 
-// The inline script in index.html must apply the theme class before React
-// mounts; Dark Reader checks `html.dark` only once while the page loads.
-const html = readFileSync(
-  resolve(import.meta.dirname, '../../../index.html'),
-  'utf8'
-)
-const bootScript = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? ''
-
+// The theme script the build loads first in <head> must apply the theme
+// class before React mounts; Dark Reader checks `html.dark` only once while
+// the page loads.
 function runBootScript() {
-  new Function(bootScript)()
+  new Function(themeBootstrapScript(THEME_STORAGE_KEYS.mode))()
 }
 
 function mockSystemDarkMode(dark: boolean) {
@@ -55,7 +51,18 @@ afterEach(() => {
   document.documentElement.classList.remove('light', 'dark')
 })
 
-describe('index.html theme boot script', () => {
+describe('index.html scripts', () => {
+  it('has no inline script, so the Content-Security-Policy needs no hashes', () => {
+    const html = readFileSync(
+      resolve(import.meta.dirname, '../../../index.html'),
+      'utf8'
+    )
+
+    expect(html).not.toMatch(/<script(?![^>]*\bsrc=)[^>]*>/i)
+  })
+})
+
+describe('theme boot script', () => {
   it('applies the saved dark preference to html before React mounts', () => {
     mockSystemDarkMode(false)
     localStorage.setItem(THEME_STORAGE_KEYS.mode, 'dark')

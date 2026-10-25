@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -5,6 +6,8 @@ import {
   defineConfig,
   ensureAssetPrefix,
   loadEnv,
+  type HtmlBasicTag,
+  type ModifyHTMLTagsContext,
   type RsbuildPlugin,
 } from '@rsbuild/core'
 import { pluginReact } from '@rsbuild/plugin-react'
@@ -13,10 +16,54 @@ import { tanstackRouter } from '@tanstack/router-plugin/rspack'
 
 import { INTERFACE_LANGUAGE_OPTIONS } from './src/i18n/languages.ts'
 import { localePreloadScript } from './src/i18n/locale-preload.ts'
+import { themeBootstrapScript } from './src/lib/theme-bootstrap.ts'
+import { THEME_STORAGE_KEYS } from './src/lib/theme-storage-keys.ts'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// Puts the inline script from `src/i18n/locale-preload.ts` in index.html, with
+// Emits a `<head>` script as `static/js/<name>.<hash>.js` and returns the tag
+// that loads it. index.html carries no inline script, so the console's
+// Content-Security-Policy allows scripts from its own origin without hashes
+// that would change with every build.
+function headScriptTag(
+  context: ModifyHTMLTagsContext,
+  name: string,
+  source: string
+): HtmlBasicTag {
+  const hash = createHash('sha256').update(source).digest('hex').slice(0, 10)
+  const file = `static/js/${name}.${hash}.js`
+  if (!context.compilation.getAsset(file)) {
+    context.compilation.emitAsset(
+      file,
+      new context.compiler.rspack.sources.RawSource(source)
+    )
+  }
+  return {
+    tag: 'script',
+    attrs: { src: ensureAssetPrefix(file, context.assetPrefix) },
+  }
+}
+
+// Loads the theme script from `src/lib/theme-bootstrap.ts` first in <head>,
+// before the bundle and the stylesheet, so the theme class is set before the
+// first paint.
+const pluginThemeBootstrap: RsbuildPlugin = {
+  name: 'newapi:theme-bootstrap',
+  setup(api) {
+    api.modifyHTMLTags((tags, context) => {
+      tags.headTags.unshift(
+        headScriptTag(
+          context,
+          'theme-bootstrap',
+          themeBootstrapScript(THEME_STORAGE_KEYS.mode)
+        )
+      )
+      return tags
+    })
+  },
+}
+
+// Loads the script from `src/i18n/locale-preload.ts` in index.html, with
 // the hashed URL of every `locale-<code>` chunk, so the visitor's locale
 // downloads alongside the main bundle instead of after it.
 const pluginLocalePreload: RsbuildPlugin = {
@@ -37,15 +84,15 @@ const pluginLocalePreload: RsbuildPlugin = {
         })
       )
       // After the bundle's scripts, so they are requested first, and before
-      // the stylesheet: a parser-inserted inline script after a pending
-      // stylesheet waits for it to load.
+      // the stylesheet: a parser-inserted script after a pending stylesheet
+      // waits for it to load.
       const stylesheet = tags.headTags.findIndex(
         (tag) => tag.attrs?.rel === 'stylesheet'
       )
       tags.headTags.splice(
         stylesheet === -1 ? tags.headTags.length : stylesheet,
         0,
-        { tag: 'script', children: localePreloadScript(chunkUrls) }
+        headScriptTag(context, 'locale-preload', localePreloadScript(chunkUrls))
       )
       return tags
     })
@@ -71,6 +118,7 @@ export default defineConfig(({ envMode }) => {
     plugins: [
       pluginReact(),
       pluginTailwindcss({ optimize: false }),
+      pluginThemeBootstrap,
       // Dev compiles dynamic imports lazily, so the locale chunks do not exist
       // yet when the dev server writes index.html.
       isProd && pluginLocalePreload,

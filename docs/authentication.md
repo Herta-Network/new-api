@@ -81,7 +81,22 @@
 - 同源脚本可以读取 localStorage。页面一旦出现 XSS，攻击者可以拿走 Refresh Token 并在别处续期，最长到会话 30 天的绝对期限；HttpOnly Cookie 只允许攻击者在页面打开期间借用会话。OWASP Session Management Cheat Sheet 建议不要把 Refresh Token 放进 Web Storage，ASVS 5.0 的 14.3.3 允许浏览器存储里保存会话令牌。
 - 缓解措施：每次续期都轮换 Refresh Token；已被替换的令牌在 30 秒宽限期后再次出现会撤销整个会话（ASVS 10.4.5），因此被盗令牌和合法客户端谁先续期，另一方再续期时就会让会话失效；会话最长 30 天（ASVS 10.4.8）；用户可在“登录会话”里查看并撤销任何会话（ASVS 10.4.9），修改密码等安全变更会撤销其余会话；Access Token 只在内存里、15 分钟过期；登出时服务端撤销会话、前端删除令牌（ASVS 7.4.1、14.3.1）。
 - 不再有凭据随浏览器自动发送，续期、登出和登录接口不再需要 CSRF 防护和 Origin 校验。
+- 控制台页面带内容安全策略（见下文），注入的内联脚本和外站脚本无法执行，降低出现 XSS 的可能。
 - 未实现的加固：把 Refresh Token 绑定到不可导出的 WebCrypto 密钥（DPoP，RFC 9449），或改用后端代为保存令牌的 BFF 模式（RFC 10017）。
+
+### 内容安全策略（CSP）
+
+后端返回控制台页面（`index.html`）时附带 `Content-Security-Policy`（ASVS 5.0 3.4.3、3.4.6）：
+
+```text
+default-src 'self'; script-src 'self' https://telegram.org https://challenges.cloudflare.com https://js.stripe.com https://*.js.stripe.com; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; font-src 'self' data:; connect-src * data: blob:; frame-src *; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'
+```
+
+- 脚本只能来自控制台自己的 Origin 和用到的第三方：Telegram 登录组件、Cloudflare Turnstile、Stripe.js。不允许 `'unsafe-inline'` 和 `'unsafe-eval'`。构建产物里没有内联脚本：主题初始化和语言包预加载脚本由构建输出为带哈希的文件（`static/js/theme-bootstrap.*.js`、`static/js/locale-preload.*.js`），zod 关闭了 JIT（`web/src/lib/zod-config.ts`），因此策略是固定的，不随构建变化。
+- 后端注入的统计脚本（`UMAMI_WEBSITE_ID`、`GOOGLE_ANALYTICS_ID`）会自动加入：外部脚本按 Origin，Google Analytics 的内联配置按 SHA-256 哈希。
+- 样式允许内联（组件会注入 `<style>`）。图片、媒体、iframe 和网络请求允许任意来源，因为管理员可以配置任意 Logo、首页和关于页 iframe、聊天链接、OIDC 发现地址，前后端分开部署时接口也在另一个 Origin 上。
+- 页面只允许同源嵌入（`frame-ancestors 'self'`），不能加载插件，不能修改 base URL，表单只能提交到本站。
+- 未配置违规上报（ASVS 3.4.7，L3）。
 
 ## Session 签发限额与保留策略
 
@@ -140,6 +155,15 @@ FRONTEND_ORIGINS=https://app.example.com
 ```
 
 并在系统设置里把「服务器地址」设为 `https://api.example.com`、「前端地址」设为 `https://app.example.com`。
+
+单独托管前端时，由静态主机给 `index.html`（以及回落到它的所有前端路由）加上与后端相同的 `Content-Security-Policy` 响应头（见上文“内容安全策略”），例如 Nginx：
+
+```nginx
+location / {
+    try_files $uri /index.html;
+    add_header Content-Security-Policy "<上文的策略>" always;
+}
+```
 
 `SESSION_COOKIE_SECURE` 和 `SESSION_COOKIE_TRUSTED_URL` 已废弃：前者不再生效；后者的值会并入 `FRONTEND_ORIGINS`。设置了它们时启动日志会提示。
 

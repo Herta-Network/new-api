@@ -129,7 +129,7 @@
 ### 3.6 API 请求
 
 - **React Query**：数据获取用 `useQuery`，变更用 `useMutation`；为每个查询配置唯一 `queryKey`（建议数组形式、层级一致）；在 `onSuccess` 中对相关 query 做 `invalidateQueries`，可配合乐观更新。服务端错误统一通过 `handleServerError` 处理（详见 [3.9 错误处理](#39-错误处理)）。
-- **Axios**：使用项目统一的 `api` 实例（含 `baseURL`、`headers`、`withCredentials: true`）；GET 默认请求去重，特殊请求可通过配置关闭；认证刷新与请求重试在拦截器中处理；普通错误提示由 Query/Mutation 的最终失败回调或直接调用方负责。
+- **Axios**：使用项目统一的 `api` 实例（`baseURL` 取运行时配置的后端地址，在 `Authorization` 请求头里带访问令牌，不带 Cookie）；GET 默认请求去重，特殊请求可通过配置关闭；认证刷新与请求重试在拦截器中处理；普通错误提示由 Query/Mutation 的最终失败回调或直接调用方负责。
 
 ### 3.7 表单
 
@@ -171,7 +171,8 @@
 
 - 认证与权限在路由与接口层校验；敏感操作增加二次确认等。
 - 前后端均做数据校验（如 Zod），不信任仅前端校验；敏感信息不落前端存储，配置用环境变量，禁止硬编码密钥。
-- 依赖 React 默认转义，慎用 `dangerouslySetInnerHTML`；跨域与 Cookie 使用 `withCredentials` 并按后端要求处理 CSRF。
+- 依赖 React 默认转义，慎用 `dangerouslySetInnerHTML`；控制台不使用鉴权 Cookie，接口请求经共享的 `api` 实例发往运行时配置的后端地址，绕过它的请求用 `@/lib/runtime-config` 的 `apiUrl()`。
+- 控制台页面带固定的 Content-Security-Policy（`middleware/frontend_static.go` 的 `ConsoleContentSecurityPolicy`）：`index.html` 不得写内联脚本，需要在 `<head>` 里先执行的脚本按 `rsbuild.config.ts` 的 `headScriptTag` 输出为文件；不得使用 `eval`、`new Function` 或依赖它们的库配置；新增第三方脚本来源时同步修改该策略和 `docs/authentication.md`。
 
 ### 3.14 测试
 

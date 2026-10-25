@@ -3,6 +3,8 @@ package middleware
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/base64"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -103,4 +105,64 @@ func TestServeFrontendFilesCompressesEachFileOnce(t *testing.T) {
 	missing := performFrontendRequest(router, http.MethodGet, "/static/js/missing.js", "gzip")
 	assert.Equal(t, http.StatusTeapot, missing.Code)
 	assert.Equal(t, "fallback", missing.Body.String())
+}
+
+// scriptSources returns the sources of the script-src directive of policy.
+func scriptSources(t *testing.T, policy string) []string {
+	t.Helper()
+	for directive := range strings.SplitSeq(policy, ";") {
+		if sources, ok := strings.CutPrefix(strings.TrimSpace(directive), "script-src "); ok {
+			return strings.Fields(sources)
+		}
+	}
+	require.Fail(t, "no script-src directive", policy)
+	return nil
+}
+
+func TestConsolePageSendsTheContentSecurityPolicy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const gaConfig = "window.dataLayer = window.dataLayer || [];gtag('config', 'G-TEST');"
+	gaHash := sha256.Sum256([]byte(gaConfig))
+	tests := []struct {
+		name    string
+		page    string
+		extra   []string
+		allowed string
+	}{
+		{
+			name: "built page without inline scripts",
+			page: `<html><head><script src="/static/js/theme-bootstrap.1.js"></script><script defer src="/static/js/index.2.js"></script></head></html>`,
+		},
+		{
+			name: "injected analytics",
+			page: `<head><script defer src="https://umami.example.org/script.js" data-website-id="x"></script><!--Umami QuantumNous-->` +
+				`<script async src="https://www.googletagmanager.com/gtag/js?id=G-TEST"></script><script>` + gaConfig + `</script></head>`,
+			extra: []string{"https://umami.example.org", "https://www.googletagmanager.com", "'sha256-" + base64.StdEncoding.EncodeToString(gaHash[:]) + "'"},
+		},
+		{
+			name: "a script of an allowed host is not repeated",
+			page: `<script src="https://telegram.org/js/telegram-widget.js?22"></script><script src="javascript:alert(1)"></script>`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			router := gin.New()
+			router.NoRoute(ConsolePage([]byte(test.page)))
+			for _, target := range []string{"/", "/user/settings"} {
+				response := performFrontendRequest(router, http.MethodGet, target, "")
+				require.Equal(t, http.StatusOK, response.Code)
+				assert.Equal(t, test.page, response.Body.String())
+				assert.Equal(t, "no-cache", response.Header().Get("Cache-Control"))
+				policy := response.Header().Get("Content-Security-Policy")
+				expected := append(strings.Fields(consoleScriptSources), test.extra...)
+				assert.Equal(t, expected, scriptSources(t, policy))
+				for _, directive := range []string{"default-src 'self'", "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'self'"} {
+					assert.Contains(t, policy, directive)
+				}
+				assert.NotContains(t, scriptSources(t, policy), "'unsafe-inline'")
+				assert.NotContains(t, policy, "'unsafe-eval'")
+			}
+		})
+	}
+	assert.Equal(t, strings.Fields(consoleScriptSources), scriptSources(t, ConsoleContentSecurityPolicy))
 }
