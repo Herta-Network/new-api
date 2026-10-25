@@ -181,7 +181,7 @@ OAuth state、2FA pending、Passkey ceremony、Telegram bind 等临时状态存�
 
 Proof 同时绑定用户、登录会话、用户鉴权版本、会话版本和 scope，不能跨用户、跨会话或跨用途复用。对 PAT 而言，Proof 绑定的“登录会话”就是令牌本身。
 
-启用了 2FA 的用户注册 Passkey 时，register begin 与 finish 都必须携带有效的 `passkey.register` Proof；finish 会在消费一次性 AuthFlow 之前重新验证 Proof。未启用 2FA 的首次 Passkey 注册不要求该请求头。
+注册 Passkey 时，register begin 与 finish 都必须携带有效的 `passkey.register` Proof；finish 会在消费一次性 AuthFlow 之前重新验证 Proof。已启用 2FA 或 Passkey 的用户用其中之一取得 Proof；两者都未启用的首次注册同样要求 Proof，有密码的用户用密码重新认证，没有密码的用户用已绑定的 OAuth 账号重新认证。
 
 ## 升级注意事项
 
