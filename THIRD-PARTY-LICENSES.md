@@ -1,9 +1,9 @@
 # Third-Party Licenses
 
 This file summarizes direct third-party dependencies used by distributed builds of this project.
-It is an engineering compliance artifact and should be kept with Docker images, standalone binaries, and frontend bundles.
+It is an engineering compliance artifact and should be kept with Docker images and standalone binaries.
 
-Scope: direct dependencies from `go.mod` (including the in-repo `relaykit` and `tokenkit` modules) and `web/package.json`, plus third-party source copied into this repository (see Vendored Source).
+Scope: direct dependencies from `go.mod` (including the in-repo `relaykit` and `tokenkit` modules), plus third-party source copied into this repository (see Vendored Source). The web console's dependencies are listed in new-api-frontend's `THIRD-PARTY-LICENSES.md`.
 Transitive dependencies should be audited before a final external release.
 
 ## Dependency Inventory
@@ -29,7 +29,6 @@ Transitive dependencies should be audited before a final external release.
 | backend  | production  | Go        | `github.com/fxamacker/cbor/v2`                          | `v2.9.0`                             | MIT                     |
 | backend  | production  | Go        | `github.com/gin-contrib/cors`                           | `v1.7.2`                             | MIT                     |
 | backend  | production  | Go        | `github.com/gin-contrib/gzip`                           | `v0.0.6`                             | MIT                     |
-| backend  | production  | Go        | `github.com/gin-contrib/static`                         | `v0.0.1`                             | MIT                     |
 | backend  | production  | Go        | `github.com/gin-gonic/gin`                              | `v1.9.1`                             | MIT                     |
 | backend  | production  | Go        | `github.com/go-audio/aiff`                              | `v1.1.0`                             | Apache-2.0              |
 | backend  | production  | Go        | `github.com/go-audio/wav`                               | `v1.1.0`                             | Apache-2.0              |
@@ -75,90 +74,6 @@ Transitive dependencies should be audited before a final external release.
 | backend  | production  | Go        | `gorm.io/driver/clickhouse`                             | `v0.6.0`                             | MIT                     |
 | backend  | production  | Go        | `gorm.io/driver/postgres`                               | `v1.5.9`                             | MIT                     |
 | backend  | production  | Go        | `gorm.io/gorm`                                          | `v1.25.12`                           | MIT                     |
-| web      | production  | npm       | `@base-ui/react`                                        | `1.6.0`                              | MIT                     |
-| web      | production  | npm       | `@codemirror/lang-javascript`                           | `6.2.5`                              | MIT                     |
-| web      | production  | npm       | `@codemirror/lang-markdown`                             | `6.5.1`                              | MIT                     |
-| web      | production  | npm       | `@codemirror/language`                                  | `6.12.4`                             | MIT                     |
-| web      | production  | npm       | `@codemirror/state`                                     | `6.7.1`                              | MIT                     |
-| web      | production  | npm       | `@codemirror/view`                                      | `6.43.6`                             | MIT                     |
-| web      | production  | npm       | `@fontsource-variable/lora`                             | `5.3.0`                              | OFL-1.1                 |
-| web      | production  | npm       | `@fontsource-variable/public-sans`                      | `5.3.0`                              | OFL-1.1                 |
-| web      | production  | npm       | `@hookform/resolvers`                                   | `5.4.0`                              | MIT                     |
-| web      | production  | npm       | `@hugeicons/core-free-icons`                            | `4.2.2`                              | MIT                     |
-| web      | production  | npm       | `@hugeicons/react`                                      | `1.1.9`                              | MIT                     |
-| web      | production  | npm       | `@lezer/highlight`                                      | `1.2.3`                              | MIT                     |
-| web      | production  | npm       | `@lobehub/icons`                                        | `5.22.0`                             | MIT                     |
-| web      | production  | npm       | `@stripe/react-stripe-js`                               | `7.0.0`                              | MIT                     |
-| web      | production  | npm       | `@stripe/stripe-js`                                     | `10.1.0`                             | MIT                     |
-| web      | production  | npm       | `@tanstack/react-query`                                 | `5.101.2`                            | MIT                     |
-| web      | production  | npm       | `@tanstack/react-router`                                | `1.170.18`                           | MIT                     |
-| web      | production  | npm       | `@tanstack/react-table`                                 | `8.21.3`                             | MIT                     |
-| web      | production  | npm       | `@tanstack/react-virtual`                               | `3.14.6`                             | MIT                     |
-| web      | production  | npm       | `@visactor/react-vchart`                                | `2.1.4`                              | MIT                     |
-| web      | production  | npm       | `@visactor/vchart`                                      | `2.1.4`                              | MIT                     |
-| web      | production  | npm       | `ai`                                                    | `7.0.136`                            | Apache-2.0              |
-| web      | production  | npm       | `auto-skeleton-react`                                   | `1.0.5`                              | MIT                     |
-| web      | production  | npm       | `axios`                                                 | `1.20.0`                             | MIT                     |
-| web      | production  | npm       | `class-variance-authority`                              | `0.7.1`                              | Apache-2.0              |
-| web      | production  | npm       | `clsx`                                                  | `2.1.1`                              | MIT                     |
-| web      | production  | npm       | `cmdk`                                                  | `1.1.1`                              | MIT                     |
-| web      | production  | npm       | `dayjs`                                                 | `1.11.21`                            | MIT                     |
-| web      | production  | npm       | `dompurify`                                             | `3.4.16`                             | Apache-2.0 OR MPL-2.0   |
-| web      | production  | npm       | `i18next`                                               | `26.5.3`                             | MIT                     |
-| web      | production  | npm       | `i18next-browser-languagedetector`                      | `8.2.1`                              | MIT                     |
-| web      | production  | npm       | `input-otp`                                             | `1.5.0`                              | MIT                     |
-| web      | production  | npm       | `katex`                                                 | `0.18.2`                             | MIT                     |
-| web      | production  | npm       | `lucide-react`                                          | `1.25.0`                             | ISC                     |
-| web      | production  | npm       | `marked`                                                | `18.0.6`                             | MIT                     |
-| web      | production  | npm       | `motion`                                                | `12.42.2`                            | MIT                     |
-| web      | production  | npm       | `nanoid`                                                | `5.1.16`                             | MIT                     |
-| web      | production  | npm       | `next-themes`                                           | `0.4.6`                              | MIT                     |
-| web      | production  | npm       | `node-forge`                                            | `1.4.0`                              | BSD-3-Clause OR GPL-2.0 |
-| web      | production  | npm       | `qrcode.react`                                          | `4.2.0`                              | ISC                     |
-| web      | production  | npm       | `react`                                                 | `19.2.7`                             | MIT                     |
-| web      | production  | npm       | `react-day-picker`                                      | `10.0.1`                             | MIT                     |
-| web      | production  | npm       | `react-dom`                                             | `19.2.7`                             | MIT                     |
-| web      | production  | npm       | `react-hook-form`                                       | `7.82.0`                             | MIT                     |
-| web      | production  | npm       | `react-i18next`                                         | `17.1.0`                             | MIT                     |
-| web      | production  | npm       | `react-icons`                                           | `5.7.0`                              | MIT                     |
-| web      | production  | npm       | `react-resizable-panels`                                | `4.14.6`                             | MIT                     |
-| web      | production  | npm       | `react-top-loading-bar`                                 | `3.0.2`                              | MIT                     |
-| web      | production  | npm       | `recharts`                                              | `3.9.1`                              | MIT                     |
-| web      | production  | npm       | `shiki`                                                 | `4.3.1`                              | MIT                     |
-| web      | production  | npm       | `sonner`                                                | `2.0.7`                              | MIT                     |
-| web      | production  | npm       | `sse.js`                                                | `2.8.0`                              | Apache-2.0              |
-| web      | production  | npm       | `stream-markdown-parser`                                | `1.2.18`                             | MIT                     |
-| web      | production  | npm       | `tailwind-merge`                                        | `3.6.0`                              | MIT                     |
-| web      | production  | npm       | `tailwindcss`                                           | `4.3.3`                              | MIT                     |
-| web      | production  | npm       | `tokenlens`                                             | `1.3.1`                              | MIT                     |
-| web      | production  | npm       | `tw-animate-css`                                        | `1.4.0`                              | MIT                     |
-| web      | production  | npm       | `use-stick-to-bottom`                                   | `1.1.6`                              | MIT                     |
-| web      | production  | npm       | `vaul`                                                  | `1.1.2`                              | MIT                     |
-| web      | production  | npm       | `yace`                                                  | `1.1.1`                              | MIT                     |
-| web      | production  | npm       | `yaml`                                                  | `2.9.0`                              | ISC                     |
-| web      | production  | npm       | `zod`                                                   | `4.4.3`                              | MIT                     |
-| web      | production  | npm       | `zustand`                                               | `5.0.14`                             | MIT                     |
-| web      | development | npm       | `@rsbuild/core`                                         | `2.1.6`                              | MIT                     |
-| web      | development | npm       | `@rsbuild/plugin-react`                                 | `2.1.0`                              | MIT                     |
-| web      | development | npm       | `@rsbuild/plugin-tailwindcss`                           | `2.0.3`                              | MIT                     |
-| web      | development | npm       | `@tanstack/react-query-devtools`                        | `5.101.2`                            | MIT                     |
-| web      | development | npm       | `@tanstack/react-router-devtools`                       | `1.167.0`                            | MIT                     |
-| web      | development | npm       | `@tanstack/router-plugin`                               | `1.168.42`                           | MIT                     |
-| web      | development | npm       | `@testing-library/jest-dom`                             | `7.0.0`                              | MIT                     |
-| web      | development | npm       | `@testing-library/react`                                | `16.3.2`                             | MIT                     |
-| web      | development | npm       | `@testing-library/user-event`                           | `14.6.1`                             | MIT                     |
-| web      | development | npm       | `@types/node`                                           | `26.1.1`                             | MIT                     |
-| web      | development | npm       | `@types/node-forge`                                     | `1.3.14`                             | MIT                     |
-| web      | development | npm       | `@types/react`                                          | `19.2.17`                            | MIT                     |
-| web      | development | npm       | `@types/react-dom`                                      | `19.2.3`                             | MIT                     |
-| web      | development | npm       | `@xyflow/react`                                         | `12.11.2`                            | MIT                     |
-| web      | development | npm       | `embla-carousel-react`                                  | `8.6.0`                              | MIT                     |
-| web      | development | npm       | `jsdom`                                                 | `29.1.1`                             | MIT                     |
-| web      | development | npm       | `knip`                                                  | `6.27.0`                             | ISC                     |
-| web      | development | npm       | `oxfmt`                                                 | `0.72.0`                             | MIT                     |
-| web      | development | npm       | `oxlint`                                                | `1.74.0`                             | MIT                     |
-| web      | development | npm       | `shadcn`                                                | `4.13.1`                             | MIT                     |
-| web      | development | npm       | `vitest`                                                | `5.0.4`                              | MIT                     |
 
 ## Vendored Source
 
@@ -970,22 +885,6 @@ Public License instead of this License.  But first, please read
 <https://www.gnu.org/licenses/why-not-lgpl.html>.
 ```
 
-### ISC
-
-ISC License
-
-Permission to use, copy, modify, and/or distribute this software for any
-purpose with or without fee is hereby granted, provided that the above
-copyright notice and this permission notice appear in all copies.
-
-THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
-REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
-AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
-INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
-LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
-OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
-PERFORMANCE OF THIS SOFTWARE.
-
 ### MIT
 
 MIT License
@@ -1007,22 +906,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-### MPL-2.0
-
-Mozilla Public License 2.0
-https://mozilla.org/MPL/2.0/
-
-### OFL-1.1
-
-SIL Open Font License 1.1
-
-The font dependency listed under OFL-1.1 is licensed under the SIL Open Font
-License, Version 1.1. The full license text is available at:
-https://openfontlicense.org/open-font-license-official-text/
-
-When distributing font files, preserve the OFL license text, copyright notices,
-and reserved font name restrictions supplied by the upstream font project.
 
 ### Unlicense
 

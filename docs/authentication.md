@@ -86,15 +86,15 @@
 
 ### 内容安全策略（CSP）
 
-后端返回控制台页面（`index.html`）时附带 `Content-Security-Policy`（ASVS 5.0 3.4.3、3.4.6）：
+控制台页面（`index.html` 以及回落到它的前端路由）带 `Content-Security-Policy`（ASVS 5.0 3.4.3、3.4.6）。策略由控制台仓库 new-api-frontend 的构建生成（`src/lib/static-hosting.ts`），写进构建产物的 `_headers`，由 Cloudflare Pages 等静态主机发送；后端不提供控制台，也不发送这个头：
 
 ```text
 default-src 'self'; script-src 'self' https://telegram.org https://challenges.cloudflare.com https://js.stripe.com https://*.js.stripe.com; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; font-src 'self' data:; connect-src * data: blob:; frame-src *; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'
 ```
 
-- 脚本只能来自控制台自己的 Origin 和用到的第三方：Telegram 登录组件、Cloudflare Turnstile、Stripe.js。不允许 `'unsafe-inline'` 和 `'unsafe-eval'`。构建产物里没有内联脚本：主题初始化和语言包预加载脚本由构建输出为带哈希的文件（`static/js/theme-bootstrap.*.js`、`static/js/locale-preload.*.js`），zod 关闭了 JIT（`web/src/lib/zod-config.ts`），因此策略是固定的，不随构建变化。
-- 后端注入的统计脚本（`UMAMI_WEBSITE_ID`、`GOOGLE_ANALYTICS_ID`）会自动加入：外部脚本按 Origin，Google Analytics 的内联配置按 SHA-256 哈希。
-- 样式允许内联（组件会注入 `<style>`）。图片、媒体、iframe 和网络请求允许任意来源，因为管理员可以配置任意 Logo、首页和关于页 iframe、聊天链接、OIDC 发现地址，前后端分开部署时接口也在另一个 Origin 上。
+- 脚本只能来自控制台自己的 Origin 和用到的第三方：Telegram 登录组件、Cloudflare Turnstile、Stripe.js。不允许 `'unsafe-inline'` 和 `'unsafe-eval'`。构建产物里没有内联脚本：主题初始化和语言包预加载脚本由构建输出为带哈希的文件（`static/js/theme-bootstrap.*.js`、`static/js/locale-preload.*.js`），zod 关闭了 JIT（`src/lib/zod-config.ts`），因此策略是固定的，不随构建变化。
+- 统计脚本由控制台构建时的环境变量 `UMAMI_WEBSITE_ID`、`UMAMI_SCRIPT_URL`、`GOOGLE_ANALYTICS_ID` 注入，它们的 Origin 自动加入 `script-src`；Google Analytics 的配置也输出为文件，不是内联脚本。后端同名的环境变量不再生效。
+- 样式允许内联（组件会注入 `<style>`）。图片、媒体、iframe 和网络请求允许任意来源，因为管理员可以配置任意 Logo、首页和关于页 iframe、聊天链接、OIDC 发现地址，接口也在另一个 Origin 上。
 - 页面只允许同源嵌入（`frame-ancestors 'self'`），不能加载插件，不能修改 base URL，表单只能提交到本站。
 - 未配置违规上报（ASVS 3.4.7，L3）。
 
@@ -118,11 +118,11 @@ default-src 'self'; script-src 'self' https://telegram.org https://challenges.cl
 
 ## 前后端分开部署
 
-默认部署由后端自带的前端提供控制台，页面和接口同源，不需要下面任何配置。把控制台放在 CDN 或单独的静态主机上时，推荐让前端主机把 `/api`、`/pg` 反向代理到后端，这样页面和接口仍然同源，不涉及 CORS。确实要让浏览器直接访问另一个域名的后端时，需要三处配置：
+后端不包含也不提供控制台。控制台是独立仓库 [new-api-frontend](https://github.com/Herta-Network/new-api-frontend)，构建产物部署在 Cloudflare Pages 等静态主机上，部署步骤见它的 README。能让前端主机把 `/api`、`/pg` 反向代理到后端时（例如 Nginx 同时托管构建产物和代理接口），页面和接口同源，不涉及 CORS，「前端地址」也可以留空。Cloudflare Pages 这类不能反向代理到外部后端的主机，由浏览器直接访问另一个域名的后端，需要三处配置：
 
-1. **前端的后端地址**：`index.html` 旁边的 `runtime-config.json`，例如 `{"apiBaseUrl": "https://api.example.com"}`。前端启动前读取它，所有接口请求、日志导出、Ollama 拉取流和 playground 的 SSE 都发往这个地址。改后端地址只需改这个文件，不用重新构建；文件缺失、无效或为空时请求保持同源。
-2. **后端的 CORS 白名单**：环境变量 `FRONTEND_ORIGINS`，逗号分隔的精确 Origin（协议、主机和端口，不带路径、通配符或域名后缀匹配），例如 `https://app.example.com`。系统设置「前端地址」的 Origin 也自动加入白名单。
-3. **系统设置「前端地址」**：控制台的公开地址。重置密码链接、邮件里的链接、支付完成返回页、OAuth 回调地址（`<前端地址>/oauth/<provider>`）和默认的 Passkey 域名都使用它；不填时回落到「服务器地址」。「服务器地址」改为只表示后端：AI 接口地址、支付回调、Midjourney 图片和视频等后端提供的文件都用它。
+1. **前端的后端地址**：`index.html` 旁边的 `runtime-config.json`，例如 `{"apiBaseUrl": "https://api.example.com"}`。前端启动前读取它，所有接口请求、日志导出、Ollama 拉取流和 playground 的 SSE 都发往这个地址；文件缺失、无效或为空时请求保持同源。构建时设置环境变量 `API_BASE_URL` 会写入这个文件（Cloudflare Pages 在项目的构建变量里设置）；能直接修改托管文件的主机也可以改这个文件，不用重新构建。
+2. **后端的 CORS 白名单**：环境变量 `FRONTEND_ORIGINS`，逗号分隔的精确 Origin（协议、主机和端口，不带路径、通配符或域名后缀匹配），例如 `https://app.example.com`。系统设置「前端地址」的 Origin 也自动加入白名单。首次安装时还没有「前端地址」，初始化页面的请求只能靠 `FRONTEND_ORIGINS` 放行。
+3. **系统设置「前端地址」**：控制台的公开地址。重置密码链接、邮件里的链接、支付完成返回页、OAuth 回调地址（`<前端地址>/oauth/<provider>`）和默认的 Passkey 域名都使用它；不填时回落到「服务器地址」。「服务器地址」只表示后端：AI 接口地址、支付回调、Midjourney 图片和视频等后端提供的文件都用它。在后端域名上打开的非接口路径（例如旧邮件链接、登记在后端地址上的 OAuth 回调）会带着路径和查询参数 302 重定向到环境变量 `FRONTEND_BASE_URL`，未设置时重定向到「前端地址」；两者都没有时返回 404。
 
 CORS 规则：
 
@@ -136,14 +136,14 @@ CORS 规则：
 - Telegram：在 BotFather 里用 `/setdomain` 设置前端域名。
 - Turnstile：在 Cloudflare 后台把前端主机名加入组件允许的主机名列表。
 
-同域部署（默认）：
+同域部署（前端主机同时反向代理 `/api`、`/pg` 到后端）：
 
 ```env
 SESSION_SECRET=<high-entropy-random-value>
 # FRONTEND_ORIGINS 不需要设置；runtime-config.json 的 apiBaseUrl 留空；「前端地址」留空
 ```
 
-前后端分开部署（控制台 `https://app.example.com`，后端 `https://api.example.com`）：
+不同域名部署，例如 Cloudflare Pages（控制台 `https://app.example.com`，后端 `https://api.example.com`）：
 
 ```env
 SESSION_SECRET=<high-entropy-random-value>
@@ -154,14 +154,16 @@ FRONTEND_ORIGINS=https://app.example.com
 { "apiBaseUrl": "https://api.example.com" }
 ```
 
+（Cloudflare Pages 上即构建变量 `API_BASE_URL=https://api.example.com`。）
+
 并在系统设置里把「服务器地址」设为 `https://api.example.com`、「前端地址」设为 `https://app.example.com`。
 
-单独托管前端时，由静态主机给 `index.html`（以及回落到它的所有前端路由）加上与后端相同的 `Content-Security-Policy` 响应头（见上文“内容安全策略”），例如 Nginx：
+Cloudflare Pages 和 Netlify 读取构建产物里的 `_headers`，自动发送上文的内容安全策略。其它静态服务器要自己给 `index.html`（以及回落到它的所有前端路由）加上 `_headers` 里的 `Content-Security-Policy`，例如 Nginx：
 
 ```nginx
 location / {
     try_files $uri /index.html;
-    add_header Content-Security-Policy "<上文的策略>" always;
+    add_header Content-Security-Policy "<dist/_headers 里的策略>" always;
 }
 ```
 

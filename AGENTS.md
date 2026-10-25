@@ -9,12 +9,11 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 ## Tech Stack
 
 - **Backend**: Go 1.26 for the root module and `tokenkit/`, Go 1.25.1 for `relaykit/` (see each module’s `go.mod`), Gin web framework, GORM v2 ORM
-- **Frontend**: React 19, TypeScript, Rsbuild 2, TanStack Router/Query/Table, Zustand, Base UI, Tailwind CSS 4
+- **Frontend**: none in this repository; the web console is [Herta-Network/new-api-frontend](https://github.com/Herta-Network/new-api-frontend) (React 19, TypeScript, Rsbuild 2, Bun), deployed on a static host such as Cloudflare Pages
 - **Databases**: PostgreSQL 18 or later is the only primary database; the optional separately configured log database (`LOG_SQL_DSN`) is PostgreSQL or ClickHouse
 - **Cache**: Redis (go-redis) + in-memory cache
 - **Auth**: Browser sessions, API tokens and personal access tokens, JWT, WebAuthn/Passkeys, TOTP, OAuth/OIDC; Casbin authorization in `service/authz/`
 - **Extensions**: JavaScript task plugins executed by moejs
-- **Frontend package manager**: Bun (preferred over npm/yarn/pnpm)
 
 ## Architecture
 
@@ -25,7 +24,7 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 - Exchange rates are the `internal/module/currency` module: `internal/exchangerate/` is the apilayer client, `internal/store/` keeps the stored live rates, and the facade resolves a pair's rate (an administrator's override, then a fresh live rate) for prices, displayed amounts, and channel balances, refreshes the rates the site needs, and publishes the rate amounts are shown at. The settings it reads (`payment_setting.currency`, the rate API key, the overrides) stay in `setting/operation_setting`.
 - JavaScript task plugins live in `plugins/tasks/`, run through `pkg/jsplugin/`, and integrate with host task polling and settlement.
 - Conversation session recognition is the `internal/module/conversation` module: `internal/convo/` is the vendored AstrLink library that reads request histories and observes responses, the facade keeps each request's lazily resolved session and the clue store (memory, plus Redis when enabled), and `transport/http/` is the relay middleware. Channel affinity and the OpenCode Go adaptor read the session through `service.ConversationSessionID`.
-- `web/` is the React frontend (see `web/AGENTS.md`).
+- The backend serves no console. Paths no API or plugin route claims are answered by `router/web-router.go`: a redirect to the console address (`FRONTEND_BASE_URL`, else the Frontend Address setting), keeping path and query, or the relay's 404 for unknown API paths and when no console address is set. The console calls the API from its own origin, admitted by `FRONTEND_ORIGINS` and the Frontend Address (`middleware/cors.go`).
 
 ### Modules
 
@@ -43,16 +42,13 @@ The code shared with upstream keeps upstream's layered layout and is the shared 
 - Library: `nicksnyder/go-i18n/v2`
 - Languages: en, zh-CN, zh-TW
 - Scope: text with no web console in between (errors returned to AI clients, emails, notifications), translated with `i18n.T` / `i18n.Translate`
-- Web console API messages are English source text built with `common.NewMessage` / `common.ApiErrorT` / `common.ApiSuccessT`; the frontend translates them, so add each key to all seven frontend locale files
-- Stored log content is `[]*common.Message`; a fail reason written by the gateway is a fixed English sentence that is also a key in the frontend locale files
+- Web console API messages are English source text built with `common.NewMessage` / `common.ApiErrorT` / `common.ApiSuccessT`; the console translates them, so add each key to all seven locale files of new-api-frontend
+- Stored log content is `[]*common.Message`; a fail reason written by the gateway is a fixed English sentence that is also a key in the console's locale files
 - Server log lines are English text passed through `common.LogText`; `DEFAULT_LANGUAGE=zh-CN` prints the Chinese text of the lines that have one in `common/log_text.zh-CN.json`, and is the language of backend messages for a reader who states none
 
-### Frontend (`web/src/i18n/`)
-- Library: `i18next` + `react-i18next` + `i18next-browser-languagedetector`
+### Console (new-api-frontend)
 - Languages: en (base), zh (fallback), zh-TW, fr, ru, ja, vi
-- Translation files: `web/src/i18n/locales/{lang}.json` — flat JSON, keys are English source strings
-- Usage: `useTranslation()` hook, call `t('English key')` in components
-- CLI tools: `bun run i18n:sync` (from `web/`)
+- Translation files: `src/i18n/locales/{lang}.json` in new-api-frontend — flat JSON, keys are English source strings; its `AGENTS.md` and i18n skill describe the workflow
 
 ## Rules
 
@@ -181,24 +177,21 @@ Tasks that touch none of these (for example unrelated frontend work, authenticat
 - Do NOT add new files under `docs/` or any of its subdirectories unless the user explicitly requests it.
 - Do NOT create or generate documentation files in this repository's plugin directories under `plugins/`, including `plugins/tasks/<plugin>/` and their subdirectories. This includes README files, changelogs, usage guides, and other documentation files, regardless of format.
 
-### Frontend Rules
+### Console (new-api-frontend)
 
-- **Reuse existing UI components first (mandatory):** Before implementing or changing frontend UI, read `web/AGENTS.md` and the project `shadcn-ui` skill, search `web/src/components/` and the relevant feature for existing components, and read matching implementations and call sites. Do not start from custom markup or registry installation without checking the repository first.
-- Prefer the project's shared business components over lower-level UI primitives when they cover the use case. Evaluate existing props, composition, and a compatible extension before introducing a replacement. Importing `Button` or `AlertDialog` does not satisfy this rule if the same behavior is already provided by a shared component such as `CopyButton` or `ConfirmDialog`.
-- New implementations of common UI behavior require a concrete capability gap: identify the existing candidates and explain why reuse, composition, or a compatible extension is unsuitable in the change summary or PR description. Different text, dimensions, colors, or feature location alone do not justify duplication. Feature components may compose shared components with business data and actions. Follow the reuse workflow and component entry points in `web/AGENTS.md`; generic library or registry guidance does not override this project-specific priority.
-- Use `bun` as the preferred package manager and script runner for the frontend (`web/`):
-  - `bun install` for dependency installation
-  - `bun run dev` for development server
-  - `bun run build` for production build
-  - `bun run i18n:*` for i18n tooling
-- Frontend UI text must support i18n with `i18next`/`react-i18next`. Use flat JSON locale files in `web/src/i18n/locales/{lang}.json`, with English source strings as keys.
-- In React components, use `useTranslation()` and call `t('English key')` for user-facing text.
-- **Number formatting and Intl locales (mandatory):** Reuse `@/lib/format` for ordinary number/compact-number display and `@/lib/currency` for monetary values; preserve each formatter's precision and unit semantics. Interface language codes such as `zhCN` / `zhTW` are NOT valid Intl locales. Any interface language passed to `Intl.*`, `toLocaleString` / `toLocaleDateString` / `toLocaleTimeString`, or a locale-aware formatting helper MUST first pass through `toIntlLocale` from `@/i18n/languages`. Do not duplicate language mappings or pass raw language codes through aliases. Follow `web/AGENTS.md` for the lint rule and regression requirements.
-- Follow `web/AGENTS.md` for detailed frontend conventions, including TypeScript, component structure, styling, accessibility, testing, and build checks.
+The web console is the separate repository [Herta-Network/new-api-frontend](https://github.com/Herta-Network/new-api-frontend); follow its `AGENTS.md` for frontend work. This repository serves no frontend files. A backend change the console depends on needs a paired change there, noted in both commit messages or pull requests:
+
+- A new or changed console message (`common.NewMessage`, `common.ApiErrorT`, `common.ApiSuccessT`) or gateway fail reason: add its key to the console's seven locale files.
+- A new or changed `/api` route, parameter, body, or response: update the console's calls; `docs/openapi/api.json` is the contract.
+- A new request header the console sends: add it to `consoleAllowedHeaders` in `middleware/cors.go`.
+- A new top-level console route: add it to `reservedRouteNamespaces` in `pkg/jsplugin/routing.go`, so task plugins cannot claim it and `router/web-router.go` keeps redirecting it to the console.
+- `pkg/billingexpr/testdata/frontend_simulation.json` and `service/testdata/group_rules_cases.json` are copied into the console's `contracts/` directory, whose tests assert the same cases. After changing either, run `bun run contracts:sync` in the console repository; its CI compares the copies with this repository's `main` branch.
+- The console's Content-Security-Policy and its Umami and Google Analytics scripts are built by the console (`src/lib/static-hosting.ts`); the backend sends neither.
+- Do NOT add frontend files, a `web/` directory, or an embedded console to this repository.
 
 ### Project Governance
 
-**Upstream sync (mandatory read gate):** This repository is a fork of `QuantumNous/new-api` that has diverged on purpose (PostgreSQL-only database, ppanel-style payments, one site currency, `/user` and `/admin` console workspaces, a model pricing workspace, and more). `.agents/rules/upstream-sync.md` lists those divergences and the rules for merging upstream. Before fetching, merging, or resolving conflicts with `upstream/main`, or porting any upstream commit, you MUST read that file in full with your file-read tool and follow every rule in it. Classify each incoming commit as adopted, adapted, or ignored before resolving it, and never push a sync without the maintainer's approval.
+**Upstream sync (mandatory read gate):** This repository is a fork of `QuantumNous/new-api` that has diverged on purpose (PostgreSQL-only database, ppanel-style payments, one site currency, the console in its own repository, and more). `.agents/rules/upstream-sync.md` lists those divergences and the rules for merging upstream. Before fetching, merging, or resolving conflicts with `upstream/main`, or porting any upstream commit, you MUST read that file in full with your file-read tool and follow every rule in it. Classify each incoming commit as adopted, adapted, or ignored before resolving it, and never push a sync without the maintainer's approval.
 
 **Protected project information:** The following project-related information is strictly protected and MUST NOT be modified, deleted, replaced, or removed under any circumstances:
 

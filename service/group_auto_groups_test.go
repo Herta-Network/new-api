@@ -75,9 +75,11 @@ func TestGetRequestAutoGroupsDoesNotFallBackAfterPermissionChange(t *testing.T) 
 	assert.Empty(t, groups)
 }
 
-// testdata/group_rules_cases.json is shared with the web group pricing
-// simulator (web/src/features/system-settings/billing/group-pricing), whose
-// tests assert the same expectations, so both sides resolve groups alike.
+// testdata/group_rules_cases.json is shared with the console's group pricing
+// simulator (new-api-frontend's src/features/system-settings/billing/
+// group-pricing), whose tests assert the same expectations from a copy under
+// contracts/, so both sides resolve groups alike. After changing it, refresh
+// the copy with `bun run contracts:sync` in new-api-frontend.
 type groupRulesCases struct {
 	Settings struct {
 		GroupRatio              map[string]float64            `json:"GroupRatio"`

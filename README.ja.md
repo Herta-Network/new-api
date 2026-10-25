@@ -1,6 +1,6 @@
 <div align="center">
 
-![new-api](/web/public/logo.png)
+![new-api](/assets/logo.png)
 
 # New API
 
@@ -157,7 +157,7 @@ cd new-api
 docker compose up -d
 ```
 
-[http://localhost:3000](http://localhost:3000) を開き、初期設定ウィザードで管理者アカウントを作成します。PostgreSQL のデータは `pg_data` ボリュームに保存され、コンテナを置き換えても残ります。Compose ファイルはサンプルパスワードを使い、ポート 3000 をすべてのインターフェースで公開します。外部に公開する前に[デプロイと運用](#deployment)に従って設定してください。
+API はポート 3000 で待ち受けます。管理画面は [new-api-frontend](https://github.com/Herta-Network/new-api-frontend) から別にデプロイします。ローカルで試すには、そのリポジトリのチェックアウトで `bun install` と `bun run dev` を実行し、[http://localhost:5173](http://localhost:5173) を開いて初期設定ウィザードで管理者アカウントを作成します。PostgreSQL のデータは `pg_data` ボリュームに保存され、コンテナを置き換えても残ります。Compose ファイルはサンプルパスワードを使い、ポート 3000 をすべてのインターフェースで公開します。外部に公開する前に[デプロイと運用](#deployment)に従って設定してください。
 
 ### 最初のリクエスト
 
@@ -195,7 +195,7 @@ git clone https://github.com/QuantumNous/new-api.git
 cd new-api
 ```
 
-起動前に `docker-compose.yml` を編集し、データベースと Redis のサービスおよび接続文字列にあるサンプルパスワードを変更します。永続的に使うランダムな `SESSION_SECRET` も設定してください（`openssl rand -hex 32` で生成可能）。管理画面をバックエンドと別のドメインで配信する場合は、[docs/authentication.md](docs/authentication.md) のフロントエンドとバックエンドの分離デプロイの節を参照してください。
+起動前に `docker-compose.yml` を編集し、データベースと Redis のサービスおよび接続文字列にあるサンプルパスワードを変更します。永続的に使うランダムな `SESSION_SECRET` も設定してください（`openssl rand -hex 32` で生成可能）。管理画面は new-api-frontend からデプロイし（例: その README に従って Cloudflare Pages へ）、`FRONTEND_ORIGINS` に管理画面のオリジンを設定します。関連する設定は [docs/authentication.md](docs/authentication.md) のフロントエンドとバックエンドの分離デプロイの節を参照してください。
 
 ```bash
 docker compose up -d
@@ -222,7 +222,7 @@ SQLite と MySQL には対応しておらず、それらからの移行ツール
 | `REDIS_CONN_STRING` | Redis 接続文字列 |
 | `SESSION_SECRET` | 永続的な認証用シークレット。全ノードで同じ値を使用 |
 | `CRYPTO_SECRET` | 既定は `SESSION_SECRET`。Redis を共有するノードは同じ実効値を使用 |
-| `FRONTEND_ORIGINS` | 管理画面をバックエンドと別のオリジンで配信する場合のみ設定。管理画面の API が CORS で許可する正確なオリジンをカンマ区切りで指定（パスやワイルドカード不可）。廃止された `SESSION_COOKIE_SECURE` と `SESSION_COOKIE_TRUSTED_URL` の後継 |
+| `FRONTEND_ORIGINS` | 管理画面が別のオリジンからバックエンドを呼び出す場合に設定（初期設定ウィザードでも必要）。管理画面の API が CORS で許可する正確なオリジンをカンマ区切りで指定（パスやワイルドカード不可）。廃止された `SESSION_COOKIE_SECURE` と `SESSION_COOKIE_TRUSTED_URL` の後継 |
 | `TRUSTED_PROXIES` | 信頼するリバースプロキシの IP/CIDR、または `none`。実際のネットワークに合わせて明示的に設定 |
 
 詳細は[環境変数の例](./.env.example)、[環境変数リファレンス](https://docs.newapi.ai/ja/docs/installation/config-maintenance/environment-variables)、[認証とセッションの説明](./docs/authentication.md)を参照してください。コンテナの変数は Compose の `environment` または `env_file` で渡します。`.env.example` のコピーだけではコンテナに反映されません。
@@ -235,28 +235,16 @@ SQLite と MySQL には対応しておらず、それらからの移行ツール
 
 ## 開発と拡張
 
-バックエンドは Go と Gin、管理画面は React 19、TypeScript、Rsbuild、TanStack、Tailwind CSS 4 を使用します。フロントエンドの依存関係とスクリプトには Bun を使います。Go 言語の基準バージョンは [go.mod](./go.mod)、コンテナのビルドツールチェーンは [Dockerfile](./Dockerfile) を参照してください。
+バックエンドは Go と Gin を使用します。Go 言語の基準バージョンは [go.mod](./go.mod)、コンテナのビルドツールチェーンは [Dockerfile](./Dockerfile) を参照してください。バックエンドはフロントエンドのファイルを含みません。管理画面（React 19、TypeScript、Rsbuild、TanStack、Tailwind CSS 4、Bun）は独立したリポジトリで開発・デプロイします。
 
-バックエンドは `web/dist` を埋め込むため、先にフロントエンドをビルドします。
+リポジトリのルートでバックエンドを起動します。
 
 ```bash
-# リポジトリのルート
-cd web
-bun install --frozen-lockfile
-bun run build
-cd ..
 # SQL_DSN には PostgreSQL 18 以降のデータベースを指定
 SQL_DSN=postgresql://user:password@localhost:5432/new-api go run .
 ```
 
-別のターミナルでフロントエンド開発サーバーを起動します。
-
-```bash
-cd web
-bun run dev -- --port 5173
-```
-
-[http://localhost:5173](http://localhost:5173) を開きます。API リクエストはポート 3000 のバックエンドに転送されます。開発用バックエンドをコンテナで動かす場合は [docker-compose.dev.yml](./docker-compose.dev.yml) と [makefile](./makefile) の `make dev` を参照してください。
+管理画面は独立した [new-api-frontend](https://github.com/Herta-Network/new-api-frontend) リポジトリです。そのチェックアウトで `bun install` と `bun run dev` を実行し、[http://localhost:5173](http://localhost:5173) を開きます。API リクエストはポート 3000 のバックエンドに転送されます。開発用バックエンドをコンテナで動かす場合は [docker-compose.dev.yml](./docker-compose.dev.yml) と [makefile](./makefile) の `make dev` を参照してください。
 
 | 場所 | 役割 |
 | --- | --- |
@@ -265,9 +253,9 @@ bun run dev -- --port 5173
 | `service/`、`model/` | ビジネスロジックと永続化 |
 | [relaykit/](./relaykit/README.md) | プロトコル DTO と変換を提供する、独立してビルド可能な Go モジュール |
 | [plugins/tasks/](./plugins/tasks/) | JavaScript タスクプラグイン。作成方法とホストの境界は [Task Plugin API v1](./docs/plugin-api/v1.md) を参照 |
-| `web/` | Web 管理画面。[フロントエンドの規約](./web/AGENTS.md)を参照 |
+| [new-api-frontend](https://github.com/Herta-Network/new-api-frontend) | Web 管理画面（独立リポジトリ）。その AGENTS.md を参照 |
 
-貢献前に [AGENTS.md](./AGENTS.md) を確認してください。変更に応じて、Go モジュールは `make test`（データベーステストには `TEST_POSTGRES_DSN` が必要。`make test-db` がローカルの PostgreSQL 18 を起動して値を表示）、フロントエンドは `web/` で `bun check -b`、`bun run lint`、`bun run test`、`bun run build` を実行します。RelayKit を変更した場合は、`relaykit/` で `GOWORK=off go build ./...` も実行してください。
+貢献前に [AGENTS.md](./AGENTS.md) を確認してください。変更に応じて、Go モジュールは `make test`（データベーステストには `TEST_POSTGRES_DSN` が必要。`make test-db` がローカルの PostgreSQL 18 を起動して値を表示）を実行します。管理画面の変更は new-api-frontend に提出し、そのチェックに従います。RelayKit を変更した場合は、`relaykit/` で `GOWORK=off go build ./...` も実行してください。
 
 <a id="documentation"></a>
 
