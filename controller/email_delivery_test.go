@@ -1,8 +1,11 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"io"
+	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -139,7 +142,7 @@ func TestSMTPAndLegacyConfigurationNeverUseResend(t *testing.T) {
 }
 
 func TestEmailOptionsNeverReturnResendCredentials(t *testing.T) {
-	configureEmailDelivery(t, map[string]string{"EmailProvider": "resend", "ResendApiKey": "private-email-credential", "ResendFrom": "sender@example.com"})
+	configureEmailDelivery(t, map[string]string{"EmailProvider": "resend", "ResendApiKey": "private-email-credential", "ResendFrom": "sender@example.com", "CloudflareEmailApiToken": "private-cloudflare-token"})
 	response := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(response)
 	context.Request = httptest.NewRequest(http.MethodGet, "/api/option/", nil)
@@ -149,6 +152,8 @@ func TestEmailOptionsNeverReturnResendCredentials(t *testing.T) {
 	assert.NotContains(t, response.Body.String(), "ResendApiKey")
 	assert.Contains(t, response.Body.String(), "ResendFrom")
 	assert.Contains(t, response.Body.String(), `"key":"ResendKeyConfigured","value":"true"`)
+	assert.NotContains(t, response.Body.String(), "private-cloudflare-token")
+	assert.Contains(t, response.Body.String(), `"key":"CloudflareEmailTokenConfigured","value":"true"`)
 }
 
 func TestEmailProviderOptionRejectsInvalidValues(t *testing.T) {
@@ -162,7 +167,7 @@ func TestEmailProviderOptionRejectsInvalidValues(t *testing.T) {
 			context.Request = httptest.NewRequest(http.MethodPut, "/api/option/", strings.NewReader(string(body)))
 			UpdateOption(context)
 			assert.Contains(t, response.Body.String(), `"success":false`)
-			assert.Contains(t, response.Body.String(), `"message_key":"Email sending method must be SMTP or Resend"`)
+			assert.Contains(t, response.Body.String(), `"message_key":"Email sending method must be SMTP, Resend or Cloudflare"`)
 			assert.Equal(t, "smtp", common.OptionMap["EmailProvider"])
 		})
 	}
@@ -281,4 +286,117 @@ func TestEmailKeyStatusIsDerivedAndReadOnly(t *testing.T) {
 	UpdateOption(context)
 	assert.Contains(t, response.Body.String(), `"success":false`)
 	assert.Contains(t, response.Body.String(), "read-only")
+}
+
+// useResendServer sends Resend's requests to handler over plain HTTP, so a
+// test sees when the real HTTP transport fails: before or after it wrote the
+// request. A nil handler refuses the connection.
+func useResendServer(t *testing.T, handler http.HandlerFunc) {
+	t.Helper()
+	address := "127.0.0.1:1"
+	if handler != nil {
+		server := httptest.NewServer(handler)
+		t.Cleanup(server.Close)
+		address = server.Listener.Addr().String()
+	}
+	http.DefaultTransport = &http.Transport{DialTLSContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, address)
+	}}
+}
+
+func TestBackupMethodSendsOnlyEmailsThePrimaryCertainlyDidNotSend(t *testing.T) {
+	respond := func(status int, body string) http.HandlerFunc {
+		return func(writer http.ResponseWriter, _ *http.Request) {
+			writer.WriteHeader(status)
+			_, _ = writer.Write([]byte(body))
+		}
+	}
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		backup  bool
+	}{
+		{"refused request", respond(http.StatusUnprocessableEntity, `{"name":"validation_error"}`), true},
+		{"rate limited", respond(http.StatusTooManyRequests, `{"name":"rate_limit_exceeded"}`), true},
+		{"connection refused", nil, true},
+		{"server error", respond(http.StatusInternalServerError, `{"name":"application_error"}`), false},
+		{"unreadable success", respond(http.StatusOK, `not json`), false},
+		{"connection lost after the request", func(writer http.ResponseWriter, request *http.Request) {
+			_, _ = io.ReadAll(request.Body)
+			if connection, _, err := http.NewResponseController(writer).Hijack(); err == nil {
+				_ = connection.Close()
+			}
+		}, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			configureEmailDelivery(t, map[string]string{"EmailProvider": "resend", "EmailBackupProvider": "smtp", "ResendApiKey": "test-key", "ResendFrom": "sender@example.com"})
+			mailbox := newSecurityMailbox(t)
+			useResendServer(t, test.handler)
+
+			err := common.SendEmail("verification", "one@example.com", "<p>123456</p>")
+
+			mailbox.mutex.Lock()
+			delivered := len(mailbox.mail["one@example.com"])
+			mailbox.mutex.Unlock()
+			if test.backup {
+				require.NoError(t, err)
+				assert.Equal(t, 1, delivered, "the backup method sends the email once")
+				return
+			}
+			require.Error(t, err)
+			assert.Zero(t, delivered, "an email the primary may have sent is not sent again")
+		})
+	}
+}
+
+func TestEmailBackupMethodOption(t *testing.T) {
+	pgtest.Reset(t, model.DB)
+	previousRedis := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = previousRedis })
+
+	resend := map[string]string{"ResendApiKey": "test-key", "ResendFrom": "sender@example.com"}
+	tests := []struct {
+		name       string
+		saved      map[string]string
+		key, value string
+		message    string
+	}{
+		{"backup equal to the primary", map[string]string{"EmailProvider": "smtp"}, "EmailBackupProvider", "smtp", "Backup email sending method must differ from the primary method"},
+		{"unknown backup", map[string]string{"EmailProvider": "smtp"}, "EmailBackupProvider", "mailgun", "Backup email sending method must be SMTP, Resend or Cloudflare"},
+		{"incomplete backup", map[string]string{"EmailProvider": "smtp", "ResendFrom": "sender@example.com"}, "EmailBackupProvider", "resend", "Resend API key is not configured or invalid"},
+		{"backup key cleared", map[string]string{"EmailProvider": "smtp", "EmailBackupProvider": "resend"}, "ResendApiKey", " ", "Resend API key is not configured or invalid"},
+		{"incomplete Cloudflare backup", map[string]string{"EmailProvider": "smtp"}, "EmailBackupProvider", "cloudflare", "Cloudflare account ID is not configured or invalid"},
+		{"complete backup", map[string]string{"EmailProvider": "smtp"}, "EmailBackupProvider", "resend", ""},
+		{"no backup", map[string]string{"EmailProvider": "smtp", "EmailBackupProvider": "resend"}, "EmailBackupProvider", "", ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			saved := maps.Clone(test.saved)
+			if test.name != "incomplete backup" {
+				maps.Copy(saved, resend)
+			}
+			configureEmailDelivery(t, saved)
+			before := saved[test.key]
+			err := model.UpdateOption(test.key, test.value)
+			if test.message == "" {
+				require.NoError(t, err)
+				assert.Equal(t, test.value, common.OptionMap[test.key])
+				return
+			}
+			require.EqualError(t, err, test.message)
+			assert.Equal(t, before, common.OptionMap[test.key])
+		})
+	}
+
+	t.Run("methods swap with the primary written first", func(t *testing.T) {
+		saved := map[string]string{"EmailProvider": "smtp", "EmailBackupProvider": "resend"}
+		maps.Copy(saved, resend)
+		configureEmailDelivery(t, saved)
+		require.NoError(t, model.UpdateOption("EmailProvider", "resend"))
+		require.NoError(t, model.UpdateOption("EmailBackupProvider", "smtp"))
+		assert.Equal(t, "resend", common.OptionMap["EmailProvider"])
+		assert.Equal(t, "smtp", common.OptionMap["EmailBackupProvider"])
+	})
 }

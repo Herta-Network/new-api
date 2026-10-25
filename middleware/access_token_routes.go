@@ -173,6 +173,14 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"DELETE /api/option/channel_affinity_cache":     accessTokenScopeRule("option:write"),
 	"POST /api/option/rest_model_ratio":             accessTokenScopeRule("option:write"),
 
+	// router/api-router.go: /api/email. A test email reaches any address, so
+	// only a browser session sends one.
+	"GET /api/email/templates":                    accessTokenScopeRule("option:read"),
+	"POST /api/email/templates/preview":           accessTokenScopeRule("option:read"),
+	"PUT /api/email/templates/:kind/:language":    accessTokenScopeRule("option:write"),
+	"DELETE /api/email/templates/:kind/:language": accessTokenScopeRule("option:write"),
+	"POST /api/email/test":                        accessTokenSessionRule,
+
 	// router/api-router.go: /api/custom-oauth-provider, /api/ratio_sync
 	"POST /api/custom-oauth-provider/discovery": accessTokenScopeRule("option:write"),
 	"GET /api/custom-oauth-provider/":           accessTokenScopeRule("option:read"),

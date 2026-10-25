@@ -19,15 +19,40 @@ For commercial licensing, please contact support@quantumnous.com
 import * as z from 'zod'
 
 const EMAIL_ADDRESS = /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/
+const CLOUDFLARE_ACCOUNT_ID = /^[0-9a-fA-F]{32}$/
+const EMAIL_PROVIDERS = ['smtp', 'resend', 'cloudflare'] as const
+
+type IssueContext = z.RefinementCtx
+
+function checkSenderName(
+  name: string,
+  path: string,
+  context: IssueContext,
+  t: (key: string) => string
+) {
+  if (/[\r\n]/.test(name) || name.includes('\0')) {
+    context.addIssue({
+      code: 'custom',
+      path: [path],
+      message: t('Sender name must not contain line breaks or null characters'),
+    })
+  }
+}
 
 export const createEmailSchema = (t: (key: string) => string) =>
   z
     .object({
-      EmailProvider: z.enum(['smtp', 'resend']),
+      EmailProvider: z.enum(EMAIL_PROVIDERS),
+      EmailBackupProvider: z.enum(['', ...EMAIL_PROVIDERS]),
       ResendApiKey: z.string(),
       ResendKeyConfigured: z.boolean(),
       ResendFrom: z.string(),
       ResendSenderName: z.string(),
+      CloudflareEmailAccountId: z.string(),
+      CloudflareEmailApiToken: z.string(),
+      CloudflareEmailTokenConfigured: z.boolean(),
+      CloudflareEmailFrom: z.string(),
+      CloudflareSenderName: z.string(),
       SMTPServer: z.string(),
       SMTPPort: z.string(),
       SMTPAccount: z.string(),
@@ -46,7 +71,9 @@ export const createEmailSchema = (t: (key: string) => string) =>
       }, t('Must be greater than or equal to 0')),
     })
     .superRefine((values, context) => {
-      if (values.EmailProvider === 'resend') {
+      // Only the methods in use are checked; the others keep their drafts.
+      const inUse = new Set([values.EmailProvider, values.EmailBackupProvider])
+      if (inUse.has('resend')) {
         if (!values.ResendKeyConfigured && !values.ResendApiKey.trim()) {
           context.addIssue({
             code: 'custom',
@@ -54,26 +81,52 @@ export const createEmailSchema = (t: (key: string) => string) =>
             message: t('Configure a Resend API key before enabling Resend'),
           })
         }
-        const from = values.ResendFrom.trim()
-        if (!EMAIL_ADDRESS.test(from)) {
+        if (!EMAIL_ADDRESS.test(values.ResendFrom.trim())) {
           context.addIssue({
             code: 'custom',
             path: ['ResendFrom'],
             message: t('Enter a valid sender email address'),
           })
         }
-        const name = values.ResendSenderName
-        if (/[\r\n]/.test(name) || name.includes('\0')) {
+        checkSenderName(values.ResendSenderName, 'ResendSenderName', context, t)
+      }
+      if (inUse.has('cloudflare')) {
+        if (
+          !CLOUDFLARE_ACCOUNT_ID.test(values.CloudflareEmailAccountId.trim())
+        ) {
           context.addIssue({
             code: 'custom',
-            path: ['ResendSenderName'],
+            path: ['CloudflareEmailAccountId'],
+            message: t('Enter the 32-character Cloudflare account ID'),
+          })
+        }
+        if (
+          !values.CloudflareEmailTokenConfigured &&
+          !values.CloudflareEmailApiToken.trim()
+        ) {
+          context.addIssue({
+            code: 'custom',
+            path: ['CloudflareEmailApiToken'],
             message: t(
-              'Sender name must not contain line breaks or null characters'
+              'Configure a Cloudflare API token before enabling Cloudflare'
             ),
           })
         }
-        return
+        if (!EMAIL_ADDRESS.test(values.CloudflareEmailFrom.trim())) {
+          context.addIssue({
+            code: 'custom',
+            path: ['CloudflareEmailFrom'],
+            message: t('Enter a valid sender email address'),
+          })
+        }
+        checkSenderName(
+          values.CloudflareSenderName,
+          'CloudflareSenderName',
+          context,
+          t
+        )
       }
+      if (!inUse.has('smtp')) return
       const port = values.SMTPPort.trim()
       if (
         port &&
@@ -102,13 +155,49 @@ export const createEmailSchema = (t: (key: string) => string) =>
 
 export type EmailFormValues = z.infer<ReturnType<typeof createEmailSchema>>
 
-// Keep the existing ResendFrom option/API contract while editing its two parts.
-export function parseResendSender(value: string) {
+export type SmtpSecurityMode = 'none' | 'ssl_tls' | 'starttls'
+
+export function getSmtpSecurityMode(values: {
+  SMTPSSLEnabled: boolean
+  SMTPStartTLSEnabled: boolean
+}): SmtpSecurityMode {
+  if (values.SMTPSSLEnabled) return 'ssl_tls'
+  if (values.SMTPStartTLSEnabled) return 'starttls'
+  return 'none'
+}
+
+/** Splits a sender option, a bare address or "Name <address>". */
+export function parseSender(value: string) {
   const named = value.trim().match(/^(.*?)\s*<([^<>]+)>$/)
-  if (!named) return { ResendFrom: value.trim(), ResendSenderName: '' }
+  if (!named) return { address: value.trim(), name: '' }
   let name = named[1].trim()
   if (name.startsWith('"') && name.endsWith('"')) {
     name = name.slice(1, -1).replaceAll(/\\(.)/g, '$1')
   }
-  return { ResendFrom: named[2].trim(), ResendSenderName: name }
+  return { address: named[2].trim(), name }
+}
+
+/**
+ * Joins a sender address and display name into the option value. The name
+ * is quoted so commas, quotes and angle brackets stay text, not mailbox
+ * syntax; the server also validates the combined address.
+ */
+export function formatSender(address: string, name: string) {
+  if (!name) return address
+  const escapedName = name.replaceAll('\\', '\\\\').replaceAll('"', '\\"')
+  return `"${escapedName}" <${address}>`
+}
+
+// Keep the existing ResendFrom option/API contract while editing its two parts.
+export function parseResendSender(value: string) {
+  const sender = parseSender(value)
+  return { ResendFrom: sender.address, ResendSenderName: sender.name }
+}
+
+export function parseCloudflareSender(value: string) {
+  const sender = parseSender(value)
+  return {
+    CloudflareEmailFrom: sender.address,
+    CloudflareSenderName: sender.name,
+  }
 }

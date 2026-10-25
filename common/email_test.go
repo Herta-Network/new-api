@@ -30,10 +30,15 @@ type fakeSMTPServer struct {
 	cert              tls.Certificate
 	advertiseSTARTTLS bool
 	authMechanisms    []string
-	messages          chan string
-	mailFromCommands  chan string
-	authCommands      chan string
-	startTLSCommands  chan string
+	// dataReply answers the end of the message data; "" accepts it and
+	// "-" hangs up instead of answering.
+	dataReply string
+	// dropQuit hangs up instead of answering QUIT.
+	dropQuit         bool
+	messages         chan string
+	mailFromCommands chan string
+	authCommands     chan string
+	startTLSCommands chan string
 }
 
 func newFakeSMTPServer(t *testing.T) *fakeSMTPServer {
@@ -199,12 +204,23 @@ func (s *fakeSMTPServer) serve() {
 				}
 				data.WriteString(dataLine)
 			}
+			if s.dataReply == "-" {
+				return
+			}
+			if s.dataReply != "" {
+				if err := writeSMTPLine(rw, s.dataReply); err != nil {
+					return
+				}
+				continue
+			}
 			s.messages <- data.String()
 			if err := writeSMTPLine(rw, "250 2.0.0 Queued"); err != nil {
 				return
 			}
 		case upperCommand == "QUIT":
-			_ = writeSMTPLine(rw, "221 2.0.0 Bye")
+			if !s.dropQuit {
+				_ = writeSMTPLine(rw, "221 2.0.0 Bye")
+			}
 			return
 		default:
 			if err := writeSMTPLine(rw, "502 5.5.1 Command not implemented"); err != nil {
@@ -689,4 +705,54 @@ func TestSendEmailRejectsInvalidSMTPSenderBeforeConnecting(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A failed SMTP delivery says whether the server certainly did not accept
+// the email, which decides whether the backup method may send it.
+func TestSMTPFailureReportsWhetherTheEmailWasSent(t *testing.T) {
+	tests := []struct {
+		name      string
+		dataReply string
+		dropQuit  bool
+		closed    bool
+		sent      bool
+		notSent   bool
+	}{
+		{name: "data refused", dataReply: "554 5.7.1 Message rejected", notSent: true},
+		{name: "connection lost before the data reply", dataReply: "-"},
+		{name: "connection refused", closed: true, notSent: true},
+		{name: "goodbye lost after acceptance", dropQuit: true, sent: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := newFakeSMTPServerWithSTARTTLSAdvertisement(t, false)
+			server.dataReply, server.dropQuit = test.dataReply, test.dropQuit
+			withSMTPSettings(t)
+			SMTPServer, SMTPPort = server.host, server.port
+			SMTPSSLEnabled, SMTPStartTLSEnabled, SMTPForceAuthLogin = false, false, false
+			SMTPAccount, SMTPToken, SMTPFrom = "", "", "sender@example.com"
+			if test.closed {
+				server.close()
+			} else {
+				defer server.close()
+			}
+
+			err := SendEmailThrough(EmailProviderSMTP, "Verification", "receiver@example.com", "<p>123456</p>")
+
+			if test.sent {
+				require.NoError(t, err)
+				return
+			}
+			var failure *EmailDeliveryError
+			require.ErrorAs(t, err, &failure)
+			assert.Equal(t, test.notSent, failure.NotSent)
+		})
+	}
+	t.Run("server not configured", func(t *testing.T) {
+		withSMTPSettings(t)
+		SMTPServer, SMTPAccount = "", ""
+		var failure *EmailDeliveryError
+		require.ErrorAs(t, SendEmailThrough(EmailProviderSMTP, "Verification", "receiver@example.com", "<p>123456</p>"), &failure)
+		assert.True(t, failure.NotSent)
+	})
 }

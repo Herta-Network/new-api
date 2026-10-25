@@ -56,7 +56,8 @@ func notifyAdmins(notifyType string, receives func(role int, setting dto.UserSet
 			continue
 		}
 		subject, content := render(userSetting.Language)
-		if err := NotifyUser(user.Id, user.Email, userSetting, dto.NewNotify(notifyType, subject, content, nil)); err != nil {
+		email := common.TemplateEmail{Kind: common.EmailKindNotice, Vars: map[string]string{"Title": subject, "Content": content}}
+		if err := NotifyUser(user.Id, user.Email, userSetting, dto.NewNotify(notifyType, subject, content, nil), email); err != nil {
 			common.SysLog(common.LogText("failed to send notice %s to user %d: %s", notifyType, user.Id, err.Error()))
 			continue
 		}
@@ -65,7 +66,9 @@ func notifyAdmins(notifyType string, receives func(role int, setting dto.UserSet
 	return sentCount
 }
 
-func NotifyUser(userId int, userEmail string, userSetting dto.UserSetting, data dto.Notify) error {
+// NotifyUser sends data the way the user chose. An email is email rendered
+// in the user's saved language.
+func NotifyUser(userId int, userEmail string, userSetting dto.UserSetting, data dto.Notify, email common.TemplateEmail) error {
 	notifyType := userSetting.NotifyType
 	if notifyType == "" {
 		notifyType = dto.NotifyTypeEmail
@@ -92,7 +95,7 @@ func NotifyUser(userId int, userEmail string, userSetting dto.UserSetting, data 
 			common.SysLog(common.LogText("user %d has no email, skip sending email", userId))
 			return nil
 		}
-		return sendEmailNotify(emailToUse, data)
+		return common.SendTemplateEmail(userSetting.Language, emailToUse, email)
 	case dto.NotifyTypeWebhook:
 		webhookURLStr := userSetting.WebhookUrl
 		if webhookURLStr == "" {
@@ -120,16 +123,6 @@ func NotifyUser(userId int, userEmail string, userSetting dto.UserSetting, data 
 		return sendGotifyNotify(gotifyUrl, gotifyToken, userSetting.GotifyPriority, data)
 	}
 	return nil
-}
-
-func sendEmailNotify(userEmail string, data dto.Notify) error {
-	// make email content
-	content := data.Content
-	// 处理占位符
-	for _, value := range data.Values {
-		content = strings.Replace(content, dto.ContentValueParam, fmt.Sprintf("%v", value), 1)
-	}
-	return common.SendEmail(data.Title, userEmail, content)
 }
 
 func sendBarkNotify(barkURL string, data dto.Notify) error {

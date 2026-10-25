@@ -494,8 +494,9 @@ func checkAndSendQuotaNotify(relayInfo *relaycommon.RelayInfo, quota int, preCon
 		}
 		lang := userSetting.Language
 		prompt := i18n.Translate(lang, i18n.MsgNotifyQuotaLowTitle)
-		content, values := quotaNotifyContent(lang, userSetting.NotifyType, prompt, logger.FormatQuota(balanceAfter))
-		err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values))
+		remaining := logger.FormatQuota(balanceAfter)
+		content, values := quotaNotifyContent(lang, userSetting.NotifyType, prompt, remaining)
+		err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values), quotaLowEmail(prompt, remaining))
 		if err != nil {
 			common.SysError(common.LogText("failed to send quota notify to user %d: %s", relayInfo.UserId, err.Error()))
 		}
@@ -521,8 +522,9 @@ func checkAndSendSubscriptionQuotaNotify(relayInfo *relaycommon.RelayInfo) {
 
 		lang := userSetting.Language
 		prompt := i18n.Translate(lang, i18n.MsgNotifySubscriptionQuotaLowTitle)
-		content, values := quotaNotifyContent(lang, userSetting.NotifyType, prompt, logger.FormatQuota(int(remaining)))
-		if err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values)); err != nil {
+		remainingText := logger.FormatQuota(int(remaining))
+		content, values := quotaNotifyContent(lang, userSetting.NotifyType, prompt, remainingText)
+		if err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values), quotaLowEmail(prompt, remainingText)); err != nil {
 			common.SysError(common.LogText("failed to send subscription quota notify to user %d: %s", relayInfo.UserId, err.Error()))
 		}
 	})
@@ -548,9 +550,19 @@ func quotaReminderDue(userSetting dto.UserSetting, before int64, after int64) bo
 	return float64(before) >= threshold && float64(after) < threshold
 }
 
+// quotaLowEmail is the low-balance reminder email: title names the wallet or
+// the subscription, remaining is the formatted balance left.
+func quotaLowEmail(title string, remaining string) common.TemplateEmail {
+	return common.TemplateEmail{
+		Kind: common.EmailKindQuotaLow,
+		Vars: map[string]string{"Title": title, "Quota": remaining, "Link": PaymentReturnURL("/user/wallet")},
+	}
+}
+
 // quotaNotifyContent renders a low-quota notice in the user's saved language.
-// Bark and Gotify get plain text; email and webhook get HTML with the top-up
-// link. values stay in the notify payload for webhook receivers.
+// Bark and Gotify get plain text; the webhook gets HTML with the top-up link
+// (an email is quotaLowEmail). values stay in the notify payload for webhook
+// receivers.
 func quotaNotifyContent(lang string, notifyType string, prompt string, remaining string) (string, []any) {
 	switch notifyType {
 	case dto.NotifyTypeBark:

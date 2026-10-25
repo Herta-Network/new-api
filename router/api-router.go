@@ -6,6 +6,7 @@ import (
 	"github.com/QuantumNous/new-api/controller"
 	consolehttp "github.com/QuantumNous/new-api/internal/module/console/transport/http"
 	currencyhttp "github.com/QuantumNous/new-api/internal/module/currency/transport/http"
+	mailhttp "github.com/QuantumNous/new-api/internal/module/mail/transport/http"
 	paymenthttp "github.com/QuantumNous/new-api/internal/module/payment/transport/http"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/service/authz"
@@ -251,6 +252,16 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.GET("/channel_affinity_cache", controller.GetChannelAffinityCacheStats)
 			optionRoute.DELETE("/channel_affinity_cache", controller.ClearChannelAffinityCache)
 			optionRoute.POST("/rest_model_ratio", controller.ResetModelRatio)
+		}
+
+		emailRoute := apiRouter.Group("/email")
+		emailRoute.Use(middleware.RootAuth())
+		{
+			emailRoute.GET("/templates", mailhttp.ListEmailTemplates)
+			emailRoute.POST("/templates/preview", mailhttp.PreviewEmailTemplate)
+			emailRoute.PUT("/templates/:kind/:language", mailhttp.UpdateEmailTemplate)
+			emailRoute.DELETE("/templates/:kind/:language", mailhttp.ResetEmailTemplate)
+			emailRoute.POST("/test", middleware.CriticalRateLimit(), mailhttp.SendTestEmail)
 		}
 
 		// Custom OAuth provider management (root only)

@@ -3,9 +3,11 @@ package common
 import (
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/mail"
 	"net/smtp"
+	"net/textproto"
 	"slices"
 	"strings"
 	"time"
@@ -87,23 +89,13 @@ func newSMTPClient(addr string) (*smtp.Client, error) {
 	return client, nil
 }
 
-func SendEmail(subject string, receiver string, content string) error {
-	OptionMapRWMutex.RLock()
-	provider := OptionMap["EmailProvider"]
-	resendKey := OptionMap["ResendApiKey"]
-	resendFrom := OptionMap["ResendFrom"]
-	OptionMapRWMutex.RUnlock()
-	// One selector controls delivery. Never fall back to a second provider:
-	// a failed response does not prove that the first provider did not send.
-	switch provider {
-	case "resend":
-		return sendResendEmail(resendKey, resendFrom, subject, receiver, content)
-	case "", "smtp": // Preserve existing installations without a selector.
-	default:
-		return NewMessage("Email sending method must be SMTP or Resend")
-	}
+// sendSMTPEmail sends through the SMTP settings. Every failure before the
+// server accepts the message data is a refusal, as is a reply refusing the
+// data; a broken connection while waiting for that reply leaves the email
+// possibly sent.
+func sendSMTPEmail(subject string, receiver string, content string) error {
 	if SMTPServer == "" && SMTPAccount == "" {
-		return NewMessage("SMTP server is not configured")
+		return EmailNotSent(NewMessage("SMTP server is not configured"))
 	}
 	from := SMTPFrom
 	if from == "" { // for compatibility
@@ -111,7 +103,7 @@ func SendEmail(subject string, receiver string, content string) error {
 	}
 	sender, err := ParseSMTPSender(from)
 	if err != nil {
-		return err
+		return EmailNotSent(err)
 	}
 	envelopeFrom := sender.Address
 	if sender.Name == "" {
@@ -131,37 +123,37 @@ func SendEmail(subject string, receiver string, content string) error {
 	to := strings.Split(receiver, ";")
 	client, err := newSMTPClient(addr)
 	if err != nil {
-		return err
+		return EmailNotSent(err)
 	}
 	defer client.Close()
 	if shouldAuthenticateSMTP() {
 		if err = client.Auth(auth); err != nil {
-			return err
+			return EmailNotSent(err)
 		}
 	}
 	if err = client.Mail(envelopeFrom); err != nil {
-		return err
+		return EmailNotSent(err)
 	}
 	for _, receiver := range to {
 		if err = client.Rcpt(receiver); err != nil {
-			return err
+			return EmailNotSent(err)
 		}
 	}
 	w, err := client.Data()
 	if err != nil {
-		return err
+		return EmailNotSent(err)
 	}
-	_, err = w.Write(message)
-	if err != nil {
-		return err
+	// The server delivers nothing until the data ends and it replies.
+	if _, err = w.Write(message); err != nil {
+		return EmailNotSent(err)
 	}
-	err = w.Close()
-	if err != nil {
-		return err
+	if err = w.Close(); err != nil {
+		var refused *textproto.Error
+		return &EmailDeliveryError{Err: err, Detail: err.Error(), NotSent: errors.As(err, &refused)}
 	}
-	err = client.Quit()
-	if err != nil {
+	// The server accepted the email; a failed goodbye does not unsend it.
+	if err = client.Quit(); err != nil {
 		SysError(LogText("failed to send email to %s: %v", receiver, err))
 	}
-	return err
+	return nil
 }
