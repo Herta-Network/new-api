@@ -156,8 +156,8 @@ func (g *epayGateway) signV2(params map[string]string) (url.Values, error) {
 
 // verifyV2 checks a message the gateway signed: its signature, a timestamp
 // within epayV2ClockSkew, and the merchant id when it names one. The
-// sign_type defaults to RSA, and gateways such as NiuNiu Pay leave it out;
-// the signature does not cover it.
+// sign_type defaults to RSA and may be left out; the signature does not
+// cover it.
 func (g *epayGateway) verifyV2(params map[string]string) error {
 	if signType := params["sign_type"]; signType != "" && !strings.EqualFold(signType, "RSA") {
 		return fmt.Errorf("unsupported signature type %q", signType)
@@ -195,6 +195,11 @@ func (g *epayGateway) verifyV2(params map[string]string) error {
 // fields of the gateway's successful answer once its signature verifies.
 // Nested values are not signed and are left out. A failure the gateway
 // signed must verify as well; an unsigned failure is only reported.
+//
+// NiuNiu Pay signs every answer but that of a payment creation, despite its
+// documentation and SDK, so an unsigned successful answer of api/pay/create
+// is taken over HTTPS, as far as TLS can be trusted. It only leads the buyer
+// to the payment: a payment settles on a signed callback or query alone.
 func (g *epayGateway) callV2(ctx context.Context, path string, params map[string]string) (map[string]string, error) {
 	endpoint, err := g.endpoint(path)
 	if err != nil {
@@ -244,10 +249,18 @@ func (g *epayGateway) callV2(ctx context.Context, path string, params map[string
 	if !epayInteger.MatchString(code) {
 		return nil, fmt.Errorf("EPay %s answer has no code", path)
 	}
-	if _, signed := fields["sign"]; code == "0" || signed {
+	_, signed := fields["sign"]
+	switch {
+	case signed:
 		if err := g.verifyV2(answer); err != nil {
 			return nil, fmt.Errorf("EPay %s answer: %w", path, err)
 		}
+	case code != "0":
+		// An unsigned failure is only reported.
+	case path != "api/pay/create":
+		return nil, fmt.Errorf("EPay %s answer is not signed", path)
+	case endpoint.Scheme != "https":
+		return nil, fmt.Errorf("EPay %s answer is not signed, which is accepted only over HTTPS", path)
 	}
 	if code != "0" {
 		return nil, Refused(fmt.Errorf("EPay %s failed: code=%s msg=%q", path, code, answer["msg"]))
