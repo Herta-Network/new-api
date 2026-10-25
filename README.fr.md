@@ -268,7 +268,7 @@ Ouvrez [http://localhost:5173](http://localhost:5173) ; les requêtes API sont r
 | [plugins/tasks/](./plugins/tasks/) | Extensions de tâches JavaScript ; contrat et limites de l'hôte dans [Task Plugin API v1](./docs/plugin-api/v1.md) |
 | `web/` | Console web ; voir les [conventions frontend](./web/AGENTS.md) |
 
-Lisez [AGENTS.md](./AGENTS.md) avant de contribuer. Exécutez les vérifications adaptées : `make test` pour les modules Go (les tests de base de données exigent `TEST_POSTGRES_DSN` ; `make test-db` démarre un PostgreSQL 18 local et l'affiche) ; `bun run typecheck`, `bun run lint`, `bun run test` et `bun run build` dans `web/` pour le frontend. Une modification de RelayKit nécessite aussi `GOWORK=off go build ./...` depuis `relaykit/`.
+Lisez [AGENTS.md](./AGENTS.md) avant de contribuer. Exécutez les vérifications adaptées : `make test` pour les modules Go (les tests de base de données exigent `TEST_POSTGRES_DSN` ; `make test-db` démarre un PostgreSQL 18 local et l'affiche) ; `bun check -b`, `bun run lint`, `bun run test` et `bun run build` dans `web/` pour le frontend. Une modification de RelayKit nécessite aussi `GOWORK=off go build ./...` depuis `relaykit/`.
 
 <a id="documentation"></a>
 
