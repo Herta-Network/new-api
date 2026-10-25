@@ -6303,6 +6303,7 @@
     "Subscription Only": "Abonnement uniquement",
     "Subscription plan creation and changes are locked until the administrator confirms compliance terms in Payment Gateway settings.": "La création et la modification des forfaits d’abonnement sont verrouillées jusqu’à ce que l’administrateur confirme les conditions de conformité dans les paramètres de la passerelle de paiement.",
     "Subscription plan is not enabled": "Le forfait d'abonnement n'est pas activé",
+    "Subscription plan does not exist": "Le forfait d'abonnement n'existe pas",
     "Subscription plan title cannot be empty": "Le titre du forfait d'abonnement ne peut pas être vide",
     "Subscription Plans": "Plans d'abonnement",
     "Subscription purchased with balance, plan: {{plan}}, payment amount: {{amount}}, quota deducted: {{quota}}": "Abonnement acheté avec le solde, offre : {{plan}}, montant payé : {{amount}}, quota déduit : {{quota}}",

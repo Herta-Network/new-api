@@ -6303,6 +6303,7 @@
     "Subscription Only": "サブスクリプションのみ",
     "Subscription plan creation and changes are locked until the administrator confirms compliance terms in Payment Gateway settings.": "管理者が支払いゲートウェイ設定でコンプライアンス条件を確認するまで、サブスクリプションプランの作成と変更はロックされます。",
     "Subscription plan is not enabled": "サブスクリプションプランは有効になっていません",
+    "Subscription plan does not exist": "サブスクリプションプランが存在しません",
     "Subscription plan title cannot be empty": "サブスクリプションプランのタイトルを入力してください",
     "Subscription Plans": "サブスクリプションプラン",
     "Subscription purchased with balance, plan: {{plan}}, payment amount: {{amount}}, quota deducted: {{quota}}": "残高でサブスクリプションを購入しました。プラン：{{plan}}、支払額：{{amount}}、差し引かれたクォータ：{{quota}}",
