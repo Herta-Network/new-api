@@ -27,7 +27,6 @@ Transitive dependencies should be audited before a final external release.
 | backend  | production  | Go        | `github.com/coreos/go-oidc/v3`                          | `v3.21.0`                            | Apache-2.0              |
 | backend  | production  | Go        | `github.com/expr-lang/expr`                             | `v1.17.8`                            | MIT                     |
 | backend  | production  | Go        | `github.com/fxamacker/cbor/v2`                          | `v2.9.0`                             | MIT                     |
-| backend  | production  | Go        | `github.com/gin-contrib/cors`                           | `v1.7.2`                             | MIT                     |
 | backend  | production  | Go        | `github.com/gin-contrib/gzip`                           | `v0.0.6`                             | MIT                     |
 | backend  | production  | Go        | `github.com/gin-gonic/gin`                              | `v1.9.1`                             | MIT                     |
 | backend  | production  | Go        | `github.com/go-audio/aiff`                              | `v1.1.0`                             | Apache-2.0              |

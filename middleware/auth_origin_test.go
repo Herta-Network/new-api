@@ -61,12 +61,14 @@ func TestCORSAdmitsOnlyFrontendOriginsToTheConsoleAPI(t *testing.T) {
 	useFrontendOrigins(t, "https://console.example.net", "https://app.example.net")
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.Use(CORS())
+	router.HandleMethodNotAllowed = true
 	api := router.Group("/api", gzip.Gzip(gzip.DefaultCompression))
 	api.GET("/user/self", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"success": true}) })
+	api.GET("/user/denied", func(c *gin.Context) { c.JSON(http.StatusUnauthorized, gin.H{"success": false}) })
 	api.GET("/usage/token/", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"success": true}) })
 	router.POST("/v1/chat/completions", func(c *gin.Context) { c.Status(http.StatusOK) })
 	router.POST("/pg/chat/completions", func(c *gin.Context) { c.Status(http.StatusOK) })
+	handler := CORS(router)
 
 	serve := func(method, path, origin string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(method, "https://api.example.com"+path, nil)
@@ -80,7 +82,7 @@ func TestCORSAdmitsOnlyFrontendOriginsToTheConsoleAPI(t *testing.T) {
 			request.Header.Set("Access-Control-Request-Headers", "authorization, content-type")
 		}
 		response := httptest.NewRecorder()
-		router.ServeHTTP(response, request)
+		handler.ServeHTTP(response, request)
 		return response
 	}
 
@@ -123,6 +125,46 @@ func TestCORSAdmitsOnlyFrontendOriginsToTheConsoleAPI(t *testing.T) {
 			response := serve(http.MethodOptions, path, "https://third-party.example.org")
 			assert.Equal(t, http.StatusNoContent, response.Code, path)
 			assert.Equal(t, "*", response.Header().Get("Access-Control-Allow-Origin"), path)
+			assert.Equal(t, "GET,POST,PUT,DELETE,OPTIONS", response.Header().Get("Access-Control-Allow-Methods"), path)
+			assert.Equal(t, "*", response.Header().Get("Access-Control-Allow-Headers"), path)
+			assert.Equal(t, "43200", response.Header().Get("Access-Control-Max-Age"), path)
+			request := serve(http.MethodPost, path, "https://third-party.example.org")
+			assert.Equal(t, "*", request.Header().Get("Access-Control-Allow-Origin"), path)
+			assert.Equal(t, "true", request.Header().Get("Access-Control-Allow-Credentials"), path)
+		}
+	})
+	// gin answers trailing-slash redirects before any middleware runs; the
+	// policy wraps the router, so they carry it like every other answer.
+	t.Run("every answer carries the policy, framework answers included", func(t *testing.T) {
+		for _, test := range []struct {
+			method, path string
+			status       int
+		}{
+			{method: http.MethodGet, path: "/api/user/self", status: http.StatusOK},
+			{method: http.MethodGet, path: "/api/user/denied", status: http.StatusUnauthorized},
+			{method: http.MethodGet, path: "/api/missing", status: http.StatusNotFound},
+			{method: http.MethodPost, path: "/api/user/self", status: http.StatusMethodNotAllowed},
+			{method: http.MethodGet, path: "/api/user/self/", status: http.StatusMovedPermanently},
+		} {
+			trusted := serve(test.method, test.path, "https://app.example.net")
+			assert.Equal(t, test.status, trusted.Code, test.path)
+			assert.Equal(t, "https://app.example.net", trusted.Header().Get("Access-Control-Allow-Origin"), test.path)
+			assert.Contains(t, trusted.Header().Values("Vary"), "Origin", test.path)
+			untrusted := serve(test.method, test.path, "https://evil.example.org")
+			assert.Equal(t, test.status, untrusted.Code, test.path)
+			assert.Empty(t, untrusted.Header().Get("Access-Control-Allow-Origin"), test.path)
+		}
+		for _, test := range []struct {
+			method, path string
+			status       int
+		}{
+			{method: http.MethodPost, path: "/v1/chat/completions/", status: http.StatusTemporaryRedirect},
+			{method: http.MethodGet, path: "/v1/chat/completions", status: http.StatusMethodNotAllowed},
+			{method: http.MethodGet, path: "/v1/missing", status: http.StatusNotFound},
+		} {
+			response := serve(test.method, test.path, "https://third-party.example.org")
+			assert.Equal(t, test.status, response.Code, test.path)
+			assert.Equal(t, "*", response.Header().Get("Access-Control-Allow-Origin"), test.path)
 		}
 	})
 }
@@ -136,12 +178,12 @@ func TestCORSAdmitsAnyOriginToSetupUntilTheSystemIsSetUp(t *testing.T) {
 	t.Cleanup(func() { constant.Setup = previousSetup })
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.Use(CORS())
 	ok := func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"success": true}) }
 	router.GET("/api/setup", ok)
 	router.POST("/api/setup", ok)
 	router.GET("/api/status", ok)
 	router.GET("/api/user/self", ok)
+	handler := CORS(router)
 
 	serve := func(method, path, requestMethod string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(method, "https://api.example.com"+path, nil)
@@ -152,7 +194,7 @@ func TestCORSAdmitsAnyOriginToSetupUntilTheSystemIsSetUp(t *testing.T) {
 			request.Header.Set("Access-Control-Request-Headers", "content-type")
 		}
 		response := httptest.NewRecorder()
-		router.ServeHTTP(response, request)
+		handler.ServeHTTP(response, request)
 		return response
 	}
 
