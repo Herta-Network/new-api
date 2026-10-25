@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { SystemBehaviorSection } from '../general/system-behavior-section'
 import { EmailSettingsSection } from '../integrations/email-settings-section'
+import { EmailTemplatesSection } from '../integrations/email-templates-section'
 import { MonitoringSettingsSection } from '../integrations/monitoring-settings-section'
 import { WorkerSettingsSection } from '../integrations/worker-settings-section'
 import { LogSettingsSection } from '../maintenance/log-settings-section'
@@ -67,9 +68,15 @@ const OPERATIONS_SECTIONS = [
           QuotaRemindEnabled: settings.QuotaRemindEnabled,
           QuotaRemindThreshold: settings.QuotaRemindThreshold,
           EmailProvider: settings.EmailProvider,
+          EmailBackupProvider: settings.EmailBackupProvider,
           ResendApiKey: settings.ResendApiKey,
           ResendKeyConfigured: settings.ResendKeyConfigured,
           ResendFrom: settings.ResendFrom,
+          CloudflareEmailAccountId: settings.CloudflareEmailAccountId,
+          CloudflareEmailApiToken: settings.CloudflareEmailApiToken,
+          CloudflareEmailTokenConfigured:
+            settings.CloudflareEmailTokenConfigured,
+          CloudflareEmailFrom: settings.CloudflareEmailFrom,
           SMTPServer: settings.SMTPServer,
           SMTPPort: settings.SMTPPort,
           SMTPAccount: settings.SMTPAccount,
@@ -82,6 +89,11 @@ const OPERATIONS_SECTIONS = [
         }}
       />
     ),
+  },
+  {
+    id: 'email-templates',
+    titleKey: 'Email Templates',
+    build: () => <EmailTemplatesSection />,
   },
   {
     id: 'worker',

@@ -68,6 +68,9 @@ email.security_event.email_confirmed: "邮箱地址已确认"
 email.security_event.login_linked: "已绑定登录账号 {{.Provider}}"
 email.security_event.login_unlinked: "已解绑登录账号"
 email.security_event.wechat_linked: "已绑定微信账号"
+email.layout.footer: "此邮件由{{.SystemName}}自动发送，请勿直接回复。"
+email.test.subject: "{{.SystemName}}测试邮件"
+email.test.content: "这是一封来自{{.SystemName}}的测试邮件。收到这封邮件说明邮件发送正常。"
 
 # Low-quota notices
 notify.quota_low_title: "您的额度即将用尽"

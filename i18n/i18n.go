@@ -205,6 +205,15 @@ func normalizeLang(lang string) string {
 	}
 }
 
+// ResolveLang returns the supported language a reader of lang gets: "" means
+// common.DefaultLanguage, and an unsupported language the fallback.
+func ResolveLang(lang string) string {
+	if lang == "" {
+		lang = common.DefaultLanguage
+	}
+	return normalizeLang(lang)
+}
+
 // SupportedLanguages returns a list of supported language codes
 func SupportedLanguages() []string {
 	return []string{LangZhCN, LangZhTW, LangEn}

@@ -107,6 +107,11 @@ var auditRouteActions = map[string]string{
 	"DELETE /api/payment/settings/methods/:id":            "payment.method_delete",
 	"POST /api/payment/settings/methods/:id/webhook/sync": "payment.webhook_sync",
 
+	// 邮件模板与测试邮件（root）
+	"PUT /api/email/templates/:kind/:language":    "email.template_update",
+	"DELETE /api/email/templates/:kind/:language": "email.template_reset",
+	"POST /api/email/test":                        "email.test_send",
+
 	// 日志
 	"POST /api/system-task/log-cleanup": "log.cleanup_start",
 }

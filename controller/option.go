@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/internal/module/currency"
+	"github.com/QuantumNous/new-api/internal/module/mail"
 	"github.com/QuantumNous/new-api/internal/module/payment"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
@@ -89,7 +90,7 @@ func GetOptions(c *gin.Context) {
 	optionValues := make(map[string]string)
 	common.OptionMapRWMutex.Lock()
 	for k, v := range common.OptionMap {
-		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" {
+		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" || k == "CloudflareEmailTokenConfigured" {
 			continue
 		}
 		value := common.Interface2String(v)
@@ -111,6 +112,9 @@ func GetOptions(c *gin.Context) {
 	}
 	options = append(options, &model.Option{
 		Key: "ResendKeyConfigured", Value: strconv.FormatBool(strings.TrimSpace(common.OptionMap["ResendApiKey"]) != ""),
+	})
+	options = append(options, &model.Option{
+		Key: "CloudflareEmailTokenConfigured", Value: strconv.FormatBool(strings.TrimSpace(common.OptionMap[mail.CloudflareTokenOption]) != ""),
 	})
 	options = append(options, &model.Option{
 		Key:   "PaymentExchangeRateKeyConfigured",

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState, type ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -33,9 +33,14 @@ const defaults: EmailValues = {
   QuotaRemindEnabled: true,
   QuotaRemindThreshold: '0',
   EmailProvider: 'smtp',
+  EmailBackupProvider: '',
   ResendApiKey: '',
   ResendKeyConfigured: true,
   ResendFrom: 'notify@example.com',
+  CloudflareEmailAccountId: '0123456789abcdef0123456789abcdef',
+  CloudflareEmailApiToken: '',
+  CloudflareEmailTokenConfigured: false,
+  CloudflareEmailFrom: '',
   SMTPServer: 'smtp.example.com',
   SMTPPort: '587',
   SMTPAccount: 'sender@example.com',
@@ -359,6 +364,7 @@ describe('email delivery settings', () => {
     const parsed = createEmailSchema((key) => key).safeParse({
       ...defaults,
       ResendSenderName: '',
+      CloudflareSenderName: '',
       SMTPFrom: 'New API\r\nBcc: other@example.com <noreply@example.com>',
     })
     expect(parsed.success).toBe(false)
@@ -374,6 +380,7 @@ describe('email delivery settings', () => {
       createEmailSchema((key) => key).safeParse({
         ...defaults,
         ResendSenderName: '',
+        CloudflareSenderName: '',
         EmailProvider: 'both',
       }).success
     ).toBe(false)
@@ -384,6 +391,7 @@ describe('email delivery settings', () => {
       ...defaults,
       EmailProvider: 'resend',
       ResendSenderName: 'New API\r\nBcc: other@example.com',
+      CloudflareSenderName: '',
     })
     expect(parsed.success).toBe(false)
     if (!parsed.success) {
@@ -391,5 +399,125 @@ describe('email delivery settings', () => {
         expect.objectContaining({ path: ['ResendSenderName'] }),
       ])
     }
+  })
+  it('saves Cloudflare settings before making it the backup method', async () => {
+    const request = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true } })
+    const user = renderEmail()
+    await user.click(
+      screen.getByRole('combobox', { name: 'Backup sending method' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'Cloudflare Email Service' })
+    )
+    const cloudflare = screen.getByRole('group', {
+      name: /Cloudflare Email Service/,
+    })
+    expect(
+      within(screen.getByRole('group', { name: /SMTP/ })).getByRole('textbox', {
+        name: 'SMTP Host',
+      })
+    ).toBeVisible()
+    await user.type(
+      within(cloudflare).getByLabelText('Cloudflare API token'),
+      'cf-token'
+    )
+    await user.type(
+      within(cloudflare).getByRole('textbox', { name: 'Sender email address' }),
+      'mail@example.com'
+    )
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(3))
+    expect(request.mock.calls.map((call) => call[1])).toEqual([
+      { key: 'CloudflareEmailFrom', value: 'mail@example.com' },
+      { key: 'CloudflareEmailApiToken', value: 'cf-token' },
+      { key: 'EmailBackupProvider', value: 'cloudflare' },
+    ])
+  })
+
+  it('requires a Cloudflare token before first using Cloudflare', async () => {
+    const request = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true } })
+    const user = renderEmail({ CloudflareEmailFrom: 'mail@example.com' })
+    await user.click(
+      screen.getByRole('radio', { name: 'Cloudflare Email Service' })
+    )
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    expect(
+      await screen.findByText(
+        'Configure a Cloudflare API token before enabling Cloudflare'
+      )
+    ).toBeVisible()
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('swaps the primary and backup methods, writing the primary first', async () => {
+    const request = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true } })
+    const user = renderEmail({ EmailBackupProvider: 'resend' })
+    await user.click(screen.getByRole('radio', { name: 'Resend API' }))
+    expect(
+      screen.getByRole('combobox', { name: 'Backup sending method' })
+    ).toHaveTextContent('No backup')
+    await user.click(
+      screen.getByRole('combobox', { name: 'Backup sending method' })
+    )
+    await user.click(await screen.findByRole('option', { name: 'SMTP' }))
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2))
+    expect(request.mock.calls.map((call) => call[1])).toEqual([
+      { key: 'EmailProvider', value: 'resend' },
+      { key: 'EmailBackupProvider', value: 'smtp' },
+    ])
+  })
+
+  it('sends a test email only with saved settings, through the chosen method', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: {
+        success: true,
+        data: {
+          templates: [],
+          languages: ['en', 'zh-CN', 'zh-TW'],
+          test_kinds: ['test', 'verification'],
+          default_language: 'zh-CN',
+        },
+      },
+    })
+    const post = vi
+      .spyOn(api, 'post')
+      .mockResolvedValue({ data: { success: true } })
+    const user = renderEmail({ EmailProvider: 'resend' })
+    const host = screen.getByRole('textbox', { name: 'Sender email address' })
+    await user.type(host, 'x')
+    expect(
+      screen.getByRole('button', { name: 'Send test email' })
+    ).toBeDisabled()
+    expect(
+      screen.getByText('Save your changes before sending a test email')
+    ).toBeVisible()
+    await user.clear(host)
+    await user.type(host, 'notify@example.com')
+    expect(
+      screen.getByRole('button', { name: 'Send test email' })
+    ).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: 'Send test email' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Recipient' }),
+      'admin@example.com'
+    )
+    await user.click(within(dialog).getByRole('button', { name: 'Send' }))
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/api/email/test', {
+        to: 'admin@example.com',
+        provider: 'resend',
+        kind: 'test',
+        language: 'zh-CN',
+      })
+    )
   })
 })

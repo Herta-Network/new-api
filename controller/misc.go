@@ -3,8 +3,10 @@ package controller
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -233,15 +235,10 @@ func SendEmailVerification(c *gin.Context) {
 	common.RegisterVerificationCodeWithKey(email, code, common.EmailVerificationPurpose)
 	// The address may not belong to an account yet, so the mail follows the
 	// request language.
-	systemName := map[string]any{"SystemName": common.SystemName}
-	subject := i18n.T(c, i18n.MsgEmailVerificationSubject, systemName)
-	content := fmt.Sprintf("<p>%s</p>"+
-		"<p>%s</p>"+
-		"<p>%s</p>",
-		i18n.T(c, i18n.MsgEmailVerificationGreeting, systemName),
-		i18n.T(c, i18n.MsgEmailVerificationCode, map[string]any{"Code": code}),
-		i18n.T(c, i18n.MsgEmailVerificationValidity, map[string]any{"Minutes": common.VerificationValidMinutes}))
-	err = common.SendEmail(subject, email, content)
+	err = common.SendTemplateEmail(i18n.StatedLang(c), email, common.TemplateEmail{
+		Kind: common.EmailKindVerification,
+		Vars: map[string]string{"Code": code, "Minutes": strconv.Itoa(common.VerificationValidMinutes)},
+	})
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -262,23 +259,17 @@ func SendPasswordResetEmail(c *gin.Context) {
 	if user, err := model.GetUniqueUserByEmail(email); err == nil {
 		code := common.GenerateVerificationCode(0)
 		common.RegisterVerificationCodeWithKey(email, code, common.PasswordResetPurpose)
-		link := fmt.Sprintf("%s/user/reset?email=%s&token=%s", system_setting.ServerAddress, email, code)
+		// OWASP Forgot Password Cheat Sheet: the link starts from the
+		// configured server address, never from the request's Host header.
+		link := strings.TrimRight(system_setting.ServerAddress, "/") + "/user/reset?" + url.Values{"email": {email}, "token": {code}}.Encode()
 		lang := user.GetSetting().Language
 		if lang == "" {
 			lang = i18n.StatedLang(c)
 		}
-		systemName := map[string]any{"SystemName": common.SystemName}
-		linkParams := map[string]any{"Link": link}
-		subject := i18n.Translate(lang, i18n.MsgEmailPasswordResetSubject, systemName)
-		content := fmt.Sprintf("<p>%s</p>"+
-			"<p>%s</p>"+
-			"<p>%s </p>"+
-			"<p>%s</p>",
-			i18n.Translate(lang, i18n.MsgEmailPasswordResetGreeting, systemName),
-			i18n.Translate(lang, i18n.MsgEmailPasswordResetLink, linkParams),
-			i18n.Translate(lang, i18n.MsgEmailPasswordResetLinkFallback, linkParams),
-			i18n.Translate(lang, i18n.MsgEmailPasswordResetValidity, map[string]any{"Minutes": common.VerificationValidMinutes}))
-		err := common.SendEmail(subject, email, content)
+		err := common.SendTemplateEmail(lang, email, common.TemplateEmail{
+			Kind: common.EmailKindPasswordReset,
+			Vars: map[string]string{"Link": link, "Minutes": strconv.Itoa(common.VerificationValidMinutes)},
+		})
 		if err != nil {
 			logger.LogError(c.Request.Context(), common.LogText("failed to send password reset email to %s: %s", email, err.Error()))
 		}

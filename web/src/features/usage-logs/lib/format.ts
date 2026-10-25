@@ -574,6 +574,10 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'payment.method_update': 'Updated payment channel {{name}} ({{platform}})',
   'payment.method_delete': 'Deleted a payment channel',
   'payment.webhook_sync': 'Synced the Stripe webhook of a payment channel',
+  // Email
+  'email.template_update': 'Updated an email template',
+  'email.template_reset': 'Restored a built-in email template',
+  'email.test_send': 'Sent a test email',
   // Logs
   'log.clear': 'Cleared historical logs',
   'log.cleanup_start': 'Log cleanup task started.',
