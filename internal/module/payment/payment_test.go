@@ -2,9 +2,11 @@ package payment
 
 import (
 	"context"
+	"crypto"
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
@@ -12,10 +14,12 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -141,6 +145,10 @@ func setupPayment(t *testing.T) *paymentFixture {
 	healthMu.Lock()
 	health = map[int]*ChannelHealth{}
 	healthMu.Unlock()
+	// Work off the buyer's request finishes before the request returns.
+	savedBackground := runInBackground
+	runInBackground = func(work func()) { work() }
+	t.Cleanup(func() { runInBackground = savedBackground })
 
 	require.NoError(t, model.DB.Create(&model.User{Id: testUser, Username: "payer", Status: common.UserStatusEnabled, Group: "vip"}).Error)
 	// Each option has one channel under the same id, as the migration that
@@ -538,6 +546,135 @@ func TestSyncAsksEveryInvoiceThatReachedTheBuyer(t *testing.T) {
 	synced, err = SyncOrder(ctx, stored, "")
 	require.NoError(t, err)
 	assert.Equal(t, entity.PaymentOrderFinished, synced.Status)
+}
+
+// fakeEPayV2 is an EPay V2 gateway that answers a payment creation with
+// whatever the test set and the query and close of an order with signed
+// answers, without sign_type as NiuNiu Pay answers. It records the API paths
+// it was asked and the order each named.
+type fakeEPayV2 struct {
+	mu       sync.Mutex
+	platform *rsa.PrivateKey
+	created  string
+	status   string
+	money    string
+	asked    []string
+}
+
+func (f *fakeEPayV2) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_ = r.ParseForm()
+	orderNo := r.PostForm.Get("out_trade_no")
+	f.asked = append(f.asked, r.URL.Path+" "+orderNo)
+	var answer map[string]string
+	switch r.URL.Path {
+	case "/api/pay/create":
+		_, _ = w.Write([]byte(f.created))
+		return
+	case "/api/pay/query":
+		answer = map[string]string{"code": "0", "pid": "1001", "trade_no": "T" + orderNo, "out_trade_no": orderNo, "type": "alipay", "money": f.money, "status": f.status}
+	case "/api/pay/close":
+		answer = map[string]string{"code": "0", "msg": "succ"}
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	answer["timestamp"] = strconv.FormatInt(time.Now().Unix(), 10)
+	var canonical []string
+	for _, key := range slices.Sorted(maps.Keys(answer)) {
+		if answer[key] != "" {
+			canonical = append(canonical, key+"="+answer[key])
+		}
+	}
+	digest := sha256.Sum256([]byte(strings.Join(canonical, "&")))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, f.platform, crypto.SHA256, digest[:])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	answer["sign"] = base64.StdEncoding.EncodeToString(signature)
+	raw, _ := common.Marshal(answer)
+	_, _ = w.Write(raw)
+}
+
+func (f *fakeEPayV2) answer(created, status, money string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.created, f.status, f.money, f.asked = created, status, money, nil
+}
+
+func (f *fakeEPayV2) paths() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.asked)
+}
+
+// A provider may create a payment and still fail the checkout, as an EPay
+// gateway whose answer cannot be read. The buyer is switched to the next
+// channel at once; the failed channel's gateway is asked afterwards, off the
+// buyer's request, to close the payment, and a payment it proves settles
+// the order. A provider that refused the payment created none and is not
+// asked.
+func TestFailedCheckoutClosesAtTheGateway(t *testing.T) {
+	setupPayment(t)
+	ctx := context.Background()
+	var background []func()
+	runInBackground = func(work func()) { background = append(background, work) }
+	runBackground := func() {
+		for _, work := range background {
+			work()
+		}
+		background = nil
+	}
+	merchant, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	merchantDER, err := x509.MarshalPKCS8PrivateKey(merchant)
+	require.NoError(t, err)
+	platform, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	platformDER, err := x509.MarshalPKIXPublicKey(&platform.PublicKey)
+	require.NoError(t, err)
+	fake := &fakeEPayV2{platform: platform}
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	config := `{"url":"` + server.URL + `","pid":"1001","version":"v2","checkout":"api","type":"alipay","private_key":"` +
+		base64.StdEncoding.EncodeToString(merchantDER) + `","platform_public_key":"` + base64.StdEncoding.EncodeToString(platformDER) + `"}`
+	require.NoError(t, model.DB.Model(&entity.PaymentMethod{}).Where("id = ?", testEPayMethod).Update("config", config).Error)
+	addChannel(t, 20, testEPayMethod, gateway.PlatformStripe, 0, 0, 1, 1)
+
+	fake.answer(`<html>502 Bad Gateway</html>`, "0", "")
+	order, checkout, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	require.NoError(t, err)
+	assert.Equal(t, gateway.ActionStripe, checkout.Type)
+	assert.Equal(t, []string{"/api/pay/create " + order.OrderNo}, fake.paths(), "the buyer does not wait for the gateway's close")
+	runBackground()
+	assert.Equal(t, []string{"/api/pay/create " + order.OrderNo, "/api/pay/query " + order.OrderNo, "/api/pay/close " + order.OrderNo}, fake.paths())
+	assert.Equal(t, [][]any{
+		{order.OrderNo, testEPayMethod, entity.PaymentInvoiceClosed, "failed"},
+		{order.OrderNo + "R2", 20, entity.PaymentInvoicePending, ""},
+	}, invoiceStates(t, order.OrderNo))
+
+	fake.answer(`{"code":-1,"msg":"amount below the minimum"}`, "0", "")
+	refused, _, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	require.NoError(t, err)
+	runBackground()
+	assert.Equal(t, []string{"/api/pay/create " + refused.OrderNo}, fake.paths())
+
+	fake.answer(`<html>502 Bad Gateway</html>`, "1", "")
+	paid, _, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), "203.0.113.9")
+	require.NoError(t, err)
+	invoice, err := store.GetInvoiceByNo(paid.OrderNo)
+	require.NoError(t, err)
+	fake.mu.Lock()
+	fake.money = gateway.FormatAmount(invoice.PaymentAmount)
+	fake.mu.Unlock()
+	runBackground()
+	assert.Equal(t, []string{"/api/pay/create " + paid.OrderNo, "/api/pay/query " + paid.OrderNo}, fake.paths(), "a paid order is not closed")
+	settled, err := store.GetOrderByNo(paid.OrderNo)
+	require.NoError(t, err)
+	assert.Equal(t, entity.PaymentOrderFinished, settled.Status)
+	assert.Equal(t, "T"+paid.OrderNo, settled.TradeNo)
 }
 
 // Buyers see payment options, the prices they take and their fees, never
