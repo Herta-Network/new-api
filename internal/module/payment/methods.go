@@ -64,8 +64,11 @@ type MethodDetail struct {
 	Health *ChannelHealth `json:"health,omitempty"`
 }
 
+// PlatformInfo describes a gateway platform and its configuration fields.
+type PlatformInfo = gateway.PlatformInfo
+
 // Platforms describes the gateway platforms for the administrator's form.
-func Platforms() []gateway.PlatformInfo {
+func Platforms() []PlatformInfo {
 	return gateway.Platforms()
 }
 
