@@ -384,7 +384,8 @@ func useEPayAPI(t *testing.T) {
 // A channel that cannot start a payment hands the order to the next channel
 // whose checkout reaches its provider, under the same order number. A
 // channel that keeps failing is tripped and tried last until its cooldown
-// passes; a checkout through it clears it.
+// passes; a checkout through it clears it. Every failure shows its reason on
+// the channel's health, but one the gateway refused does not count.
 func TestCheckoutSwitchesChannels(t *testing.T) {
 	f := setupPayment(t)
 	ctx := context.Background()
@@ -397,12 +398,14 @@ func TestCheckoutSwitchesChannels(t *testing.T) {
 	addChannel(t, 20, testEPayMethod, gateway.PlatformStripe, 0, 0, 1, 1)
 
 	// A gateway that refuses one order is switched away from but not held
-	// against the channel.
+	// against the channel; the administrator still sees why.
 	f.epay.setPayment(0, `{"code":-1,"msg":"amount below the minimum"}`)
 	_, checkout, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{IP: "203.0.113.9"})
 	require.NoError(t, err)
 	assert.Equal(t, gateway.ActionStripe, checkout.Type)
-	assert.Nil(t, channelHealth(testEPayMethod))
+	refused := channelHealth(testEPayMethod)
+	require.NotNil(t, refused)
+	assert.Equal(t, ChannelHealth{LastError: `EPay refused the payment of order ` + checkout.OrderNo + `: code=-1 msg="amount below the minimum"`, LastFailedAt: now.Unix()}, *refused)
 
 	f.epay.setPayment(http.StatusBadGateway, `bad gateway`)
 	order, checkout, err := CreateOrder(ctx, testUser, topup("10", testEPayMethod), Buyer{IP: "203.0.113.9"})
@@ -508,7 +511,10 @@ func TestRenewalKeepsTheInvoiceTheBuyerHolds(t *testing.T) {
 		{order.OrderNo, testEPayMethod, entity.PaymentInvoicePending, ""},
 		{order.OrderNo + "R2", 20, entity.PaymentInvoicePending, ""},
 	}, invoiceStates(t, order.OrderNo))
-	assert.Nil(t, channelHealth(testEPayMethod), "a refused renewal says nothing of the channel")
+	renewal := channelHealth(testEPayMethod)
+	require.NotNil(t, renewal)
+	assert.Zero(t, renewal.Failures, "a refused renewal is not held against the channel")
+	assert.Contains(t, renewal.LastError, "order number exists")
 
 	stored, err := store.GetOrderByNo(order.OrderNo)
 	require.NoError(t, err)
