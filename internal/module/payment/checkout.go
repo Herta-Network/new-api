@@ -35,9 +35,10 @@ type Checkout struct {
 	OrderNo string                `json:"order_no"`
 }
 
-// CreateOrder prices a purchase, stores it as a pending order and starts
-// its payment in the same request. A balance or free purchase completes
-// at once; if it fails the order is closed again.
+// CreateOrder prices a purchase, stores it as a pending order with an
+// invoice of the chosen method and starts its payment in the same request.
+// A balance or free purchase needs no invoice and completes at once; if it
+// fails the order is closed again.
 func CreateOrder(ctx context.Context, userId int, req PurchaseRequest, clientIp string) (*entity.PaymentOrder, *Checkout, error) {
 	quote, err := QuotePurchase(ctx, userId, req)
 	if err != nil {
@@ -72,20 +73,24 @@ func CreateOrder(ctx context.Context, userId int, req PurchaseRequest, clientIp 
 	if quote.plan != nil {
 		limits.MaxPlanPurchases = quote.plan.MaxPurchasePerUser
 	}
-	if err := store.CreateOrder(order, limits); err != nil {
-		return nil, nil, err
-	}
 	if order.Platform == entity.PaymentPlatformBalance {
+		if err := store.CreateOrder(order, limits, nil); err != nil {
+			return nil, nil, err
+		}
 		paid, err := store.PayOrderWithBalance(order.OrderNo, userId)
 		if err != nil {
-			if _, closeErr := store.CloseOrder(order, false, "payment_failed"); closeErr != nil {
+			if _, closeErr := store.CloseOrder(order, "payment_failed"); closeErr != nil {
 				logger.LogWarn(ctx, common.LogText("close failed balance order %s: %v", order.OrderNo, closeErr))
 			}
 			return nil, nil, err
 		}
 		return paid, &Checkout{Type: CheckoutTypePaid, OrderNo: order.OrderNo}, nil
 	}
-	checkout, err := StartCheckout(ctx, order, quote.method)
+	invoice := &entity.PaymentInvoice{PaymentMethodId: quote.method.Id, Platform: quote.method.Platform}
+	if err := store.CreateOrder(order, limits, invoice); err != nil {
+		return nil, nil, err
+	}
+	checkout, err := startCheckout(ctx, order, invoice, quote.method)
 	if err != nil {
 		return order, nil, err
 	}
@@ -93,7 +98,8 @@ func CreateOrder(ctx context.Context, userId int, req PurchaseRequest, clientIp 
 }
 
 // ResumeCheckout starts the payment of a user's pending order again, for a
-// client that lost the payment page or client secret.
+// client that lost the payment page or client secret: its latest invoice is
+// checked out again.
 func ResumeCheckout(ctx context.Context, userId int, orderNo string) (*Checkout, error) {
 	order, err := UserOrder(userId, orderNo)
 	if err != nil {
@@ -102,26 +108,34 @@ func ResumeCheckout(ctx context.Context, userId int, orderNo string) (*Checkout,
 	if order.Platform == entity.PaymentPlatformBalance {
 		return nil, errOrderNotPayable
 	}
-	method, err := store.GetMethod(order.PaymentMethodId)
+	invoices, err := store.ListInvoices(order.Id)
+	if err != nil {
+		return nil, err
+	}
+	if len(invoices) == 0 {
+		return nil, errOrderNotPayable
+	}
+	invoice := invoices[len(invoices)-1]
+	method, err := store.GetMethod(invoice.PaymentMethodId)
 	if err != nil || !method.Enabled {
 		return nil, errMethodUnavailable
 	}
-	return StartCheckout(ctx, order, method)
+	return startCheckout(ctx, order, invoice, method)
 }
 
-// StartCheckout creates, or resumes, the gateway payment of a pending order.
-// The payment expectation is recorded before the gateway is asked for
-// anything and never changes afterwards, so a resumed checkout asks for the
-// same amount even when the exchange rate moved.
-func StartCheckout(ctx context.Context, order *entity.PaymentOrder, method *entity.PaymentMethod) (*Checkout, error) {
-	if order.Status != entity.PaymentOrderPending || time.Now().Unix() >= order.ExpiresAt {
+// startCheckout creates, or resumes, the gateway payment of a pending
+// invoice of a pending order. The payment expectation is recorded before the
+// gateway is asked for anything and never changes afterwards, so a resumed
+// checkout asks for the same amount even when the exchange rate moved.
+func startCheckout(ctx context.Context, order *entity.PaymentOrder, invoice *entity.PaymentInvoice, method *entity.PaymentMethod) (*Checkout, error) {
+	if order.Status != entity.PaymentOrderPending || invoice.Status != entity.PaymentInvoicePending || time.Now().Unix() >= order.ExpiresAt {
 		return nil, errOrderNotPayable
 	}
 	gw, err := openGateway(method)
 	if err != nil {
 		return nil, errMethodUnavailable
 	}
-	if order.PaymentCurrency == "" {
+	if invoice.PaymentCurrency == "" {
 		rate, err := chargeRate(ctx, gw, order.Currency)
 		if err != nil {
 			return nil, err
@@ -133,26 +147,26 @@ func StartCheckout(ctx context.Context, order *entity.PaymentOrder, method *enti
 		if rate == "" {
 			rate = "1"
 		}
-		if _, err := store.SetPaymentExpectation(order.Id, charge.Amount, charge.Currency, rate); err != nil {
+		if _, err := store.SetInvoiceExpectation(invoice, charge.Amount, charge.Currency, rate); err != nil {
 			return nil, err
 		}
 		// A concurrent checkout may have recorded its expectation first; the
-		// stored one is the order's.
-		if order, err = store.GetOrderByNo(order.OrderNo); err != nil {
+		// stored one is the invoice's.
+		if invoice, err = store.GetInvoice(invoice.Id); err != nil {
 			return nil, err
 		}
-		if order.Status != entity.PaymentOrderPending {
+		if invoice.Status != entity.PaymentInvoicePending {
 			return nil, errOrderNotPayable
 		}
 	}
-	view := orderView(order)
+	view := invoiceView(order, invoice)
 	checkout := gateway.Checkout{
 		Order:     view,
-		Charge:    gateway.Charge{Amount: order.PaymentAmount, Currency: order.PaymentCurrency},
+		Charge:    gateway.Charge{Amount: invoice.PaymentAmount, Currency: invoice.PaymentCurrency},
 		ReturnURL: siteAddress() + "/user/wallet?payment_order=" + url.QueryEscape(order.OrderNo),
 		Subject:   order.Subject,
 		Claim: func(_ context.Context, tradeNo string) (string, error) {
-			return store.ClaimPaymentTrade(order.Id, tradeNo)
+			return store.ClaimInvoiceTrade(invoice, tradeNo)
 		},
 	}
 	if gw.NeedsNotifyURL(view) {
@@ -167,7 +181,7 @@ func StartCheckout(ctx context.Context, order *entity.PaymentOrder, method *enti
 		if errors.As(err, &message) {
 			return nil, err
 		}
-		logger.LogError(ctx, common.LogText("start payment of order %s failed: %v", order.OrderNo, err))
+		logger.LogError(ctx, common.LogText("start payment of invoice %s failed: %v", invoice.InvoiceNo, err))
 		return nil, errCheckoutFailed
 	}
 	return &Checkout{Type: action.Type, URL: action.URL, Stripe: action.Stripe, QRCode: action.QRCode, OrderNo: order.OrderNo}, nil

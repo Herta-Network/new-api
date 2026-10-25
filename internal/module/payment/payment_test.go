@@ -369,6 +369,12 @@ func TestEPayCheckoutAndCallbackChain(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, entity.PaymentOrderFinished, settled.Status)
 	assert.Equal(t, "T1", settled.TradeNo)
+	invoices, err := OrderInvoices(order.OrderNo)
+	require.NoError(t, err)
+	require.Len(t, invoices, 1)
+	assert.Equal(t, order.OrderNo, invoices[0].InvoiceNo, "the gateway knows the first invoice by the order number")
+	assert.Equal(t, entity.PaymentInvoicePaid, invoices[0].Status)
+	assert.Equal(t, "T1", invoices[0].TradeNo)
 }
 
 // An API checkout asks the gateway for the payment while the buyer waits:
@@ -481,7 +487,7 @@ func TestStripeCheckoutAndWebhook(t *testing.T) {
 	require.NoError(t, model.DB.Find(&unmatched).Error)
 	require.Len(t, unmatched, 1)
 	assert.Equal(t, entity.PaymentUnmatched{
-		Id: unmatched[0].Id, Platform: gateway.PlatformStripe, TradeNo: "pi_2", OrderNo: second.OrderNo, PaymentMethodId: testStripeMethod,
+		Id: unmatched[0].Id, Platform: gateway.PlatformStripe, TradeNo: "pi_2", OrderNo: second.OrderNo, InvoiceNo: second.OrderNo, PaymentMethodId: testStripeMethod,
 		UserId: testUser, Amount: 830, Currency: "USD", CreatedAt: unmatched[0].CreatedAt,
 		Reason: "the Stripe payment intent collected wechat_pay, not the payment method's card",
 	}, unmatched[0])

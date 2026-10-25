@@ -150,12 +150,12 @@ func DeleteMethod(method *entity.PaymentMethod) error {
 	return model.DB.Delete(method).Error
 }
 
-// CountPendingOrders counts the pending orders of a method: their
+// CountPendingInvoices counts the pending invoices of a method: their
 // checkout and callbacks depend on its configuration.
-func CountPendingOrders(methodID int) (int64, error) {
+func CountPendingInvoices(methodID int) (int64, error) {
 	var count int64
-	err := model.DB.Model(&entity.PaymentOrder{}).
-		Where("payment_method_id = ? AND status = ?", methodID, entity.PaymentOrderPending).
+	err := model.DB.Model(&entity.PaymentInvoice{}).
+		Where("payment_method_id = ? AND status = ?", methodID, entity.PaymentInvoicePending).
 		Count(&count).Error
 	return count, err
 }

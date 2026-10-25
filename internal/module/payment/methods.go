@@ -250,7 +250,7 @@ func UpdateMethod(ctx context.Context, id int, in MethodInput) (*MethodDetail, e
 		stored = canonical
 	}
 	if config != stored || in.Domain != method.Domain {
-		pending, err := store.CountPendingOrders(method.Id)
+		pending, err := store.CountPendingInvoices(method.Id)
 		if err != nil {
 			return nil, err
 		}
@@ -289,7 +289,7 @@ func DeleteMethod(ctx context.Context, id int) error {
 	if method.Id == entity.BalancePaymentMethodID {
 		return errBalanceUndeletable
 	}
-	pending, err := store.CountPendingOrders(method.Id)
+	pending, err := store.CountPendingInvoices(method.Id)
 	if err != nil {
 		return err
 	}

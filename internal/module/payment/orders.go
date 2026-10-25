@@ -35,6 +35,16 @@ func GetOrder(orderNo string) (*entity.PaymentOrder, error) {
 	return store.GetOrderByNo(orderNo)
 }
 
+// OrderInvoices lists the invoices of an order in the order they were
+// issued.
+func OrderInvoices(orderNo string) ([]*entity.PaymentInvoice, error) {
+	order, err := store.GetOrderByNo(orderNo)
+	if err != nil {
+		return nil, err
+	}
+	return store.ListInvoices(order.Id)
+}
+
 // ListOrders lists the orders filter selects, newest first.
 func ListOrders(filter OrderFilter, pageInfo *common.PageInfo) ([]*entity.PaymentOrder, int64, error) {
 	return store.ListOrders(filter, pageInfo)

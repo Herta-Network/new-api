@@ -32,45 +32,31 @@ const (
 // safe to close; it stays pending and is checked again later.
 var ErrCloseUnconfirmed error = common.NewMessage("The payment status could not be confirmed yet. The order stays open; try again later.")
 
-// CloseOrder closes a pending order after asking its gateway: a payment the
-// gateway proves settles the order instead, and a payment it cannot rule
-// out keeps the order pending (ErrCloseUnconfirmed). It returns the order
-// as it is afterwards.
+// CloseOrder closes a pending order after asking the gateway of each of
+// its pending invoices: a payment a gateway proves settles the order
+// instead, and a payment one cannot rule out keeps the order pending
+// (ErrCloseUnconfirmed). It returns the order as it is afterwards.
 func CloseOrder(ctx context.Context, order *entity.PaymentOrder, actor int) (*entity.PaymentOrder, error) {
 	if order.Status != entity.PaymentOrderPending {
 		return order, nil
 	}
 	reason := map[int]string{CloseBySystem: closeReasonExpired, CloseByOwner: closeReasonOwner, CloseByAdmin: closeReasonAdmin}[actor]
-	verdict := gateway.Reconciliation{}
-	if order.Platform != entity.PaymentPlatformBalance {
-		// The method may have been disabled or deleted since; its gateway
-		// still decides.
-		method, err := store.GetMethodIncludingDeleted(order.PaymentMethodId)
-		if err != nil {
-			return nil, err
+	invoices, err := store.ListInvoices(order.Id)
+	if err != nil {
+		return nil, err
+	}
+	for _, invoice := range invoices {
+		if invoice.Status != entity.PaymentInvoicePending {
+			continue
 		}
-		gw, err := openGateway(method)
-		if err != nil {
-			return nil, fmt.Errorf("open the gateway of payment method %d: %w", method.Id, err)
-		}
-		verdict, err = gw.Reconcile(ctx, gateway.CloseRequest{Order: orderView(order), Explicit: actor != CloseBySystem})
-		if errors.Is(err, gateway.ErrUnconfirmed) {
-			logger.LogDebug(ctx, "payment order %s stays pending: %v", order.OrderNo, err)
-			return nil, ErrCloseUnconfirmed
-		}
-		if err != nil {
-			return nil, err
-		}
-		if verdict.Note != "" {
-			common.SysLog(common.LogText("payment order %s: %s", order.OrderNo, verdict.Note))
+		settled, err := closeInvoice(ctx, order, invoice, actor != CloseBySystem, reason)
+		if err != nil || settled != nil {
+			return settled, err
 		}
 	}
-	if verdict.TradeNo != "" {
-		return settleConfirmed(order, verdict.TradeNo, "")
-	}
-	_, err := store.CloseOrder(order, verdict.RequireStableCheckout, reason)
+	_, err = store.CloseOrder(order, reason)
 	if errors.Is(err, store.ErrCheckoutChanged) {
-		logger.LogDebug(ctx, "payment order %s stays pending: its checkout changed during the close", order.OrderNo)
+		logger.LogDebug(ctx, "payment order %s stays pending: it got another invoice during the close", order.OrderNo)
 		return nil, ErrCloseUnconfirmed
 	}
 	if err != nil {
@@ -79,14 +65,14 @@ func CloseOrder(ctx context.Context, order *entity.PaymentOrder, actor int) (*en
 	return store.GetOrderByNo(order.OrderNo)
 }
 
-// SyncOrder asks the gateway whether a pending or closed order was paid
-// and settles it if so; nothing changes at the gateway. It returns the
-// order as it is afterwards.
-func SyncOrder(ctx context.Context, order *entity.PaymentOrder, clientIp string) (*entity.PaymentOrder, error) {
-	if (order.Status != entity.PaymentOrderPending && order.Status != entity.PaymentOrderClosed) || order.Platform == entity.PaymentPlatformBalance {
-		return order, nil
-	}
-	method, err := store.GetMethodIncludingDeleted(order.PaymentMethodId)
+// closeInvoice closes a pending invoice after asking its gateway, the
+// explicit close of a person when explicit is set. A payment the gateway
+// proves settles the order instead, which is returned; a payment it cannot
+// rule out keeps the invoice pending (ErrCloseUnconfirmed).
+func closeInvoice(ctx context.Context, order *entity.PaymentOrder, invoice *entity.PaymentInvoice, explicit bool, reason string) (*entity.PaymentOrder, error) {
+	// The method may have been disabled or deleted since; its gateway still
+	// decides.
+	method, err := store.GetMethodIncludingDeleted(invoice.PaymentMethodId)
 	if err != nil {
 		return nil, err
 	}
@@ -94,21 +80,68 @@ func SyncOrder(ctx context.Context, order *entity.PaymentOrder, clientIp string)
 	if err != nil {
 		return nil, fmt.Errorf("open the gateway of payment method %d: %w", method.Id, err)
 	}
-	tradeNo, err := gw.QueryPayment(ctx, orderView(order))
+	verdict, err := gw.Reconcile(ctx, gateway.CloseRequest{Order: invoiceView(order, invoice), Explicit: explicit})
+	if errors.Is(err, gateway.ErrUnconfirmed) {
+		logger.LogDebug(ctx, "payment invoice %s stays pending: %v", invoice.InvoiceNo, err)
+		return nil, ErrCloseUnconfirmed
+	}
 	if err != nil {
 		return nil, err
 	}
-	if tradeNo == "" {
-		return order, nil
+	if verdict.Note != "" {
+		common.SysLog(common.LogText("payment invoice %s: %s", invoice.InvoiceNo, verdict.Note))
 	}
-	return settleConfirmed(order, tradeNo, clientIp)
+	if verdict.TradeNo != "" {
+		return settleConfirmed(order, invoice, verdict.TradeNo, "")
+	}
+	_, err = store.CloseInvoice(invoice, verdict.RequireStableCheckout, reason)
+	if errors.Is(err, store.ErrCheckoutChanged) {
+		logger.LogDebug(ctx, "payment invoice %s stays pending: its checkout changed during the close", invoice.InvoiceNo)
+		return nil, ErrCloseUnconfirmed
+	}
+	return nil, err
 }
 
-// settleConfirmed settles an order with a payment its gateway confirmed
-// matches the order's expectation.
-func settleConfirmed(order *entity.PaymentOrder, tradeNo, clientIp string) (*entity.PaymentOrder, error) {
-	result, err := store.SettleOrder(store.Settlement{
-		OrderNo: order.OrderNo, TradeNo: tradeNo, Amount: order.PaymentAmount, Currency: order.PaymentCurrency, ClientIp: clientIp,
+// SyncOrder asks the gateways whether an invoice of a pending or closed
+// order was paid and settles the order if so; nothing changes at the
+// gateways. It returns the order as it is afterwards.
+func SyncOrder(ctx context.Context, order *entity.PaymentOrder, clientIp string) (*entity.PaymentOrder, error) {
+	if (order.Status != entity.PaymentOrderPending && order.Status != entity.PaymentOrderClosed) || order.Platform == entity.PaymentPlatformBalance {
+		return order, nil
+	}
+	invoices, err := store.ListInvoices(order.Id)
+	if err != nil {
+		return nil, err
+	}
+	for _, invoice := range invoices {
+		// Only a checkout that started can have been paid.
+		if invoice.Status == entity.PaymentInvoicePaid || invoice.PaymentCurrency == "" {
+			continue
+		}
+		method, err := store.GetMethodIncludingDeleted(invoice.PaymentMethodId)
+		if err != nil {
+			return nil, err
+		}
+		gw, err := openGateway(method)
+		if err != nil {
+			return nil, fmt.Errorf("open the gateway of payment method %d: %w", method.Id, err)
+		}
+		tradeNo, err := gw.QueryPayment(ctx, invoiceView(order, invoice))
+		if err != nil {
+			return nil, err
+		}
+		if tradeNo != "" {
+			return settleConfirmed(order, invoice, tradeNo, clientIp)
+		}
+	}
+	return order, nil
+}
+
+// settleConfirmed settles an order with a payment of its invoice the
+// gateway confirmed matches the invoice's expectation.
+func settleConfirmed(order *entity.PaymentOrder, invoice *entity.PaymentInvoice, tradeNo, clientIp string) (*entity.PaymentOrder, error) {
+	result, err := store.SettleInvoice(store.Settlement{
+		InvoiceNo: invoice.InvoiceNo, TradeNo: tradeNo, Amount: invoice.PaymentAmount, Currency: invoice.PaymentCurrency, ClientIp: clientIp,
 	})
 	if err != nil {
 		return nil, err
@@ -122,7 +155,7 @@ func settleConfirmed(order *entity.PaymentOrder, tradeNo, clientIp string) (*ent
 // CompleteOrderManually marks an order paid on an administrator's word and
 // fulfils it.
 func CompleteOrderManually(orderNo string, clientIp string) (*entity.PaymentOrder, error) {
-	result, err := store.SettleOrder(store.Settlement{OrderNo: orderNo, Manual: true, ClientIp: clientIp})
+	result, err := store.CompleteOrderManually(orderNo, clientIp)
 	if err != nil {
 		return nil, err
 	}

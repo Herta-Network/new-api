@@ -137,6 +137,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/payment/orders/:no/sync":                   accessTokenScopeRule("wallet:write"),
 	"POST /api/payment/orders/:no/close":                  accessTokenScopeRule("wallet:write"),
 	"GET /api/payment/admin/orders":                       accessTokenScopeRule("billing:read"),
+	"GET /api/payment/admin/orders/:no/invoices":          accessTokenScopeRule("billing:read"),
 	"POST /api/payment/admin/orders/:no/reconcile":        accessTokenScopeRule("billing:write"),
 	"POST /api/payment/admin/orders/:no/close":            accessTokenScopeRule("billing:write"),
 	"POST /api/payment/admin/orders/:no/fulfil":           accessTokenScopeRule("billing:write"),

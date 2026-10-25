@@ -60,7 +60,9 @@ const ACTION_LABELS: Record<PaymentOrderAction, string> = {
 }
 
 export function usePaymentOrdersColumns(
-  onAction: (order: PaymentOrder, action: PaymentOrderAction) => void
+  onAction: (order: PaymentOrder, action: PaymentOrderAction) => void,
+  /** Shows the invoices of a gateway order. */
+  onShowInvoices: (order: PaymentOrder) => void
 ): ColumnDef<PaymentOrder>[] {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
@@ -216,9 +218,15 @@ export function usePaymentOrdersColumns(
       meta: { pinned: 'right' as const },
       cell: ({ row }) => {
         const actions = availablePaymentOrderActions(row.original)
-        if (actions.length === 0) return null
+        const hasInvoices = row.original.platform !== 'balance'
+        if (actions.length === 0 && !hasInvoices) return null
         return (
           <DataTableRowActionMenu ariaLabel={t('Open menu')}>
+            {hasInvoices && (
+              <DropdownMenuItem onClick={() => onShowInvoices(row.original)}>
+                {t('Invoices')}
+              </DropdownMenuItem>
+            )}
             {actions.map((action) => (
               <DropdownMenuItem
                 key={action}

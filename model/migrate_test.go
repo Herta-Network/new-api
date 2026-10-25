@@ -2,6 +2,7 @@ package model
 
 import (
 	"io/fs"
+	"maps"
 	"slices"
 	"testing"
 	"testing/fstest"
@@ -23,7 +24,7 @@ var schemaModels = []any{
 	&Setup{}, &TwoFA{}, &TwoFABackupCode{}, &Checkin{}, &UserSubscription{},
 	&SubscriptionPreConsumeRecord{}, &CustomOAuthProvider{}, &UserOAuthBinding{}, &PerfMetric{},
 	&SystemInstance{}, &SystemTask{}, &SystemTaskLock{}, &CasbinRule{}, &AuthzRole{},
-	&UserAccessToken{}, &SubscriptionPlan{}, &entity.PaymentMethod{}, &entity.PaymentOrder{},
+	&UserAccessToken{}, &SubscriptionPlan{}, &entity.PaymentMethod{}, &entity.PaymentOrder{}, &entity.PaymentInvoice{},
 	&entity.PaymentUnmatched{}, &currencyentity.ExchangeRate{},
 	&Log{}, &AuditLog{},
 }
@@ -128,6 +129,64 @@ func TestStartupAdoptsExistingDatabase(t *testing.T) {
 	var versionTable *string
 	require.NoError(t, drifted.Raw("SELECT to_regclass(?)::text", mainMigrations.table).Row().Scan(&versionTable))
 	assert.Nil(t, versionTable, "a refused database is left untouched")
+}
+
+// Upgrading a database that holds payment orders gives every gateway order
+// its first invoice under the order's own number, which its gateway knows,
+// with the checkout, the trade and the state the order had.
+func TestPaymentInvoicesMigrationKeepsCheckouts(t *testing.T) {
+	db := pgtest.NewSchemaDB(t)
+	baseline, err := fs.ReadFile(migrationFiles, mainMigrations.dir+"/000001_baseline.up.sql")
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(string(baseline)).Error)
+	legacy := func(orderNo, platform, tradeNo string, status int, extra map[string]any) {
+		row := map[string]any{
+			"order_no": orderNo, "user_id": 1, "purpose": "topup", "currency": "USD", "amount": 1990, "payment_method_id": 3,
+			"platform": platform, "payment_amount": 14411, "payment_currency": "CNY", "exchange_rate": "7.2419",
+			"trade_no": tradeNo, "status": status, "created_at": 100,
+		}
+		maps.Copy(row, extra)
+		require.NoError(t, db.Table("payment_orders").Create(row).Error)
+	}
+	legacy("P-pending", "stripe", "pi_1", entity.PaymentOrderPending, nil)
+	legacy("P-unstarted", "epay", "", entity.PaymentOrderPending, map[string]any{"payment_amount": 0, "payment_currency": "", "exchange_rate": ""})
+	legacy("P-finished", "epay", "T1", entity.PaymentOrderFinished, map[string]any{"paid_at": 200})
+	legacy("P-manual", "epay", "manual:P-manual", entity.PaymentOrderFinished, map[string]any{"paid_at": 300})
+	legacy("P-closed", "cryptomus", "", entity.PaymentOrderClosed, map[string]any{"close_reason": "expired", "closed_at": 400})
+	legacy("P-balance", "balance", "", entity.PaymentOrderFinished, map[string]any{"payment_method_id": -1})
+	require.NoError(t, db.Table("payment_unmatched").Create(map[string]any{
+		"platform": "epay", "trade_no": "T0", "order_no": "P-finished", "user_id": 1, "amount": 100, "currency": "CNY", "created_at": 500,
+	}).Error)
+
+	for range 2 {
+		migrateTestSchema(t, db)
+	}
+	var invoices []entity.PaymentInvoice
+	require.NoError(t, db.Order("id").Find(&invoices).Error)
+	type invoiceState struct {
+		InvoiceNo, Platform, Currency, TradeNo, CloseReason string
+		Amount                                              int64
+		Status                                              int
+		PaidAt, ClosedAt                                    int64
+	}
+	var got []invoiceState
+	for _, invoice := range invoices {
+		var order entity.PaymentOrder
+		require.NoError(t, db.Where("id = ?", invoice.OrderId).First(&order).Error)
+		assert.Equal(t, order.OrderNo, invoice.InvoiceNo, "an order's first invoice takes its number")
+		got = append(got, invoiceState{invoice.InvoiceNo, invoice.Platform, invoice.PaymentCurrency, invoice.TradeNo, invoice.CloseReason,
+			invoice.PaymentAmount, invoice.Status, invoice.PaidAt, invoice.ClosedAt})
+	}
+	assert.Equal(t, []invoiceState{
+		{"P-pending", "stripe", "CNY", "pi_1", "", 14411, entity.PaymentInvoicePending, 0, 0},
+		{"P-unstarted", "epay", "", "", "", 0, entity.PaymentInvoicePending, 0, 0},
+		{"P-finished", "epay", "CNY", "T1", "", 14411, entity.PaymentInvoicePaid, 200, 0},
+		{"P-manual", "epay", "CNY", "", "manual", 14411, entity.PaymentInvoiceClosed, 0, 300},
+		{"P-closed", "cryptomus", "CNY", "", "expired", 14411, entity.PaymentInvoiceClosed, 0, 400},
+	}, got, "the balance order has no invoice")
+	var record entity.PaymentUnmatched
+	require.NoError(t, db.First(&record).Error)
+	assert.Equal(t, "P-finished", record.InvoiceNo)
 }
 
 // A failed migration is rolled back and runs again on the next start, and an

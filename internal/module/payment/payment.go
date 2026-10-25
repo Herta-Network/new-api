@@ -45,17 +45,18 @@ func methodView(method *entity.PaymentMethod) gateway.Method {
 	return gateway.Method{ID: int64(method.Id), Platform: method.Platform, Token: method.Token, Domain: method.Domain, Config: method.Config}
 }
 
-// orderView is the gateway's view of a payment order.
-func orderView(order *entity.PaymentOrder) *gateway.Order {
+// invoiceView is the gateway's view of an invoice of order: the gateway
+// knows the invoice number as the order number.
+func invoiceView(order *entity.PaymentOrder, invoice *entity.PaymentInvoice) *gateway.Order {
 	return &gateway.Order{
-		OrderNo:         order.OrderNo,
+		OrderNo:         invoice.InvoiceNo,
 		Amount:          order.Amount,
 		Currency:        order.Currency,
-		PaymentAmount:   order.PaymentAmount,
-		PaymentCurrency: order.PaymentCurrency,
-		TradeNo:         order.TradeNo,
+		PaymentAmount:   invoice.PaymentAmount,
+		PaymentCurrency: invoice.PaymentCurrency,
+		TradeNo:         invoice.TradeNo,
 		ClientIP:        order.ClientIp,
-		CreatedAt:       time.Unix(order.CreatedAt, 0),
+		CreatedAt:       time.Unix(invoice.CreatedAt, 0),
 		ExpiresAt:       time.Unix(order.ExpiresAt, 0),
 	}
 }

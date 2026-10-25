@@ -207,6 +207,7 @@ func SetApiRouter(router *gin.Engine) {
 			paymentAdminRoute.Use(middleware.AdminAuth())
 			{
 				paymentAdminRoute.GET("/orders", paymenthttp.AdminListPaymentOrders)
+				paymentAdminRoute.GET("/orders/:no/invoices", paymenthttp.AdminListPaymentOrderInvoices)
 				paymentAdminRoute.POST("/orders/:no/reconcile", paymenthttp.AdminReconcilePaymentOrder)
 				paymentAdminRoute.POST("/orders/:no/close", paymenthttp.AdminClosePaymentOrder)
 				paymentAdminRoute.POST("/orders/:no/fulfil", paymenthttp.AdminFulfilPaymentOrder)

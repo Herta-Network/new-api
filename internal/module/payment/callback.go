@@ -95,31 +95,39 @@ func NotifyReply(style gateway.CallbackStyle, err error) NotifyResponse {
 	return NotifyResponse{Status: status, ContentType: "application/json", Body: fmt.Sprintf(`{"success":%t}`, status == http.StatusOK)}
 }
 
+// settleNotice settles an authenticated callback. The gateway names the
+// invoice by its number, which must be an invoice of the method the notify
+// URL belongs to.
 func settleNotice(ctx context.Context, gw gateway.Gateway, method *entity.PaymentMethod, notice *gateway.Notice, clientIp string) error {
-	order, err := store.GetOrderByNo(notice.OrderNo)
-	if errors.Is(err, store.ErrOrderNotFound) {
+	invoice, err := store.GetInvoiceByNo(notice.OrderNo)
+	if errors.Is(err, store.ErrInvoiceNotFound) {
 		return gateway.InvalidCallback(err)
 	}
 	if err != nil {
 		return err
 	}
-	if order.PaymentMethodId != method.Id || order.Platform != method.Platform {
-		return gateway.InvalidCallback(errors.New("the order belongs to another payment method"))
+	if invoice.PaymentMethodId != method.Id || invoice.Platform != method.Platform {
+		return gateway.InvalidCallback(errors.New("the invoice belongs to another payment method"))
 	}
-	view := orderView(order)
+	order, err := store.GetOrderByID(invoice.OrderId)
+	if err != nil {
+		return err
+	}
+	view := invoiceView(order, invoice)
 	if err := gw.CheckOrder(view, notice); err != nil {
 		return gateway.InvalidCallback(err)
 	}
 	if !notice.Paid {
-		return acknowledgeLifecycle(ctx, order, notice)
+		return acknowledgeLifecycle(ctx, order, invoice, notice)
 	}
-	if (order.Status == entity.PaymentOrderFinished || order.Status == entity.PaymentOrderPaid) && order.TradeNo == notice.TradeNo {
+	if invoice.Status == entity.PaymentInvoicePaid && invoice.TradeNo == notice.TradeNo {
 		return nil
 	}
 	if notice.Unmatched != "" {
 		if err := store.RecordUnmatched(&entity.PaymentUnmatched{
-			Platform: order.Platform, TradeNo: notice.TradeNo, OrderNo: order.OrderNo, PaymentMethodId: order.PaymentMethodId,
-			UserId: order.UserId, Amount: notice.Amount, Currency: strings.ToUpper(notice.Currency), Reason: notice.Unmatched,
+			Platform: invoice.Platform, TradeNo: notice.TradeNo, OrderNo: order.OrderNo, InvoiceNo: invoice.InvoiceNo,
+			PaymentMethodId: invoice.PaymentMethodId, UserId: order.UserId, Amount: notice.Amount,
+			Currency: strings.ToUpper(notice.Currency), Reason: notice.Unmatched,
 		}); err != nil {
 			return err
 		}
@@ -129,16 +137,17 @@ func settleNotice(ctx context.Context, gw gateway.Gateway, method *entity.Paymen
 	}
 	// Ask the gateway itself before money is credited, when the payment can
 	// settle the order at all. A payment that cannot (another amount, a
-	// second trade) goes straight to settlement, which records it for an
-	// operator under the order's lock.
-	settleable := order.Status == entity.PaymentOrderPending || order.Status == entity.PaymentOrderClosed
-	if settleable && (order.TradeNo == "" || order.TradeNo == notice.TradeNo) && expectationMatches(order, notice.Amount, notice.Currency) {
+	// second trade, an order another invoice paid) goes straight to
+	// settlement, which records it for an operator under the order's lock.
+	settleable := (invoice.Status == entity.PaymentInvoicePending || invoice.Status == entity.PaymentInvoiceClosed) &&
+		(order.Status == entity.PaymentOrderPending || order.Status == entity.PaymentOrderClosed)
+	if settleable && (invoice.TradeNo == "" || invoice.TradeNo == notice.TradeNo) && expectationMatches(invoice, notice.Amount, notice.Currency) {
 		if err := gw.ConfirmPayment(ctx, view, notice); err != nil {
 			return fmt.Errorf("confirm payment: %w", err)
 		}
 	}
-	result, err := store.SettleOrder(store.Settlement{
-		OrderNo: order.OrderNo, TradeNo: notice.TradeNo, Amount: notice.Amount, Currency: notice.Currency, ClientIp: clientIp,
+	result, err := store.SettleInvoice(store.Settlement{
+		InvoiceNo: invoice.InvoiceNo, TradeNo: notice.TradeNo, Amount: notice.Amount, Currency: notice.Currency, ClientIp: clientIp,
 	})
 	if err != nil {
 		return err
@@ -158,17 +167,17 @@ func settleNotice(ctx context.Context, gw gateway.Gateway, method *entity.Paymen
 // order. An event the gateway asks an operator to review (an underpaid,
 // frozen or refunded invoice) concerns money it holds for the order, so it
 // is recorded for that operator.
-func acknowledgeLifecycle(ctx context.Context, order *entity.PaymentOrder, notice *gateway.Notice) error {
-	if !expectationMatches(order, notice.Amount, notice.Currency) {
-		return gateway.InvalidCallback(errors.New("the event does not describe the order's payment"))
+func acknowledgeLifecycle(ctx context.Context, order *entity.PaymentOrder, invoice *entity.PaymentInvoice, notice *gateway.Notice) error {
+	if !expectationMatches(invoice, notice.Amount, notice.Currency) {
+		return gateway.InvalidCallback(errors.New("the event does not describe the invoice's payment"))
 	}
 	if !notice.ManualReview {
 		return nil
 	}
 	if err := store.RecordUnmatched(&entity.PaymentUnmatched{
-		Platform: order.Platform, TradeNo: notice.TradeNo, OrderNo: order.OrderNo, PaymentMethodId: order.PaymentMethodId,
-		UserId: order.UserId, Amount: notice.Amount, Currency: strings.ToUpper(notice.Currency),
-		Reason: "the gateway asks for a manual review of the payment: " + notice.Status,
+		Platform: invoice.Platform, TradeNo: notice.TradeNo, OrderNo: order.OrderNo, InvoiceNo: invoice.InvoiceNo,
+		PaymentMethodId: invoice.PaymentMethodId, UserId: order.UserId, Amount: notice.Amount,
+		Currency: strings.ToUpper(notice.Currency), Reason: "the gateway asks for a manual review of the payment: " + notice.Status,
 	}); err != nil {
 		return err
 	}
@@ -176,8 +185,8 @@ func acknowledgeLifecycle(ctx context.Context, order *entity.PaymentOrder, notic
 	return nil
 }
 
-// expectationMatches reports whether amount and currency are the order's
+// expectationMatches reports whether amount and currency are the invoice's
 // recorded payment expectation.
-func expectationMatches(order *entity.PaymentOrder, amount int64, currency string) bool {
-	return order.PaymentCurrency != "" && order.PaymentAmount == amount && strings.EqualFold(order.PaymentCurrency, currency)
+func expectationMatches(invoice *entity.PaymentInvoice, amount int64, currency string) bool {
+	return invoice.PaymentCurrency != "" && invoice.PaymentAmount == amount && strings.EqualFold(invoice.PaymentCurrency, currency)
 }

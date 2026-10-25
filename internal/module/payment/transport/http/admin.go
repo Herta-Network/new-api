@@ -49,8 +49,19 @@ func AdminListPaymentOrders(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
-// AdminReconcilePaymentOrder asks the gateway whether an order was paid and
-// settles it if so.
+// AdminListPaymentOrderInvoices lists the invoices of an order in the order
+// they were issued.
+func AdminListPaymentOrderInvoices(c *gin.Context) {
+	invoices, err := payment.OrderInvoices(c.Param("no"))
+	if err != nil {
+		paymentAPIError(c, err)
+		return
+	}
+	common.ApiSuccess(c, invoices)
+}
+
+// AdminReconcilePaymentOrder asks the gateways whether an invoice of an
+// order was paid and settles the order if so.
 func AdminReconcilePaymentOrder(c *gin.Context) {
 	order, err := payment.GetOrder(c.Param("no"))
 	if err == nil {

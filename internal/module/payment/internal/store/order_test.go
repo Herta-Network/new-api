@@ -49,39 +49,63 @@ func insertPaymentTestPlan(t *testing.T, id int, maxPurchases int) *model.Subscr
 	return plan
 }
 
-// insertPaymentTestOrder stores a pending order whose checkout started: it
-// expects 1990 hundredths of USD.
-func insertPaymentTestOrder(t *testing.T, order entity.PaymentOrder) *entity.PaymentOrder {
+// insertPaymentTestOrder stores a pending order and, unless it is paid with
+// the balance, its first invoice, whose checkout started: it expects 1990
+// hundredths of USD through Stripe method 3. Fields set in order and
+// invoice override these defaults; the order copies its invoice.
+func insertPaymentTestOrder(t *testing.T, order entity.PaymentOrder, invoice entity.PaymentInvoice) (*entity.PaymentOrder, *entity.PaymentInvoice) {
 	t.Helper()
 	now := common.GetTimestamp()
-	defaults := entity.PaymentOrder{
-		Purpose: entity.PaymentPurposeTopup, Currency: "USD", Price: 1990, Amount: 1990, QuotaAmount: 500000, QuotaRate: "1",
-		PaymentMethodId: 3, Platform: "stripe", PaymentAmount: 1990, PaymentCurrency: "USD", ExchangeRate: "1",
-		Status: entity.PaymentOrderPending, ExpiresAt: now + 900,
-	}
 	if order.Purpose == "" {
-		order.Purpose = defaults.Purpose
+		order.Purpose = entity.PaymentPurposeTopup
 	}
 	if order.Currency == "" {
-		order.Currency, order.Price, order.Amount = defaults.Currency, defaults.Price, defaults.Amount
+		order.Currency, order.Price, order.Amount = "USD", 1990, 1990
 	}
 	if order.Purpose == entity.PaymentPurposeTopup && order.QuotaAmount == 0 {
-		order.QuotaAmount, order.QuotaRate = defaults.QuotaAmount, defaults.QuotaRate
-	}
-	if order.PaymentMethodId == 0 {
-		order.PaymentMethodId, order.Platform = defaults.PaymentMethodId, defaults.Platform
-	}
-	if order.PaymentCurrency == "" && order.Platform != entity.PaymentPlatformBalance {
-		order.PaymentAmount, order.PaymentCurrency, order.ExchangeRate = defaults.PaymentAmount, defaults.PaymentCurrency, defaults.ExchangeRate
+		order.QuotaAmount, order.QuotaRate = 500000, "1"
 	}
 	if order.Status == 0 {
-		order.Status = defaults.Status
+		order.Status = entity.PaymentOrderPending
 	}
 	if order.ExpiresAt == 0 {
-		order.ExpiresAt = defaults.ExpiresAt
+		order.ExpiresAt = now + 900
 	}
+	order.CreatedAt = now
+	if order.Platform == entity.PaymentPlatformBalance {
+		require.NoError(t, model.DB.Create(&order).Error)
+		return &order, nil
+	}
+	if invoice.PaymentMethodId == 0 {
+		invoice.PaymentMethodId, invoice.Platform = 3, "stripe"
+	}
+	if invoice.PaymentCurrency == "" {
+		invoice.PaymentAmount, invoice.PaymentCurrency, invoice.ExchangeRate = 1990, "USD", "1"
+	}
+	if invoice.Status == 0 {
+		invoice.Status = entity.PaymentInvoicePending
+	}
+	order.PaymentMethodId, order.Platform, order.TradeNo = invoice.PaymentMethodId, invoice.Platform, invoice.TradeNo
+	order.PaymentAmount, order.PaymentCurrency, order.ExchangeRate = invoice.PaymentAmount, invoice.PaymentCurrency, invoice.ExchangeRate
 	require.NoError(t, model.DB.Create(&order).Error)
-	return &order
+	if invoice.InvoiceNo == "" {
+		invoice.InvoiceNo = order.OrderNo
+	}
+	invoice.OrderId, invoice.CreatedAt = order.Id, now
+	require.NoError(t, model.DB.Create(&invoice).Error)
+	return &order, &invoice
+}
+
+// addPaymentTestInvoice issues another invoice of order: a pending checkout
+// of 15000 hundredths of CNY through EPay method 4.
+func addPaymentTestInvoice(t *testing.T, order *entity.PaymentOrder, invoiceNo string) *entity.PaymentInvoice {
+	t.Helper()
+	invoice := &entity.PaymentInvoice{
+		InvoiceNo: invoiceNo, OrderId: order.Id, PaymentMethodId: 4, Platform: "epay", PaymentAmount: 15000, PaymentCurrency: "CNY",
+		ExchangeRate: "7.5376", Status: entity.PaymentInvoicePending, CreatedAt: common.GetTimestamp(),
+	}
+	require.NoError(t, model.DB.Create(invoice).Error)
+	return invoice
 }
 
 func paymentTestQuota(t *testing.T, userID int) int {
@@ -105,6 +129,13 @@ func reloadPaymentOrder(t *testing.T, orderNo string) *entity.PaymentOrder {
 	return order
 }
 
+func reloadPaymentInvoice(t *testing.T, invoiceNo string) *entity.PaymentInvoice {
+	t.Helper()
+	invoice, err := GetInvoiceByNo(invoiceNo)
+	require.NoError(t, err)
+	return invoice
+}
+
 // Gateways redeliver callbacks and several nodes receive them at once: one
 // payment must credit the wallet exactly once, and the Redis balance must
 // follow the database.
@@ -112,7 +143,7 @@ func TestSettlePaymentOrderCreditsOnceUnderConcurrency(t *testing.T) {
 	pgtest.Reset(t, model.DB)
 	useUserCacheMiniRedis(t)
 	insertPaymentTestUser(t, 1, 100)
-	order := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-concurrent", UserId: 1})
+	order, invoice := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-concurrent", UserId: 1}, entity.PaymentInvoice{})
 	cached, err := model.GetUserQuota(1, false)
 	require.NoError(t, err)
 	require.Equal(t, 100, cached, "the cache holds the balance before the payment")
@@ -121,7 +152,7 @@ func TestSettlePaymentOrderCreditsOnceUnderConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
-			result, err := SettleOrder(Settlement{OrderNo: order.OrderNo, TradeNo: "pi_1", Amount: 1990, Currency: "usd"})
+			result, err := SettleInvoice(Settlement{InvoiceNo: invoice.InvoiceNo, TradeNo: "pi_1", Amount: 1990, Currency: "usd"})
 			if assert.NoError(t, err) {
 				outcomes <- result.Outcome
 			}
@@ -144,6 +175,9 @@ func TestSettlePaymentOrderCreditsOnceUnderConcurrency(t *testing.T) {
 	assert.Equal(t, "pi_1", settled.TradeNo)
 	assert.NotZero(t, settled.PaidAt)
 	assert.NotZero(t, settled.FinishedAt)
+	paid := reloadPaymentInvoice(t, invoice.InvoiceNo)
+	assert.Equal(t, entity.PaymentInvoicePaid, paid.Status)
+	assert.Equal(t, "pi_1", paid.TradeNo)
 	assert.Empty(t, paymentTestUnmatched(t, order.OrderNo))
 }
 
@@ -153,36 +187,37 @@ func TestSettlePaymentOrderRecordsUnmatchedPayments(t *testing.T) {
 	tests := []struct {
 		name       string
 		order      entity.PaymentOrder
+		invoice    entity.PaymentInvoice
 		settlement Settlement
 		wantStatus int
 	}{
 		{
 			name:       "amount below the expectation",
-			order:      entity.PaymentOrder{},
 			settlement: Settlement{TradeNo: "pi_1", Amount: 1000, Currency: "USD"},
 			wantStatus: entity.PaymentOrderPending,
 		},
 		{
 			name:       "another currency",
-			order:      entity.PaymentOrder{},
 			settlement: Settlement{TradeNo: "pi_1", Amount: 1990, Currency: "EUR"},
 			wantStatus: entity.PaymentOrderPending,
 		},
 		{
 			name:       "bound to another trade",
-			order:      entity.PaymentOrder{TradeNo: "pi_claimed"},
+			invoice:    entity.PaymentInvoice{TradeNo: "pi_claimed"},
 			settlement: Settlement{TradeNo: "pi_other", Amount: 1990, Currency: "USD"},
 			wantStatus: entity.PaymentOrderPending,
 		},
 		{
 			name:       "second payment of a finished order",
-			order:      entity.PaymentOrder{TradeNo: "pi_first", Status: entity.PaymentOrderFinished},
+			order:      entity.PaymentOrder{Status: entity.PaymentOrderFinished},
+			invoice:    entity.PaymentInvoice{TradeNo: "pi_first", Status: entity.PaymentInvoicePaid},
 			settlement: Settlement{TradeNo: "pi_second", Amount: 1990, Currency: "USD"},
 			wantStatus: entity.PaymentOrderFinished,
 		},
 		{
 			name:       "closed with another amount",
 			order:      entity.PaymentOrder{Status: entity.PaymentOrderClosed},
+			invoice:    entity.PaymentInvoice{Status: entity.PaymentInvoiceClosed},
 			settlement: Settlement{TradeNo: "pi_late", Amount: 2000, Currency: "USD"},
 			wantStatus: entity.PaymentOrderClosed,
 		},
@@ -192,10 +227,10 @@ func TestSettlePaymentOrderRecordsUnmatchedPayments(t *testing.T) {
 			pgtest.Reset(t, model.DB)
 			insertPaymentTestUser(t, 1, 0)
 			tt.order.OrderNo, tt.order.UserId = "P-unmatched", 1
-			order := insertPaymentTestOrder(t, tt.order)
-			tt.settlement.OrderNo = order.OrderNo
+			order, invoice := insertPaymentTestOrder(t, tt.order, tt.invoice)
+			tt.settlement.InvoiceNo = invoice.InvoiceNo
 			for range 2 {
-				result, err := SettleOrder(tt.settlement)
+				result, err := SettleInvoice(tt.settlement)
 				require.NoError(t, err)
 				assert.Equal(t, SettleUnmatched, result.Outcome)
 				assert.NotEmpty(t, result.Reason)
@@ -203,12 +238,50 @@ func TestSettlePaymentOrderRecordsUnmatchedPayments(t *testing.T) {
 			records := paymentTestUnmatched(t, order.OrderNo)
 			require.Len(t, records, 1, "a redelivered payment is recorded once")
 			assert.Equal(t, tt.settlement.TradeNo, records[0].TradeNo)
+			assert.Equal(t, invoice.InvoiceNo, records[0].InvoiceNo)
 			assert.Equal(t, tt.settlement.Amount, records[0].Amount)
 			assert.Equal(t, 1, records[0].UserId)
 			assert.Equal(t, tt.wantStatus, reloadPaymentOrder(t, order.OrderNo).Status)
+			assert.Equal(t, invoice.Status, reloadPaymentInvoice(t, invoice.InvoiceNo).Status)
 			assert.Equal(t, 0, paymentTestQuota(t, 1))
 		})
 	}
+}
+
+// An order is paid by whichever of its invoices is paid first: the order
+// shows that payment, its other pending invoices close, and a payment that
+// still arrives for another invoice is recorded for a refund without
+// crediting the wallet twice.
+func TestSettlePaymentOrderThroughAnyOfItsInvoices(t *testing.T) {
+	pgtest.Reset(t, model.DB)
+	insertPaymentTestUser(t, 1, 0)
+	order, first := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-invoices", UserId: 1}, entity.PaymentInvoice{})
+	second := addPaymentTestInvoice(t, order, "P-invoicesR2")
+	third := addPaymentTestInvoice(t, order, "P-invoicesR3")
+
+	result, err := SettleInvoice(Settlement{InvoiceNo: second.InvoiceNo, TradeNo: "T2", Amount: 15000, Currency: "CNY"})
+	require.NoError(t, err)
+	assert.Equal(t, SettleFinished, result.Outcome)
+	paid := reloadPaymentOrder(t, order.OrderNo)
+	assert.Equal(t, entity.PaymentOrderFinished, paid.Status)
+	assert.Equal(t, []any{4, "epay", "T2", int64(15000), "CNY", "7.5376"},
+		[]any{paid.PaymentMethodId, paid.Platform, paid.TradeNo, paid.PaymentAmount, paid.PaymentCurrency, paid.ExchangeRate},
+		"the order shows the payment that paid it")
+	assert.Equal(t, entity.PaymentInvoiceClosed, reloadPaymentInvoice(t, first.InvoiceNo).Status)
+	assert.Equal(t, "order_paid", reloadPaymentInvoice(t, third.InvoiceNo).CloseReason)
+
+	result, err = SettleInvoice(Settlement{InvoiceNo: first.InvoiceNo, TradeNo: "pi_late", Amount: 1990, Currency: "USD"})
+	require.NoError(t, err)
+	assert.Equal(t, SettleUnmatched, result.Outcome)
+	assert.Equal(t, entity.PaymentInvoicePaid, reloadPaymentInvoice(t, first.InvoiceNo).Status, "the money arrived for that invoice")
+	records := paymentTestUnmatched(t, order.OrderNo)
+	require.Len(t, records, 1)
+	assert.Equal(t, first.InvoiceNo, records[0].InvoiceNo)
+	assert.Equal(t, 500000, paymentTestQuota(t, 1))
+
+	result, err = SettleInvoice(Settlement{InvoiceNo: third.InvoiceNo, TradeNo: "T2", Amount: 15000, Currency: "CNY"})
+	require.NoError(t, err)
+	assert.Equal(t, SettleUnmatched, result.Outcome, "one trade pays one invoice")
 }
 
 // A paid order whose top-up would cross the wallet ceiling stays paid with
@@ -217,9 +290,9 @@ func TestSettlePaymentOrderRecordsUnmatchedPayments(t *testing.T) {
 func TestSettlePaymentOrderKeepsPaidOrderWhenFulfilmentFails(t *testing.T) {
 	pgtest.Reset(t, model.DB)
 	insertPaymentTestUser(t, 1, common.MaxWalletQuota-10)
-	order := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-ceiling", UserId: 1, QuotaAmount: 100})
+	order, invoice := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-ceiling", UserId: 1, QuotaAmount: 100}, entity.PaymentInvoice{})
 
-	result, err := SettleOrder(Settlement{OrderNo: order.OrderNo, TradeNo: "pi_1", Amount: 1990, Currency: "USD"})
+	result, err := SettleInvoice(Settlement{InvoiceNo: invoice.InvoiceNo, TradeNo: "pi_1", Amount: 1990, Currency: "USD"})
 	require.NoError(t, err)
 	assert.Equal(t, SettleFulfilFailed, result.Outcome)
 	paid := reloadPaymentOrder(t, order.OrderNo)
@@ -232,7 +305,7 @@ func TestSettlePaymentOrderKeepsPaidOrderWhenFulfilmentFails(t *testing.T) {
 	assert.Zero(t, records[0].ResolvedAt)
 
 	// The redelivered callback acknowledges without a second record.
-	result, err = SettleOrder(Settlement{OrderNo: order.OrderNo, TradeNo: "pi_1", Amount: 1990, Currency: "USD"})
+	result, err = SettleInvoice(Settlement{InvoiceNo: invoice.InvoiceNo, TradeNo: "pi_1", Amount: 1990, Currency: "USD"})
 	require.NoError(t, err)
 	assert.Equal(t, SettleDuplicate, result.Outcome)
 
@@ -251,12 +324,12 @@ func TestSettlePaymentOrderCreatesTheSubscription(t *testing.T) {
 	pgtest.Reset(t, model.DB)
 	insertPaymentTestUser(t, 1, 0)
 	plan := insertPaymentTestPlan(t, 7, 1)
-	order := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-sub", UserId: 1, Purpose: entity.PaymentPurposeSubscription, PlanId: plan.Id})
+	order, invoice := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-sub", UserId: 1, Purpose: entity.PaymentPurposeSubscription, PlanId: plan.Id}, entity.PaymentInvoice{})
 	// A plan disabled after the purchase is still delivered: it was paid for.
 	require.NoError(t, model.DB.Model(plan).Update("enabled", false).Error)
 	model.InvalidateSubscriptionPlanCache(plan.Id)
 
-	result, err := SettleOrder(Settlement{OrderNo: order.OrderNo, TradeNo: "pi_1", Amount: 1990, Currency: "USD"})
+	result, err := SettleInvoice(Settlement{InvoiceNo: invoice.InvoiceNo, TradeNo: "pi_1", Amount: 1990, Currency: "USD"})
 	require.NoError(t, err)
 	require.Equal(t, SettleFinished, result.Outcome)
 	var subscriptions []model.UserSubscription
@@ -265,8 +338,8 @@ func TestSettlePaymentOrderCreatesTheSubscription(t *testing.T) {
 	assert.Equal(t, subscriptions[0].Id, reloadPaymentOrder(t, order.OrderNo).UserSubscriptionId)
 
 	// The purchase limit was reached meanwhile: the second order stays paid.
-	second := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-sub-2", UserId: 1, Purpose: entity.PaymentPurposeSubscription, PlanId: plan.Id})
-	result, err = SettleOrder(Settlement{OrderNo: second.OrderNo, TradeNo: "pi_2", Amount: 1990, Currency: "USD"})
+	second, secondInvoice := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-sub-2", UserId: 1, Purpose: entity.PaymentPurposeSubscription, PlanId: plan.Id}, entity.PaymentInvoice{})
+	result, err = SettleInvoice(Settlement{InvoiceNo: secondInvoice.InvoiceNo, TradeNo: "pi_2", Amount: 1990, Currency: "USD"})
 	require.NoError(t, err)
 	assert.Equal(t, SettleFulfilFailed, result.Outcome)
 	assert.Equal(t, entity.PaymentOrderPaid, reloadPaymentOrder(t, second.OrderNo).Status)
@@ -278,73 +351,98 @@ func TestSettlePaymentOrderCreatesTheSubscription(t *testing.T) {
 func TestSettlePaymentOrderSettlesALatePayment(t *testing.T) {
 	pgtest.Reset(t, model.DB)
 	insertPaymentTestUser(t, 1, 0)
-	order := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-late", UserId: 1})
-	closed, err := CloseOrder(order, false, "expired")
+	order, invoice := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-late", UserId: 1}, entity.PaymentInvoice{})
+	closed, err := CloseInvoice(invoice, false, "expired")
+	require.NoError(t, err)
+	require.True(t, closed)
+	closed, err = CloseOrder(order, "expired")
 	require.NoError(t, err)
 	require.True(t, closed)
 
-	result, err := SettleOrder(Settlement{OrderNo: order.OrderNo, TradeNo: "pi_late", Amount: 1990, Currency: "USD"})
+	result, err := SettleInvoice(Settlement{InvoiceNo: invoice.InvoiceNo, TradeNo: "pi_late", Amount: 1990, Currency: "USD"})
 	require.NoError(t, err)
 	assert.Equal(t, SettleFinished, result.Outcome)
 	assert.Equal(t, entity.PaymentOrderFinished, reloadPaymentOrder(t, order.OrderNo).Status)
 	assert.Equal(t, 500000, paymentTestQuota(t, 1))
 }
 
+// The expectation and the trade of an invoice are written once, and the
+// order shows those of its latest invoice only.
 func TestPaymentExpectationAndTradeClaimAreSetOnce(t *testing.T) {
 	pgtest.Reset(t, model.DB)
 	insertPaymentTestUser(t, 1, 0)
-	order := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-cas", UserId: 1, Platform: "epay", PaymentMethodId: 4, PaymentCurrency: ""})
-	require.NoError(t, model.DB.Model(order).Updates(map[string]any{"payment_currency": "", "payment_amount": 0, "exchange_rate": ""}).Error)
+	order, invoice := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-cas", UserId: 1}, entity.PaymentInvoice{PaymentMethodId: 4, Platform: "epay"})
+	require.NoError(t, model.DB.Model(invoice).Updates(map[string]any{"payment_currency": "", "payment_amount": 0, "exchange_rate": ""}).Error)
 
-	recorded, err := SetPaymentExpectation(order.Id, 14411, "CNY", "7.2419")
+	recorded, err := SetInvoiceExpectation(invoice, 14411, "CNY", "7.2419")
 	require.NoError(t, err)
 	assert.True(t, recorded)
-	recorded, err = SetPaymentExpectation(order.Id, 14000, "CNY", "7.0")
+	recorded, err = SetInvoiceExpectation(invoice, 14000, "CNY", "7.0")
 	require.NoError(t, err)
 	assert.False(t, recorded, "the first expectation stays")
-	stored := reloadPaymentOrder(t, order.OrderNo)
+	stored := reloadPaymentInvoice(t, invoice.InvoiceNo)
 	assert.Equal(t, int64(14411), stored.PaymentAmount)
 	assert.Equal(t, "7.2419", stored.ExchangeRate)
+	assert.Equal(t, int64(14411), reloadPaymentOrder(t, order.OrderNo).PaymentAmount, "the order shows its checkout")
 
-	winner, err := ClaimPaymentTrade(order.Id, "inv_a")
+	winner, err := ClaimInvoiceTrade(invoice, "inv_a")
 	require.NoError(t, err)
 	assert.Equal(t, "inv_a", winner)
-	winner, err = ClaimPaymentTrade(order.Id, "inv_b")
+	winner, err = ClaimInvoiceTrade(invoice, "inv_b")
 	require.NoError(t, err)
-	assert.Equal(t, "inv_a", winner, "a later claim gets the order's trade")
+	assert.Equal(t, "inv_a", winner, "a later claim gets the invoice's trade")
+	assert.Equal(t, "inv_a", reloadPaymentOrder(t, order.OrderNo).TradeNo)
 
-	unclaimed := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-cas-closed", UserId: 1})
-	_, err = CloseOrder(unclaimed, false, "expired")
+	// Once the order has a newer invoice, the older one no longer speaks for
+	// it.
+	newer, newerInvoice := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-cas-2", UserId: 1}, entity.PaymentInvoice{})
+	addPaymentTestInvoice(t, newer, "P-cas-2R2")
+	_, err = ClaimInvoiceTrade(newerInvoice, "pi_old")
 	require.NoError(t, err)
-	_, err = ClaimPaymentTrade(unclaimed.Id, "inv_c")
+	assert.Empty(t, reloadPaymentOrder(t, newer.OrderNo).TradeNo)
+
+	_, unclaimed := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-cas-closed", UserId: 1}, entity.PaymentInvoice{})
+	_, err = CloseInvoice(unclaimed, false, "expired")
+	require.NoError(t, err)
+	_, err = ClaimInvoiceTrade(unclaimed, "inv_c")
 	assert.ErrorIs(t, err, ErrOrderNotPending)
 }
 
 // A close decided on a checkout that changed since must not commit: the
-// gateway verdict covered the old checkout only.
+// gateway verdict covered the old checkout only. An order closes only once
+// all its invoices are closed.
 func TestClosePaymentOrderRequiresTheCheckoutItJudged(t *testing.T) {
 	pgtest.Reset(t, model.DB)
 	insertPaymentTestUser(t, 1, 0)
-	order := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-close", UserId: 1})
-	snapshot := *order
-	_, err := ClaimPaymentTrade(order.Id, "pi_new")
+	order, invoice := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-close", UserId: 1}, entity.PaymentInvoice{})
+	snapshot := *invoice
+	_, err := ClaimInvoiceTrade(invoice, "pi_new")
 	require.NoError(t, err)
 
-	closed, err := CloseOrder(&snapshot, true, "expired")
+	closed, err := CloseInvoice(&snapshot, true, "expired")
 	assert.ErrorIs(t, err, ErrCheckoutChanged)
 	assert.False(t, closed)
-	assert.Equal(t, entity.PaymentOrderPending, reloadPaymentOrder(t, order.OrderNo).Status)
+	assert.Equal(t, entity.PaymentInvoicePending, reloadPaymentInvoice(t, invoice.InvoiceNo).Status)
+	_, err = CloseOrder(order, "user")
+	assert.ErrorIs(t, err, ErrCheckoutChanged, "a pending invoice keeps its order open")
 
-	current := reloadPaymentOrder(t, order.OrderNo)
-	closed, err = CloseOrder(current, true, "user")
+	current := reloadPaymentInvoice(t, invoice.InvoiceNo)
+	closed, err = CloseInvoice(current, true, "user")
 	require.NoError(t, err)
 	assert.True(t, closed)
-	closed, err = CloseOrder(current, true, "user")
+	closed, err = CloseInvoice(current, true, "user")
 	require.NoError(t, err)
-	assert.False(t, closed, "a closed order closes once")
+	assert.False(t, closed, "an invoice closes once")
+	closed, err = CloseOrder(order, "user")
+	require.NoError(t, err)
+	assert.True(t, closed)
+	closed, err = CloseOrder(order, "user")
+	require.NoError(t, err)
+	assert.False(t, closed, "an order closes once")
 	stored := reloadPaymentOrder(t, order.OrderNo)
 	assert.Equal(t, entity.PaymentOrderClosed, stored.Status)
 	assert.Equal(t, "user", stored.CloseReason)
+	assert.Equal(t, "user", reloadPaymentInvoice(t, invoice.InvoiceNo).CloseReason)
 }
 
 func TestPayPaymentOrderWithBalanceIsAtomic(t *testing.T) {
@@ -352,10 +450,11 @@ func TestPayPaymentOrderWithBalanceIsAtomic(t *testing.T) {
 	insertPaymentTestUser(t, 1, 1500)
 	plan := insertPaymentTestPlan(t, 7, 0)
 	newOrder := func(orderNo string) *entity.PaymentOrder {
-		return insertPaymentTestOrder(t, entity.PaymentOrder{
+		order, _ := insertPaymentTestOrder(t, entity.PaymentOrder{
 			OrderNo: orderNo, UserId: 1, Purpose: entity.PaymentPurposeSubscription, PlanId: plan.Id, QuotaAmount: 1000,
 			PaymentMethodId: entity.BalancePaymentMethodID, Platform: entity.PaymentPlatformBalance,
-		})
+		}, entity.PaymentInvoice{})
+		return order
 	}
 	first, second := newOrder("P-bal-1"), newOrder("P-bal-2")
 
@@ -397,32 +496,43 @@ func TestCreatePaymentOrderEnforcesLimits(t *testing.T) {
 			PaymentMethodId: 3, Platform: "stripe", ExpiresAt: common.GetTimestamp() + 900,
 		}
 	}
+	stripeInvoice := func() *entity.PaymentInvoice {
+		return &entity.PaymentInvoice{PaymentMethodId: 3, Platform: "stripe"}
+	}
 	limits := OrderLimits{MaxPending: 2, MaxPlanPurchases: plan.MaxPurchasePerUser}
-	require.NoError(t, CreateOrder(newOrder("P-1", entity.PaymentPurposeSubscription), limits))
+	first := stripeInvoice()
+	require.NoError(t, CreateOrder(newOrder("P-1", entity.PaymentPurposeSubscription), limits, first))
+	assert.Equal(t, "P-1", first.InvoiceNo, "the first invoice takes the order's number")
+	assert.Equal(t, entity.PaymentInvoicePending, reloadPaymentInvoice(t, "P-1").Status)
 	// An existing subscription and the order in flight reach the limit of 2.
 	require.NoError(t, model.DB.Create(&model.UserSubscription{UserId: 1, PlanId: plan.Id, Status: "active", EndTime: common.GetTimestamp() + 3600}).Error)
-	assert.ErrorIs(t, CreateOrder(newOrder("P-2", entity.PaymentPurposeSubscription), limits), ErrPlanPurchaseLimit)
+	assert.ErrorIs(t, CreateOrder(newOrder("P-2", entity.PaymentPurposeSubscription), limits, stripeInvoice()), ErrPlanPurchaseLimit)
+	_, err := GetInvoiceByNo("P-2")
+	assert.ErrorIs(t, err, ErrInvoiceNotFound, "a refused order issues no invoice")
 
-	require.NoError(t, CreateOrder(newOrder("P-3", entity.PaymentPurposeTopup), limits))
-	assert.ErrorIs(t, CreateOrder(newOrder("P-4", entity.PaymentPurposeTopup), limits), ErrTooManyPendingOrders)
+	require.NoError(t, CreateOrder(newOrder("P-3", entity.PaymentPurposeTopup), limits, stripeInvoice()))
+	assert.ErrorIs(t, CreateOrder(newOrder("P-4", entity.PaymentPurposeTopup), limits, stripeInvoice()), ErrTooManyPendingOrders)
 	// Expired orders waiting for their close do not block new ones.
 	require.NoError(t, model.DB.Model(&entity.PaymentOrder{}).Where("order_no = ?", "P-3").Update("expires_at", common.GetTimestamp()-1).Error)
-	require.NoError(t, CreateOrder(newOrder("P-5", entity.PaymentPurposeTopup), limits))
+	require.NoError(t, CreateOrder(newOrder("P-5", entity.PaymentPurposeTopup), limits, stripeInvoice()))
 }
 
 func TestCompletePaymentOrderManually(t *testing.T) {
 	pgtest.Reset(t, model.DB)
 	insertPaymentTestUser(t, 1, 0)
-	order := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-manual", UserId: 1, Platform: "epay", PaymentMethodId: 4})
-	result, err := SettleOrder(Settlement{OrderNo: order.OrderNo, Manual: true})
+	order, invoice := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-manual", UserId: 1}, entity.PaymentInvoice{PaymentMethodId: 4, Platform: "epay"})
+	result, err := CompleteOrderManually(order.OrderNo, "")
 	require.NoError(t, err)
 	assert.Equal(t, SettleFinished, result.Outcome)
 	stored := reloadPaymentOrder(t, order.OrderNo)
 	assert.Equal(t, ManualTradeNo(order.OrderNo), stored.TradeNo)
+	assert.Equal(t, int64(1990), stored.PaymentAmount)
 	assert.Equal(t, 500000, paymentTestQuota(t, 1))
+	closed := reloadPaymentInvoice(t, invoice.InvoiceNo)
+	assert.Equal(t, entity.PaymentInvoiceClosed, closed.Status, "the invoice was not paid through its gateway")
 
-	claimed := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-manual-claimed", UserId: 1, TradeNo: "pi_1"})
-	_, err = SettleOrder(Settlement{OrderNo: claimed.OrderNo, Manual: true})
+	claimed, _ := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-manual-claimed", UserId: 1}, entity.PaymentInvoice{TradeNo: "pi_1"})
+	_, err = CompleteOrderManually(claimed.OrderNo, "")
 	assert.Error(t, err, "an order bound to a gateway payment is reconciled, not completed by hand")
 	assert.Equal(t, entity.PaymentOrderPending, reloadPaymentOrder(t, claimed.OrderNo).Status)
 }
@@ -524,4 +634,12 @@ func TestPaymentSchemaMigration(t *testing.T) {
 	require.NoError(t, order("P-3", "stripe", "pi_1"))
 	require.NoError(t, order("P-4", "cryptomus", "pi_1"), "trade numbers are unique per platform")
 	assert.Error(t, order("P-5", "stripe", "pi_1"), "a trade binds one order of its platform")
+	invoice := func(invoiceNo, tradeNo string) error {
+		return db.Create(&entity.PaymentInvoice{InvoiceNo: invoiceNo, OrderId: 1, PaymentMethodId: 2, Platform: "stripe", TradeNo: tradeNo, Status: entity.PaymentInvoicePending}).Error
+	}
+	require.NoError(t, invoice("P-1", ""))
+	require.NoError(t, invoice("P-1R2", ""), "invoices without a trade do not collide")
+	require.NoError(t, invoice("P-1R3", "pi_2"))
+	assert.Error(t, invoice("P-1R4", "pi_2"), "a trade binds one invoice of its platform")
+	assert.Error(t, invoice("P-1", "pi_3"), "an invoice number is unique")
 }
