@@ -100,8 +100,6 @@ it('translates top-up presets and the minimum amount in the interface language',
         min_topup: '1',
         amount_options: [100, 20],
         amount_discount: { '100': 0.8 },
-        payment_compliance_confirmed: true,
-        payment_compliance_terms_version: 'v1',
       }}
       methods={[]}
       onPurchase={vi.fn()}

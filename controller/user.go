@@ -18,7 +18,6 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/QuantumNous/new-api/setting"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/QuantumNous/new-api/constant"
 
@@ -460,18 +459,13 @@ type TransferAffQuotaRequest struct {
 	Quota int `json:"quota" binding:"required"`
 }
 
-// @Summary		邀请额度转入余额
-// @Description	需要管理员已确认支付合规。
-// @Tags			个人
-// @Param			body	body		TransferAffQuotaRequest	true	"转入的额度"
-// @Success		200		{object}	common.ApiResponse
-// @Security		UserAuth
-// @Router			/api/user/aff_transfer [post]
+// @Summary	邀请额度转入余额
+// @Tags		个人
+// @Param		body	body		TransferAffQuotaRequest	true	"转入的额度"
+// @Success	200		{object}	common.ApiResponse
+// @Security	UserAuth
+// @Router		/api/user/aff_transfer [post]
 func TransferAffQuota(c *gin.Context) {
-	if !requirePaymentCompliance(c) {
-		return
-	}
-
 	id := c.GetInt("id")
 	user, err := model.GetUserById(id, true)
 	if err != nil {
@@ -1421,12 +1415,10 @@ func getTopUpLock(userID int) *topUpTryLock {
 }
 
 type selfTopUpInfo struct {
-	EnableRedemption bool   `json:"enable_redemption"`
-	TopUpLink        string `json:"topup_link"`
+	TopUpLink string `json:"topup_link"`
 }
 
-// GetTopUpInfo tells the wallet whether redemption codes can be used and
-// where to buy them.
+// GetTopUpInfo tells the wallet where to buy redemption codes.
 //
 //	@Summary	获取兑换码充值信息
 //	@Tags		个人
@@ -1434,25 +1426,17 @@ type selfTopUpInfo struct {
 //	@Security	UserAuth
 //	@Router		/api/user/topup/info [get]
 func GetTopUpInfo(c *gin.Context) {
-	common.ApiSuccess(c, selfTopUpInfo{
-		EnableRedemption: operation_setting.IsPaymentComplianceConfirmed(),
-		TopUpLink:        common.TopUpLink,
-	})
+	common.ApiSuccess(c, selfTopUpInfo{TopUpLink: common.TopUpLink})
 }
 
 // @Summary		兑换码充值
-// @Description	需要管理员已确认支付合规；data 为到账额度。
+// @Description	data 为到账额度。
 // @Tags			个人
 // @Param			body	body		topUpRequest	true	"兑换码"
 // @Success		200		{object}	common.ApiResponse{data=int}
 // @Security		UserAuth
 // @Router			/api/user/topup [post]
 func TopUp(c *gin.Context) {
-	if !operation_setting.IsPaymentComplianceConfirmed() {
-		common.ApiErrorT(c, "Payment, redemption, subscription, and invitation reward features are disabled. The administrator must confirm compliance terms before enabling them.")
-		return
-	}
-
 	id := c.GetInt("id")
 	lock := getTopUpLock(id)
 	if !lock.TryLock() {

@@ -17,8 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Code2, Eye, ShieldAlert } from 'lucide-react'
+import { Code2, Eye } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -26,13 +25,6 @@ import { toast } from 'sonner'
 import * as z from 'zod'
 
 import { JsonCodeEditor } from '@/components/json-code-editor'
-import { RiskAcknowledgementDialog } from '@/components/risk-acknowledgement-dialog'
-import {
-  Alert,
-  AlertAction,
-  AlertDescription,
-  AlertTitle,
-} from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -44,12 +36,8 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { invalidatePaymentSettingQueries } from '@/features/wallet/lib/wallet-queries'
-import { formatTimestampToDate } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
-import { cn } from '@/lib/utils'
 
-import { confirmPaymentCompliance } from '../api'
 import { SettingsForm } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
@@ -62,8 +50,6 @@ import {
   getJsonError,
   normalizeJsonForComparison,
 } from './utils'
-
-const CURRENT_COMPLIANCE_TERMS_VERSION = 'v1'
 
 const paymentSchema = z.object({
   min_topup: z
@@ -97,21 +83,13 @@ type PaymentSettingsSectionProps = {
     amountOptions: string
     amountDiscount: string
   }
-  complianceDefaults: {
-    confirmed: boolean
-    termsVersion: string
-    confirmedAt: number
-    confirmedBy: number
-  }
 }
 
 export function PaymentSettingsSection(props: PaymentSettingsSectionProps) {
   const { t } = useTranslation()
-  const queryClient = useQueryClient()
   const updateOption = useUpdateOption()
   const [amountOptionsVisual, setAmountOptionsVisual] = useState(true)
   const [amountDiscountVisual, setAmountDiscountVisual] = useState(true)
-  const [showComplianceDialog, setShowComplianceDialog] = useState(false)
 
   const initialValues = useMemo<PaymentFormValues>(
     () => ({
@@ -128,48 +106,6 @@ export function PaymentSettingsSection(props: PaymentSettingsSectionProps) {
   const isSaving = form.formState.isSubmitting || updateOption.isPending
   useResetForm(form, isSaving ? undefined : initialValues)
   const currency = props.defaultValues.currency
-
-  const complianceStatements = [
-    t(
-      'You have legally obtained authorization for the connected model APIs, accounts, keys, and quotas.'
-    ),
-    t(
-      'You commit to using upstream APIs, accounts, keys, quotas, and service capabilities only within the scope of lawful authorization obtained from upstream service providers, model service providers, or relevant rights holders, and will not conduct unauthorized resale, trafficking, distribution, or other non-compliant commercialization.'
-    ),
-    t(
-      'If you provide generative AI services to the public in mainland China, you will fulfill legal obligations including filing, security assessment, content safety, complaint handling, generated content labeling, log retention, and personal information protection.'
-    ),
-    t(
-      'You commit not to use this system to implement, assist with, or indirectly implement acts that violate applicable laws and regulations, regulatory requirements, platform rules, public interests, or the lawful rights and interests of third parties.'
-    ),
-    t(
-      'You understand and independently bear legal responsibility arising from deployment, operation, and charging behavior.'
-    ),
-    t(
-      'You understand this compliance reminder is only for risk notice and does not constitute legal advice, a compliance review conclusion, or a guarantee of the legality of your use of this system; you should consult professional legal or compliance advisors based on your actual business scenario.'
-    ),
-  ]
-
-  const complianceConfirmed =
-    props.complianceDefaults.confirmed &&
-    props.complianceDefaults.termsVersion === CURRENT_COMPLIANCE_TERMS_VERSION
-
-  const confirmCompliance = useMutation({
-    mutationFn: confirmPaymentCompliance,
-    onSuccess: (data) => {
-      if (!data.success) {
-        handleServerError(data, t('Failed to confirm compliance'))
-        return
-      }
-      toast.success(t('Compliance confirmed successfully'))
-      setShowComplianceDialog(false)
-      void queryClient.invalidateQueries({ queryKey: ['system-options'] })
-      invalidatePaymentSettingQueries(queryClient)
-    },
-    onError: (error: Error) => {
-      handleServerError(error, t('Failed to confirm compliance'))
-    },
-  })
 
   const onSubmit = async (values: PaymentFormValues) => {
     const updates: Array<{ key: string; value: string }> = []
@@ -211,93 +147,8 @@ export function PaymentSettingsSection(props: PaymentSettingsSectionProps) {
 
   return (
     <SettingsSection title={t('Payment Settings')}>
-      {complianceConfirmed ? (
-        <Alert>
-          <AlertTitle>{t('Compliance confirmed')}</AlertTitle>
-          <AlertDescription>
-            {t('Confirmed at {{time}} by user #{{userId}}', {
-              time: props.complianceDefaults.confirmedAt
-                ? formatTimestampToDate(props.complianceDefaults.confirmedAt)
-                : '-',
-              userId: props.complianceDefaults.confirmedBy || '-',
-            })}
-          </AlertDescription>
-        </Alert>
-      ) : (
-        <Alert variant='destructive'>
-          <ShieldAlert aria-hidden='true' />
-          <AlertTitle>{t('Compliance confirmation required')}</AlertTitle>
-          <AlertDescription>
-            <div className='space-y-3'>
-              <p>
-                {t(
-                  'Payment, redemption codes, subscription plans, and invitation rewards are locked until the root administrator confirms the compliance terms.'
-                )}
-              </p>
-              <ol className='list-decimal space-y-1 pl-5'>
-                {complianceStatements.map((statement) => (
-                  <li key={statement}>{statement}</li>
-                ))}
-              </ol>
-            </div>
-          </AlertDescription>
-          <AlertAction>
-            <Button
-              type='button'
-              size='sm'
-              variant='destructive'
-              onClick={() => setShowComplianceDialog(true)}
-            >
-              {t('Confirm compliance')}
-            </Button>
-          </AlertAction>
-        </Alert>
-      )}
-
-      <RiskAcknowledgementDialog
-        open={showComplianceDialog}
-        onOpenChange={setShowComplianceDialog}
-        title={t('Confirm compliance terms')}
-        description={t(
-          'This confirmation unlocks payment, redemption code, subscription plan, and invitation reward features. Please read the statements carefully.'
-        )}
-        items={complianceStatements}
-        requiredText={t(
-          'I have read and understood the above compliance reminder, acknowledge the related legal risks, and confirm that I bear legal responsibility arising from deployment, operation, and charging behavior.'
-        )}
-        requiredTextParts={[
-          {
-            type: 'input',
-            text: t('I have read and understood the above compliance reminder'),
-          },
-          { type: 'static', text: t('，') },
-          { type: 'input', text: t('acknowledge the related legal risks') },
-          { type: 'static', text: t('，and ') },
-          {
-            type: 'input',
-            text: t(
-              'confirm that I bear legal responsibility arising from deployment'
-            ),
-          },
-          { type: 'static', text: t('、') },
-          { type: 'input', text: t('operation and charging behavior') },
-        ]}
-        inputPrompt={t('Please type the following text to confirm:')}
-        inputPlaceholder={t('Type the confirmation text here')}
-        mismatchHint={t('The entered text does not match the required text.')}
-        confirmText={t('Confirm and enable')}
-        isLoading={confirmCompliance.isPending}
-        onConfirm={() => confirmCompliance.mutate()}
-      />
-
       <Form {...form}>
-        <SettingsForm
-          onSubmit={form.handleSubmit(onSubmit)}
-          autoComplete='off'
-          className={cn(
-            !complianceConfirmed && 'pointer-events-none opacity-40'
-          )}
-        >
+        <SettingsForm onSubmit={form.handleSubmit(onSubmit)} autoComplete='off'>
           <SettingsPageFormActions
             onSave={form.handleSubmit(onSubmit)}
             isSaving={isSaving}

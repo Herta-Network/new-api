@@ -87,7 +87,7 @@ export const redemptionInfoQueryOptions = queryOptions({
   staleTime: SITE_SETTINGS_STALE_TIME,
 })
 
-/** Site currency, top-up presets and the compliance state. */
+/** Site currency and top-up presets. */
 export const paymentInfoQueryOptions = queryOptions({
   queryKey: paymentQueryKeys.info,
   queryFn: getPaymentInfo,
@@ -119,8 +119,7 @@ export const selfSubscriptionQueryOptions = queryOptions({
 /**
  * Refresh what the wallet builds from the payment settings: prices, presets
  * and quotes, the methods each purpose offers, top-up settings and plans.
- * Called after an administrator saves payment settings or confirms the
- * compliance terms, which gate all of them.
+ * Called after an administrator saves payment settings.
  */
 export function invalidatePaymentSettingQueries(queryClient: QueryClient) {
   void queryClient.invalidateQueries({ queryKey: paymentQueryKeys.all })
