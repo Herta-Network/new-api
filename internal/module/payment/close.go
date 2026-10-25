@@ -21,11 +21,15 @@ const (
 	CloseByAdmin
 )
 
-// Close reasons stored on closed orders.
+// Close reasons stored on closed orders and invoices. An invoice also closes
+// when its channel could not start the payment, or when a renewed checkout
+// replaced it.
 const (
-	closeReasonExpired = "expired"
-	closeReasonOwner   = "user"
-	closeReasonAdmin   = "admin"
+	closeReasonExpired  = "expired"
+	closeReasonOwner    = "user"
+	closeReasonAdmin    = "admin"
+	closeReasonFailed   = "failed"
+	closeReasonReplaced = "replaced"
 )
 
 // ErrCloseUnconfirmed reports that the gateway could not confirm the order

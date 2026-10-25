@@ -115,6 +115,8 @@ func (g *cryptomusGateway) ChargeCurrency() string { return "" }
 // carries its callback.
 func (g *cryptomusGateway) NeedsNotifyURL(o *Order) bool { return o.TradeNo == "" }
 
+func (g *cryptomusGateway) ServerCheckout() bool { return true }
+
 // cryptomusInvoice is the gateway's view of a payment. The info endpoint
 // reports the settlement state in payment_status while the create endpoint
 // uses status; state accepts either.

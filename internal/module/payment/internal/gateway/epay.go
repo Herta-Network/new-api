@@ -210,6 +210,10 @@ func (g *epayGateway) ChargeCurrency() string { return epayCurrency }
 
 func (g *epayGateway) NeedsNotifyURL(*Order) bool { return true }
 
+// ServerCheckout reports an API checkout; the payment page is only a
+// redirect.
+func (g *epayGateway) ServerCheckout() bool { return g.config.Checkout == EPayCheckoutAPI }
+
 // StartPayment creates the payment with the gateway's API, or builds the
 // signed redirect to its payment page.
 func (g *epayGateway) StartPayment(ctx context.Context, c Checkout) (*Action, error) {

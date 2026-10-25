@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/internal/module/currency"
@@ -20,6 +21,10 @@ import (
 // maxOrderAmount bounds every price and top-up, in hundredths: 100 million
 // units of the site currency, beyond what any gateway collects at once.
 const maxOrderAmount = 100_000_000_00
+
+// recentUnpaidWindow is how long the channels of a buyer's invoices that
+// were not paid are tried after the others.
+const recentUnpaidWindow = 30 * time.Minute
 
 var (
 	errInvalidPurchase        error = common.NewMessage("Invalid parameters")
@@ -112,7 +117,13 @@ func QuotePurchase(ctx context.Context, userId int, req PurchaseRequest) (*Quote
 		quote.method = method
 		return quote, nil
 	}
-	channels, err := routeChannels(ctx, quote.option, quote.Price, currency)
+	// A buyer paying again after an order that was not paid gets other
+	// channels first.
+	avoid, err := store.RecentUnpaidMethods(userId, quote.option.Id, time.Now().Add(-recentUnpaidWindow).Unix())
+	if err != nil {
+		return nil, err
+	}
+	channels, err := routeChannels(ctx, quote.option, quote.Price, currency, avoid)
 	if err != nil {
 		return nil, err
 	}

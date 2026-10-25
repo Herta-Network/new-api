@@ -639,6 +639,33 @@ describe('payment methods', () => {
     )
   })
 
+  it('shows which channels are tripped, with the last error, and which only redirect to a payment page', async () => {
+    mockApi([
+      balance,
+      epay,
+      {
+        ...stripe,
+        health: {
+          failures: 3,
+          tripped_until: Math.floor(Date.now() / 1000) + 300,
+          last_error: 'EPay payment returned HTTP 502',
+          last_failed_at: Math.floor(Date.now() / 1000),
+        },
+      },
+    ])
+    renderSection()
+    const tripped = within(
+      await screen.findByRole('row', { name: /Stripe account/ })
+    )
+    expect(tripped.getByText(/^Tripped until /)).toBeVisible()
+    expect(
+      tripped.getByTitle('EPay payment returned HTTP 502')
+    ).toHaveTextContent(/^Tripped until /)
+    const page = within(screen.getByRole('row', { name: /EPay merchant A/ }))
+    expect(page.getByText('Payment page, not switched to')).toBeVisible()
+    expect(page.queryByText(/^Tripped until /)).not.toBeInTheDocument()
+  })
+
   it('shows the payment method type of a Stripe channel and saves another one chosen from the platform options', async () => {
     const request = mockApi([balance, stripe])
     const user = renderSection()

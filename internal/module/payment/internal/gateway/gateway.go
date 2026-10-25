@@ -12,8 +12,9 @@
 // order records its payment expectation), ChargeFor takes the rate as a
 // decimal string, notices carry plain string details for the log, and a
 // notice can report an authentic payment that must not settle its order as
-// unmatched. The Order view carries the buyer's IP address, and an Action
-// can be a QR code to show.
+// unmatched. The Order view carries the buyer's IP address, an Action can
+// be a QR code to show, and a gateway says whether its checkout reaches the
+// provider.
 
 // Package gateway is the protocol layer of new-api payments. A Gateway
 // speaks one payment provider's protocol for one configured payment method:
@@ -219,6 +220,11 @@ type Gateway interface {
 	// NeedsNotifyURL reports whether starting a payment for the order
 	// registers a callback URL with the provider.
 	NeedsNotifyURL(o *Order) bool
+	// ServerCheckout reports whether StartPayment creates the payment at the
+	// provider, so a provider that cannot take it fails the checkout. A
+	// checkout that only builds a redirect fails at the buyer's end, where
+	// the server cannot see it.
+	ServerCheckout() bool
 	// StartPayment creates, or resumes, the order's payment at the provider
 	// and returns what the buyer needs to pay.
 	StartPayment(ctx context.Context, c Checkout) (*Action, error)

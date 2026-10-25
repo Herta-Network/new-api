@@ -37,7 +37,7 @@ import { STRIPE_PAYMENT_METHOD_TYPE_LABELS } from '@/features/wallet/constants'
 import { getPaymentIcon } from '@/features/wallet/lib/ui'
 import type { StripePaymentMethodType } from '@/features/wallet/types'
 import { toIntlLocale } from '@/i18n/languages'
-import { formatNumber } from '@/lib/format'
+import { formatNumber, formatTimestampToDate } from '@/lib/format'
 
 import { SettingsSection } from '../components/settings-section'
 import { PaymentMethodDialog } from './payment-method-dialog'
@@ -229,15 +229,18 @@ export function PaymentMethodsSection(props: PaymentMethodsSectionProps) {
             {
               id: 'status',
               header: t('Status'),
-              className: 'w-24',
+              className: 'w-36',
               cell: (method) => (
-                <BadgeCell>
-                  <StatusBadge
-                    label={method.enabled ? t('Enabled') : t('Disabled')}
-                    variant={method.enabled ? 'success' : 'neutral'}
-                    copyable={false}
-                  />
-                </BadgeCell>
+                <span className='flex min-w-0 flex-col items-start gap-1'>
+                  <BadgeCell>
+                    <StatusBadge
+                      label={method.enabled ? t('Enabled') : t('Disabled')}
+                      variant={method.enabled ? 'success' : 'neutral'}
+                      copyable={false}
+                    />
+                  </BadgeCell>
+                  <ChannelHealth method={method} />
+                </span>
               ),
             },
             {
@@ -331,9 +334,51 @@ export function PaymentMethodsSection(props: PaymentMethodsSectionProps) {
   )
 }
 
-/** The payment method type a Stripe method collects; nothing for others. */
+/**
+ * Failed checkouts of a channel this server saw: a tripped channel is tried
+ * after the others until its cooldown ends. The last error is in the badge's
+ * title.
+ */
+function ChannelHealth(props: { method: PaymentMethod }) {
+  const { t } = useTranslation()
+  const health = props.method.health
+  if (!health) return null
+  const tripped = health.tripped_until * 1000 > Date.now()
+  return (
+    <BadgeCell>
+      <span title={health.last_error}>
+        <StatusBadge
+          label={
+            tripped
+              ? t('Tripped until {{time}}', {
+                  time: formatTimestampToDate(health.tripped_until),
+                })
+              : t('{{count}} failed checkouts', { count: health.failures })
+          }
+          variant={tripped ? 'danger' : 'warning'}
+          copyable={false}
+        />
+      </span>
+    </BadgeCell>
+  )
+}
+
+/**
+ * The payment method type a Stripe channel collects, and an EPay channel's
+ * payment page, which orders are never switched to; nothing for others.
+ */
 function StripePaymentType(props: { method: PaymentMethod }) {
   const { t } = useTranslation()
+  if (
+    props.method.platform === 'epay' &&
+    props.method.config.checkout === 'page'
+  ) {
+    return (
+      <span className='text-muted-foreground text-xs'>
+        {t('Payment page, not switched to')}
+      </span>
+    )
+  }
   const paymentType = props.method.config.payment_method_type
   if (
     props.method.platform !== 'stripe' ||

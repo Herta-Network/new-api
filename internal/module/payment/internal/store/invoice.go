@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/internal/module/payment/entity"
@@ -38,6 +39,54 @@ func ListInvoices(orderID int) ([]*entity.PaymentInvoice, error) {
 	var invoices []*entity.PaymentInvoice
 	err := model.DB.Where("order_id = ?", orderID).Order("id").Find(&invoices).Error
 	return invoices, err
+}
+
+// IssueInvoice adds an invoice of a pending order through method. It is
+// numbered after the order's invoices, as the order number, R and the
+// invoice's place, and the order shows it as its latest invoice.
+func IssueInvoice(order *entity.PaymentOrder, method *entity.PaymentMethod) (*entity.PaymentInvoice, error) {
+	invoice := &entity.PaymentInvoice{
+		OrderId: order.Id, PaymentMethodId: method.Id, Platform: method.Platform,
+		Status: entity.PaymentInvoicePending, CreatedAt: common.GetTimestamp(),
+	}
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		var current entity.PaymentOrder
+		if err := model.LockForUpdate(tx).Where("id = ?", order.Id).First(&current).Error; err != nil {
+			return err
+		}
+		if current.Status != entity.PaymentOrderPending {
+			return ErrOrderNotPending
+		}
+		var issued int64
+		if err := tx.Model(&entity.PaymentInvoice{}).Where("order_id = ?", order.Id).Count(&issued).Error; err != nil {
+			return err
+		}
+		invoice.InvoiceNo = fmt.Sprintf("%sR%d", current.OrderNo, issued+1)
+		if err := tx.Create(invoice).Error; err != nil {
+			return err
+		}
+		return tx.Model(&entity.PaymentOrder{}).Where("id = ?", order.Id).Updates(map[string]any{
+			"payment_method_id": method.Id, "platform": method.Platform, "payment_amount": 0,
+			"payment_currency": "", "exchange_rate": "", "trade_no": "",
+		}).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return invoice, nil
+}
+
+// RecentUnpaidMethods returns the methods of the invoices a user's orders
+// paid with an option were issued through since a time and that were not
+// paid: the buyer did not get through them.
+func RecentUnpaidMethods(userID, optionID int, since int64) ([]int, error) {
+	var methods []int
+	err := model.DB.Model(&entity.PaymentInvoice{}).
+		Joins("JOIN payment_orders ON payment_orders.id = payment_invoices.order_id").
+		Where("payment_orders.user_id = ? AND payment_orders.payment_option_id = ?", userID, optionID).
+		Where("payment_invoices.status <> ? AND payment_invoices.created_at >= ?", entity.PaymentInvoicePaid, since).
+		Distinct().Pluck("payment_invoices.payment_method_id", &methods).Error
+	return methods, err
 }
 
 // orderMirrorTx copies fields of invoice onto its order while the order is

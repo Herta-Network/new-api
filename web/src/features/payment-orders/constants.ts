@@ -91,6 +91,8 @@ export const PAYMENT_INVOICE_CLOSE_REASONS: Record<string, string> = {
   ...PAYMENT_CLOSE_REASONS,
   order_paid: 'The order was paid through another invoice',
   manual: 'The order was marked as paid',
+  failed: 'The channel could not start the payment',
+  replaced: 'Replaced by a newer invoice',
 }
 
 export const PAYMENT_UNMATCHED_STATES = [

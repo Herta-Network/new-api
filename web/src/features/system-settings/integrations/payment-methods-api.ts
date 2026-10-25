@@ -155,6 +155,18 @@ export type PaymentMethod = {
   secrets_set: Record<string, boolean>
   notify_url: string
   webhook_stale: boolean
+  /** What this server saw of its checkouts since the last that started. */
+  health?: PaymentChannelHealth
+}
+
+/** A channel's failed checkouts, as one server saw them. */
+export type PaymentChannelHealth = {
+  /** Checkouts that failed in a row */
+  failures: number
+  /** When the channel's cooldown ends, Unix seconds; 0 when not tripped */
+  tripped_until: number
+  last_error: string
+  last_failed_at: number
 }
 
 export type PaymentMethodInput = Pick<

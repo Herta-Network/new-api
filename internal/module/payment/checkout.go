@@ -34,9 +34,10 @@ type Checkout struct {
 }
 
 // CreateOrder prices a purchase, stores it as a pending order with an
-// invoice of the chosen method and starts its payment in the same request.
-// A balance or free purchase needs no invoice and completes at once; if it
-// fails the order is closed again.
+// invoice through the first channel of the chosen payment option and starts
+// its payment in the same request, switching to the next channels when one
+// cannot start it (see checkoutThrough). A balance or free purchase needs no
+// invoice and completes at once; if it fails the order is closed again.
 func CreateOrder(ctx context.Context, userId int, req PurchaseRequest, clientIp string) (*entity.PaymentOrder, *Checkout, error) {
 	quote, err := QuotePurchase(ctx, userId, req)
 	if err != nil {
@@ -89,37 +90,135 @@ func CreateOrder(ctx context.Context, userId int, req PurchaseRequest, clientIp 
 	if err := store.CreateOrder(order, limits, invoice); err != nil {
 		return nil, nil, err
 	}
-	checkout, err := startCheckout(ctx, order, invoice, quote.method)
+	checkout, err := checkoutThrough(ctx, order, invoice, quote.channels, true)
 	if err != nil {
 		return order, nil, err
 	}
 	return order, checkout, nil
 }
 
+// maxCheckoutChannels bounds the channels one checkout tries, so a buyer
+// does not wait for every failing gateway.
+const maxCheckoutChannels = 3
+
+// checkoutFailure is a channel that could not start a payment; the order
+// may try another.
+type checkoutFailure struct{ err error }
+
+func (f *checkoutFailure) Error() string { return f.err.Error() }
+func (f *checkoutFailure) Unwrap() error { return f.err }
+
+// checkoutThrough starts the payment of a pending order through the first
+// of channels that can, invoicing the order anew through each; invoice, when
+// given, is the order's invoice through channels[0]. The invoice of a channel
+// that fails is closed without asking its gateway, since the buyer never got
+// it and a payment that arrives anyway still settles, and the next channel
+// whose checkout reaches its provider is tried: a channel that only
+// redirects is never switched to, because its failures cannot be seen. A
+// failure counts towards the channel's breaker unless the gateway words it
+// for the buyer, or it is the renewal of a checkout that started before
+// (countFirst false), which a gateway may refuse without being down.
+func checkoutThrough(ctx context.Context, order *entity.PaymentOrder, invoice *entity.PaymentInvoice, channels []channel, countFirst bool) (*Checkout, error) {
+	failure := errCheckoutFailed
+	tried := 0
+	for i, candidate := range channels {
+		if tried == maxCheckoutChannels {
+			break
+		}
+		if i > 0 && !candidate.gw.ServerCheckout() {
+			continue
+		}
+		if invoice == nil {
+			issued, err := store.IssueInvoice(order, candidate.method)
+			if errors.Is(err, store.ErrOrderNotPending) {
+				return nil, errOrderNotPayable
+			}
+			if err != nil {
+				return nil, err
+			}
+			invoice = issued
+		}
+		tried++
+		checkout, err := startCheckout(ctx, order, invoice, candidate.method)
+		var failed *checkoutFailure
+		if !errors.As(err, &failed) {
+			if err == nil {
+				checkoutStarted(candidate.method.Id)
+			}
+			return checkout, err
+		}
+		logger.LogWarn(ctx, common.LogText("payment channel %d could not start invoice %s: %v", candidate.method.Id, invoice.InvoiceNo, failed.err))
+		var message *common.Message
+		if errors.As(failed.err, &message) {
+			failure = message
+		} else if i > 0 || countFirst {
+			checkoutFailed(candidate.method.Id, failed.err)
+		}
+		if _, err := store.CloseInvoice(invoice, false, closeReasonFailed); err != nil {
+			return nil, err
+		}
+		invoice = nil
+	}
+	return nil, failure
+}
+
 // ResumeCheckout starts the payment of a user's pending order again, for a
-// client that lost the payment page or client secret: its latest invoice is
-// checked out again.
+// buyer who lost the payment page or did not get through it. Its latest
+// pending invoice is checked out again when its channel is enabled and not
+// tripped; otherwise the order is invoiced through its payment option's
+// channels, those it already tried last, and the replaced invoice is closed
+// through its gateway first so it takes no payment any more.
 func ResumeCheckout(ctx context.Context, userId int, orderNo string) (*Checkout, error) {
 	order, err := UserOrder(userId, orderNo)
 	if err != nil {
 		return nil, err
 	}
-	if order.Platform == entity.PaymentPlatformBalance {
+	if order.Platform == entity.PaymentPlatformBalance || order.Status != entity.PaymentOrderPending || time.Now().Unix() >= order.ExpiresAt {
 		return nil, errOrderNotPayable
 	}
 	invoices, err := store.ListInvoices(order.Id)
 	if err != nil {
 		return nil, err
 	}
-	if len(invoices) == 0 {
-		return nil, errOrderNotPayable
+	var latest *entity.PaymentInvoice
+	tried := make([]int, 0, len(invoices))
+	for _, invoice := range invoices {
+		tried = append(tried, invoice.PaymentMethodId)
+		if invoice.Status == entity.PaymentInvoicePending {
+			latest = invoice
+		}
 	}
-	invoice := invoices[len(invoices)-1]
-	method, err := store.GetMethod(invoice.PaymentMethodId)
-	if err != nil || !method.Enabled {
+	var channels []channel
+	if latest != nil {
+		method, err := store.GetMethod(latest.PaymentMethodId)
+		if err == nil && method.Enabled && !channelTripped(method.Id) {
+			if gw, err := openGateway(method); err == nil {
+				channels = append(channels, channel{method: method, gw: gw})
+			}
+		}
+	}
+	if option, err := store.GetOption(order.PaymentOptionId); err == nil && option.Enabled {
+		routed, err := routeChannels(ctx, option, order.Price, order.Currency, tried)
+		if err == nil {
+			channels = append(channels, routed...)
+		}
+	}
+	if len(channels) == 0 {
 		return nil, errMethodUnavailable
 	}
-	return startCheckout(ctx, order, invoice, method)
+	if latest != nil && channels[0].method.Id == latest.PaymentMethodId {
+		return checkoutThrough(ctx, order, latest, channels, latest.PaymentCurrency == "")
+	}
+	if latest != nil {
+		settled, err := closeInvoice(ctx, order, latest, true, closeReasonReplaced)
+		if settled != nil {
+			return &Checkout{Type: CheckoutTypePaid, OrderNo: order.OrderNo}, nil
+		}
+		if err != nil && !errors.Is(err, ErrCloseUnconfirmed) {
+			return nil, err
+		}
+	}
+	return checkoutThrough(ctx, order, nil, channels, true)
 }
 
 // startCheckout creates, or resumes, the gateway payment of a pending
@@ -132,16 +231,16 @@ func startCheckout(ctx context.Context, order *entity.PaymentOrder, invoice *ent
 	}
 	gw, err := openGateway(method)
 	if err != nil {
-		return nil, errMethodUnavailable
+		return nil, &checkoutFailure{err: err}
 	}
 	if invoice.PaymentCurrency == "" {
 		rate, err := chargeRate(ctx, gw, order.Currency)
 		if err != nil {
-			return nil, err
+			return nil, &checkoutFailure{err: err}
 		}
 		charge, err := gateway.ChargeFor(gw, order.Amount, order.Currency, rate)
 		if err != nil {
-			return nil, err
+			return nil, &checkoutFailure{err: err}
 		}
 		if rate == "" {
 			rate = "1"
@@ -171,17 +270,12 @@ func startCheckout(ctx context.Context, order *entity.PaymentOrder, invoice *ent
 	if gw.NeedsNotifyURL(view) {
 		if checkout.NotifyURL, err = gateway.NotifyURL(methodView(method), siteAddress()); err != nil {
 			logger.LogError(ctx, common.LogText("payment method %d has no notify URL: %v", method.Id, err))
-			return nil, errMethodUnavailable
+			return nil, &checkoutFailure{err: err}
 		}
 	}
 	action, err := gw.StartPayment(ctx, checkout)
 	if err != nil {
-		var message *common.Message
-		if errors.As(err, &message) {
-			return nil, err
-		}
-		logger.LogError(ctx, common.LogText("start payment of invoice %s failed: %v", invoice.InvoiceNo, err))
-		return nil, errCheckoutFailed
+		return nil, &checkoutFailure{err: err}
 	}
 	return &Checkout{Type: action.Type, URL: action.URL, Stripe: action.Stripe, QRCode: action.QRCode, OrderNo: order.OrderNo}, nil
 }

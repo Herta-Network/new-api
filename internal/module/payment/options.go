@@ -198,8 +198,10 @@ func takesAmount(method *entity.PaymentMethod, price int64) bool {
 // routeChannels returns the channels of an option that take an order of
 // price hundredths of the site currency now, in the order to invoice them:
 // the lowest priority first, and the channels of one priority in a random
-// order weighted by their weight, so they share the orders.
-func routeChannels(ctx context.Context, option *entity.PaymentOption, price int64, site string) ([]channel, error) {
+// order weighted by their weight, so they share the orders. The channels to
+// avoid (the buyer did not get through them) follow the others, and the
+// tripped ones come last.
+func routeChannels(ctx context.Context, option *entity.PaymentOption, price int64, site string, avoid []int) ([]channel, error) {
 	usable, unusable, err := usableChannels(ctx, option.Id, site)
 	if err != nil {
 		return nil, err
@@ -247,6 +249,16 @@ func routeChannels(ctx context.Context, option *entity.PaymentOption, price int6
 		}
 		start = end
 	}
+	rank := func(candidate channel) int {
+		switch {
+		case channelTripped(candidate.method.Id):
+			return 2
+		case slices.Contains(avoid, candidate.method.Id):
+			return 1
+		}
+		return 0
+	}
+	slices.SortStableFunc(routed, func(a, b channel) int { return cmp.Compare(rank(a), rank(b)) })
 	return routed, nil
 }
 

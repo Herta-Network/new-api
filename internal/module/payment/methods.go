@@ -59,6 +59,9 @@ type MethodDetail struct {
 	// WebhookStale reports a Stripe method whose registered webhook does not
 	// point at NotifyURL; syncing the webhook fixes it.
 	WebhookStale bool `json:"webhook_stale"`
+	// Health is what this server saw of the channel's checkouts since the
+	// last one that started; nil when none failed.
+	Health *ChannelHealth `json:"health,omitempty"`
 }
 
 // Platforms describes the gateway platforms for the administrator's form.
@@ -89,7 +92,7 @@ func AdminMethods() ([]*MethodDetail, error) {
 }
 
 func methodDetail(method *entity.PaymentMethod) *MethodDetail {
-	detail := &MethodDetail{PaymentMethod: method, Config: map[string]any{}, SecretsSet: map[string]bool{}}
+	detail := &MethodDetail{PaymentMethod: method, Config: map[string]any{}, SecretsSet: map[string]bool{}, Health: channelHealth(method.Id)}
 	if method.Platform == entity.PaymentPlatformBalance {
 		return detail
 	}
