@@ -201,7 +201,7 @@ func main() {
 	middleware.SetUpLogger(server)
 
 	// 设置路由
-	router.SetRouter(server)
+	handler := router.SetRouter(server)
 	var port = os.Getenv("PORT")
 	if port == "" {
 		port = strconv.Itoa(*common.Port)
@@ -209,7 +209,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:    ":" + port,
-		Handler: server,
+		Handler: handler,
 	}
 
 	go func() {

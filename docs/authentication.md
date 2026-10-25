@@ -89,10 +89,10 @@
 控制台页面（`index.html` 以及回落到它的前端路由）带 `Content-Security-Policy`（ASVS 5.0 3.4.3、3.4.6）。策略由控制台仓库 new-api-frontend 的构建生成（`src/lib/static-hosting.ts`），写进构建产物的 `_headers`，由 Cloudflare Pages 等静态主机发送；后端不提供控制台，也不发送这个头：
 
 ```text
-default-src 'self'; script-src 'self' https://telegram.org https://challenges.cloudflare.com https://js.stripe.com https://*.js.stripe.com; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; font-src 'self' data:; connect-src * data: blob:; frame-src *; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'
+default-src 'self'; script-src 'self' https://telegram.org https://challenges.cloudflare.com https://js.stripe.com https://*.js.stripe.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; font-src 'self' data:; connect-src * data: blob:; frame-src *; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'
 ```
 
-- 脚本只能来自控制台自己的 Origin 和用到的第三方：Telegram 登录组件、Cloudflare Turnstile、Stripe.js。不允许 `'unsafe-inline'` 和 `'unsafe-eval'`。构建产物里没有内联脚本：主题初始化和语言包预加载脚本由构建输出为带哈希的文件（`static/js/theme-bootstrap.*.js`、`static/js/locale-preload.*.js`），zod 关闭了 JIT（`src/lib/zod-config.ts`），因此策略是固定的，不随构建变化。
+- 脚本只能来自控制台自己的 Origin 和用到的第三方：Telegram 登录组件、Cloudflare Turnstile、Stripe.js，以及 Cloudflare Web Analytics 的统计脚本。后者由 Cloudflare Pages 在项目打开 Web Analytics 时插入页面，构建时无法得知是否打开，而这个域名只提供 Cloudflare 自己的统计脚本，因此始终放行；它上报数据走 `connect-src`。不允许 `'unsafe-inline'` 和 `'unsafe-eval'`。构建产物里没有内联脚本：主题初始化和语言包预加载脚本由构建输出为带哈希的文件（`static/js/theme-bootstrap.*.js`、`static/js/locale-preload.*.js`），zod 关闭了 JIT（`src/lib/zod-config.ts`），因此策略是固定的，不随构建变化。
 - 统计脚本由控制台构建时的环境变量 `UMAMI_WEBSITE_ID`、`UMAMI_SCRIPT_URL`、`GOOGLE_ANALYTICS_ID` 注入，它们的 Origin 自动加入 `script-src`；Google Analytics 的配置也输出为文件，不是内联脚本。后端同名的环境变量不再生效。
 - 样式允许内联（组件会注入 `<style>`）。图片、媒体、iframe 和网络请求允许任意来源，因为管理员可以配置任意 Logo、首页和关于页 iframe、聊天链接、OIDC 发现地址，接口也在另一个 Origin 上。
 - 页面只允许同源嵌入（`frame-ancestors 'self'`），不能加载插件，不能修改 base URL，表单只能提交到本站。
@@ -129,6 +129,8 @@ CORS 规则：
 - `/api` 和 `/pg`（控制台接口）只对「前端地址」和 `FRONTEND_ORIGINS` 的 Origin 返回 `Access-Control-Allow-Origin`（回显该 Origin，附 `Vary: Origin`），不返回 `Access-Control-Allow-Credentials`，预检只允许控制台用到的请求头（`Authorization`、`Content-Type`、`Cache-Control`、`X-Security-Proof`、`X-Auth-Session`、`X-OAuth-Nonce`）。不受信任的 Origin 不会得到任何 CORS 头，其预检返回 403。
 - 系统初始化完成前还不知道控制台的地址：此时 `GET /api/setup`、`POST /api/setup` 和 `GET /api/status` 对任意 Origin 返回 `Access-Control-Allow-Origin: *`，其它控制台接口照旧拒绝。这三个接口的响应不含敏感信息（ASVS 5.0 3.4.2）。初始化完成后这个例外关闭；多节点部署中，在初始化之前启动的其它节点要重启后才会关闭。已知的取舍：初始化前，网络上能访问到这个实例的人本来就能用 curl 完成初始化；放开 CORS 后，员工浏览器里打开的任意网页也能对内网中尚未初始化的实例发起初始化。部署后请立即完成初始化，或初始化之后再开放网络访问。
 - AI 接口（`/v1`、`/v1beta`、`/mj`、任务插件路由、`/dashboard/billing`）以及 `/api/usage/token`、`/api/log/token` 用 API Key 鉴权，继续允许任意 Origin，浏览器里直接用 `sk-` 密钥调用的场景不受影响。
+- 跨域策略包在整个路由外层（`middleware.CORS` 包住 Gin），所以每个响应都按上述规则带跨域头，包括 401、404、405、处理函数出错，以及 Gin 在中间件运行之前返回的末尾斜杠跳转。
+- `/api` 下的路径带不带末尾斜杠都直接匹配注册的路由（例如 `/api/channel` 和 `/api/channel/` 是同一个接口），不再跳转，鉴权、访问令牌的路由 scope 和审计都按注册的路由处理。其它路径（如 `/v1`）照旧由 Gin 跳转到注册的路径。
 
 域名相关的其它设置：
 
