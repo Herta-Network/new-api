@@ -26,7 +26,6 @@
   "Error getting sql.DB from GORM: %v": "从 GORM 取得 sql.DB 失败: %v",
   "Error pinging DB: %v": "数据库 ping 失败: %v",
   "Error: Failed to decode base64 string": "base64 字符串解码失败",
-  "FRONTEND_BASE_URL is ignored on master node": "当前是主节点，FRONTEND_BASE_URL 设置已忽略",
   "Failed to get binding count for provider %s: %s": "查询 OAuth 提供商 %s 的绑定用户数失败: %s",
   "Failed to load custom OAuth providers: %s": "加载自定义 OAuth 提供商失败: %s",
   "Failed to load rate limit script: %v": "加载限流脚本失败: %v",

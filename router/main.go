@@ -1,18 +1,12 @@
 package router
 
 import (
-	"fmt"
-	"net/http"
-	"os"
-	"strings"
-
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/middleware"
 
 	"github.com/gin-gonic/gin"
 )
 
-func SetRouter(router *gin.Engine, assets WebAssets) {
+func SetRouter(router *gin.Engine) {
 	// Registered before every route so preflights, which match none, get it too.
 	router.Use(middleware.CORS())
 	SetApiRouter(router)
@@ -22,22 +16,5 @@ func SetRouter(router *gin.Engine, assets WebAssets) {
 	SetVideoRouter(router)
 	SetTaskRouter(router)
 	pluginDispatcher := SetPluginRouter(router)
-	frontendBaseUrl := os.Getenv("FRONTEND_BASE_URL")
-	if common.IsMasterNode && frontendBaseUrl != "" {
-		frontendBaseUrl = ""
-		common.SysLog(common.LogText("FRONTEND_BASE_URL is ignored on master node"))
-	}
-	if frontendBaseUrl == "" {
-		SetWebRouter(router, assets, pluginDispatcher)
-	} else {
-		frontendBaseUrl = strings.TrimSuffix(frontendBaseUrl, "/")
-		router.NoRoute(
-			pluginDispatcher,
-			middleware.RouteTag("web"),
-			middleware.AccessTokenAudit(),
-			func(c *gin.Context) {
-				c.Redirect(http.StatusMovedPermanently, fmt.Sprintf("%s%s", frontendBaseUrl, c.Request.RequestURI))
-			},
-		)
-	}
+	SetWebRouter(router, pluginDispatcher)
 }

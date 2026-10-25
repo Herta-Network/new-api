@@ -6,8 +6,9 @@ import "strings"
 // callbacks and the files the backend serves are reached there.
 var ServerAddress = "http://localhost:3000"
 
-// FrontendAddress is the public address of the console frontend when it is
-// deployed apart from the backend; empty when the backend serves it.
+// FrontendAddress is the public address of the console, which is deployed
+// apart from the backend; empty when the console is served at ServerAddress,
+// behind a proxy that also forwards the backend paths.
 var FrontendAddress = ""
 
 var TaskPublicAddress = ""
@@ -16,7 +17,7 @@ var WorkerValidKey = ""
 var WorkerAllowHttpImageRequestEnabled = false
 
 // ConsoleAddress returns the public address users open the console at:
-// FrontendAddress, or ServerAddress when the backend serves the console.
+// FrontendAddress, or ServerAddress when the console is served there.
 // Links into the console, OAuth callbacks and the default Passkey domain are
 // built on it.
 func ConsoleAddress() string {
