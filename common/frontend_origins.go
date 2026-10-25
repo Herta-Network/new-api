@@ -5,12 +5,18 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 )
 
+// FrontendOrigins are the browser origins, other than the backend's own, that
+// serve the console frontend: FRONTEND_ORIGINS, plus the deprecated
+// SESSION_COOKIE_TRUSTED_URL. The console API admits them in CORS.
+var FrontendOrigins []string
+
 // NormalizeOrigin validates and canonicalizes a browser origin. Only an exact
 // scheme/host/effective-port match is meaningful; paths and wildcards are not
-// accepted for authentication cookie endpoints.
+// accepted.
 func NormalizeOrigin(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "null" || strings.ContainsAny(raw, "\r\n") {
@@ -41,44 +47,31 @@ func NormalizeOrigin(raw string) (string, error) {
 	return parsedURL.Scheme + "://" + net.JoinHostPort(hostname, port), nil
 }
 
-func InitSessionCookieSettings() error {
-	secureRaw := strings.TrimSpace(os.Getenv("SESSION_COOKIE_SECURE"))
-	trustedURLsRaw := strings.TrimSpace(os.Getenv("SESSION_COOKIE_TRUSTED_URL"))
-
-	SessionCookieSecure = false
-	SessionCookieTrustedURLs = nil
-
-	if secureRaw == "" || strings.EqualFold(secureRaw, "false") {
-		if trustedURLsRaw != "" {
-			return fmt.Errorf("SESSION_COOKIE_TRUSTED_URL requires SESSION_COOKIE_SECURE=true")
+// InitFrontendOrigins reads FRONTEND_ORIGINS and the deprecated
+// SESSION_COOKIE_TRUSTED_URL, each a comma-separated list of exact origins.
+// SESSION_COOKIE_SECURE no longer has an effect: the browser keeps the
+// refresh token itself instead of a cookie.
+func InitFrontendOrigins() error {
+	FrontendOrigins = nil
+	for _, name := range []string{"FRONTEND_ORIGINS", "SESSION_COOKIE_TRUSTED_URL"} {
+		raw := strings.TrimSpace(os.Getenv(name))
+		if raw == "" {
+			continue
 		}
-		return nil
-	}
-
-	if !strings.EqualFold(secureRaw, "true") {
-		return fmt.Errorf("SESSION_COOKIE_SECURE must be true or false")
-	}
-
-	if trustedURLsRaw == "" {
-		return fmt.Errorf("SESSION_COOKIE_SECURE=true requires SESSION_COOKIE_TRUSTED_URL")
-	}
-
-	trustedURLs := strings.SplitSeq(trustedURLsRaw, ",")
-	for trustedURL := range trustedURLs {
-		trustedURL = strings.TrimSpace(trustedURL)
-		if trustedURL == "" {
-			return fmt.Errorf("SESSION_COOKIE_TRUSTED_URL contains an empty URL")
+		for value := range strings.SplitSeq(raw, ",") {
+			origin, err := NormalizeOrigin(value)
+			if err != nil {
+				return fmt.Errorf("invalid %s: %w", name, err)
+			}
+			if !slices.Contains(FrontendOrigins, origin) {
+				FrontendOrigins = append(FrontendOrigins, origin)
+			}
 		}
-		normalizedOrigin, err := NormalizeOrigin(trustedURL)
-		if err != nil {
-			return fmt.Errorf("invalid SESSION_COOKIE_TRUSTED_URL: %w", err)
-		}
-		if !strings.HasPrefix(normalizedOrigin, "https://") {
-			return fmt.Errorf("SESSION_COOKIE_TRUSTED_URL must contain only https URLs with hosts")
-		}
-		SessionCookieTrustedURLs = append(SessionCookieTrustedURLs, normalizedOrigin)
 	}
-
-	SessionCookieSecure = true
+	for _, name := range []string{"SESSION_COOKIE_SECURE", "SESSION_COOKIE_TRUSTED_URL"} {
+		if os.Getenv(name) != "" {
+			SysLog(LogText("%s is deprecated: the console no longer uses a refresh cookie; list frontend origins in FRONTEND_ORIGINS", name))
+		}
+	}
 	return nil
 }

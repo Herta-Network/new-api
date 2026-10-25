@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -14,54 +15,86 @@ import (
 	"gorm.io/gorm"
 )
 
+// authRefreshRequest carries the refresh token the console keeps.
+type authRefreshRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+// requestRefreshToken returns the refresh token of a refresh or logout
+// request: the one in the body, or the legacy refresh cookie of a session
+// signed in before the console kept the token itself. The cookie is accepted
+// only from the console's origin, like its origin check did, and deleted from
+// the browser either way.
+func requestRefreshToken(c *gin.Context) (string, error) {
+	var request authRefreshRequest
+	if c.Request.ContentLength != 0 {
+		if err := common.DecodeJson(c.Request.Body, &request); err != nil && !errors.Is(err, io.EOF) {
+			return "", err
+		}
+	}
+	legacyToken := service.LegacyRefreshToken(c)
+	service.ClearLegacyRefreshCookies(c)
+	if token := strings.TrimSpace(request.RefreshToken); token != "" {
+		return token, nil
+	}
+	if legacyToken != "" && middleware.IsConsoleOrigin(c.Request) {
+		return legacyToken, nil
+	}
+	return "", nil
+}
+
 // @Summary		续期登录
-// @Description	凭 new_api_refresh Cookie（HttpOnly、SameSite=Strict、Path=/api/user/auth）轮换 Refresh Token 并签发新的访问令牌；Cookie 安全模式下还校验请求的 Origin 或 Referer。
-// @Description	X-Auth-Session 与 Cookie 所属会话不一致时返回 409 AUTH_SESSION_MISMATCH；Refresh Token 无效或会话已撤销时返回 401 并清除 Cookie。
+// @Description	用请求体里的 refresh_token 换取新的访问令牌和新的 refresh_token；旧的 refresh_token 随即失效，30 秒后再次使用会撤销整个会话。前端须保存返回的 refresh_token 供下次续期。
+// @Description	升级前登录的会话可以不带请求体，改用旧的 new_api_refresh Cookie 续期一次（仅限控制台来源的请求），响应会删除该 Cookie。X-Auth-Session 与 refresh_token 所属会话不一致时返回 409 AUTH_SESSION_MISMATCH；refresh_token 无效或会话已撤销时返回 401。
 // @Tags			认证
-// @Param			X-Auth-Session	header		string	false	"客户端内存中的会话 sid"
+// @Param			X-Auth-Session	header		string				false	"客户端内存中的会话 sid"
+// @Param			body			body		authRefreshRequest	false	"refresh_token"
 // @Success		200				{object}	common.ApiResponse{data=loginResult}
 // @Failure		401				{object}	common.ApiResponse
 // @Failure		409				{object}	common.ApiResponse
 // @Router			/api/user/auth/refresh [post]
 func RefreshAuth(c *gin.Context) {
 	setAuthNoStore(c)
-	rawRefreshToken, err := c.Cookie(service.RefreshCookieName)
-	if err != nil || rawRefreshToken == "" {
-		service.ClearRefreshCookie(c)
+	rawRefreshToken, err := requestRefreshToken(c)
+	if err != nil {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	if rawRefreshToken == "" {
 		writeAuthSessionError(c, service.ErrRefreshTokenInvalid)
 		return
 	}
 	bundle, user, err := service.RefreshLoginSession(rawRefreshToken, c.GetHeader("X-Auth-Session"), c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
-		if errors.Is(err, service.ErrRefreshTokenInvalid) || errors.Is(err, service.ErrLoginSessionRevoked) {
-			service.ClearRefreshCookie(c)
-		}
 		writeAuthSessionError(c, err)
 		return
 	}
-	service.WriteRefreshCookie(c, bundle.RefreshToken)
 	common.ApiSuccess(c, loginResult{AuthBundle: bundle, User: buildSelfUserData(user)})
 }
 
 type logoutResult struct {
-	RevokedSID    string `json:"revoked_sid"`
-	CookieCleared bool   `json:"cookie_cleared"`
+	RevokedSID string `json:"revoked_sid"`
 }
 
 // @Summary		登出
-// @Description	撤销 new_api_refresh Cookie 所属的登录会话并清除 Cookie；Cookie 安全模式下还校验请求的 Origin 或 Referer。
-// @Description	同时带有效的 Authorization: Bearer <访问令牌> 时撤销该令牌所属会话，data 为被撤销的 sid 和是否清除了 Cookie；否则不返回 data。X-Auth-Session 与 Cookie 或访问令牌的会话不一致时返回 409 AUTH_SESSION_MISMATCH。
+// @Description	撤销 Authorization: Bearer <访问令牌> 所属的登录会话；没有有效访问令牌时改为撤销请求体里 refresh_token 所属的会话。前端随后应删除自己保存的令牌。
+// @Description	撤销了访问令牌所属会话时 data 为被撤销的 sid，否则不返回 data。X-Auth-Session 与访问令牌或 refresh_token 的会话不一致时返回 409 AUTH_SESSION_MISMATCH。升级前登录的会话也可以凭旧的 new_api_refresh Cookie 登出（仅限控制台来源的请求），响应会删除该 Cookie。
 // @Tags			认证
-// @Param			X-Auth-Session	header		string	false	"客户端内存中的会话 sid"
+// @Param			X-Auth-Session	header		string				false	"客户端内存中的会话 sid"
+// @Param			body			body		authRefreshRequest	false	"refresh_token"
 // @Success		200				{object}	common.ApiResponse{data=logoutResult}
 // @Failure		409				{object}	common.ApiResponse
 // @Router			/api/user/auth/logout [post]
 func AuthLogout(c *gin.Context) {
 	setAuthNoStore(c)
 	expectedSID := strings.TrimSpace(c.GetHeader("X-Auth-Session"))
-	rawRefreshToken, cookieErr := c.Cookie(service.RefreshCookieName)
-	cookieSID, hasCookieSID := service.RefreshTokenSID(rawRefreshToken)
-	if expectedSID != "" && cookieErr == nil && hasCookieSID && cookieSID != expectedSID {
+	rawRefreshToken, err := requestRefreshToken(c)
+	if err != nil {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	refreshSID, hasRefreshSID := service.RefreshTokenSID(rawRefreshToken)
+	if expectedSID != "" && hasRefreshSID && refreshSID != expectedSID {
 		writeAuthSessionError(c, service.ErrLoginSessionMismatch)
 		return
 	}
@@ -76,21 +109,11 @@ func AuthLogout(c *gin.Context) {
 				writeAuthSessionError(c, err)
 				return
 			}
-			cookieCleared := false
-			if cookieErr == nil && hasCookieSID && cookieSID == identity.SessionID {
-				if err := service.RevokeByRefreshToken(rawRefreshToken, identity.SessionID, "logout"); err != nil {
-					writeAuthSessionError(c, err)
-					return
-				}
-				service.ClearRefreshCookie(c)
-				cookieCleared = true
-			}
-			common.ApiSuccess(c, logoutResult{RevokedSID: identity.SessionID, CookieCleared: cookieCleared})
+			common.ApiSuccess(c, logoutResult{RevokedSID: identity.SessionID})
 			return
 		}
 	}
-	if cookieErr != nil || rawRefreshToken == "" {
-		service.ClearRefreshCookie(c)
+	if rawRefreshToken == "" {
 		c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 		return
 	}
@@ -98,7 +121,6 @@ func AuthLogout(c *gin.Context) {
 		writeAuthSessionError(c, err)
 		return
 	}
-	service.ClearRefreshCookie(c)
 	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
 }
 
@@ -128,7 +150,7 @@ type revokedLoginSession struct {
 }
 
 // @Summary		撤销登录会话
-// @Description	可以撤销当前会话；撤销的是 Refresh Cookie 所属会话时同时清除 Cookie。仅限浏览器登录会话，个人访问令牌调用返回 403 AUTH_SESSION_REQUIRED。
+// @Description	可以撤销当前会话，此时 data.current 为 true，前端应删除自己保存的令牌。仅限浏览器登录会话，个人访问令牌调用返回 403 AUTH_SESSION_REQUIRED。
 // @Tags			登录会话
 // @Param			sid	path		string	true	"会话 sid"
 // @Success		200	{object}	common.ApiResponse{data=revokedLoginSession}
@@ -153,12 +175,6 @@ func DeleteLoginSession(c *gin.Context) {
 	if !revoked {
 		c.JSON(http.StatusNotFound, gin.H{"success": false, "code": "AUTH_SESSION_NOT_FOUND", "message": "session not found"})
 		return
-	}
-	if rawRefreshToken, cookieErr := c.Cookie(service.RefreshCookieName); cookieErr == nil {
-		cookieSID, ok := service.RefreshTokenSID(rawRefreshToken)
-		if ok && cookieSID == sid {
-			service.ClearRefreshCookie(c)
-		}
 	}
 	common.ApiSuccess(c, revokedLoginSession{RevokedSID: sid, Current: sid == identity.SessionID})
 }

@@ -1,6 +1,9 @@
 package controller
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -27,6 +30,10 @@ type oauthStateRequest struct {
 	Aff      string          `json:"aff,omitempty"`
 	Scope    string          `json:"scope,omitempty"`
 	Context  json.RawMessage `json:"context,omitempty"`
+	// Nonce is a random value the console keeps for this sign-in and sends
+	// again with the callback, so only the browser that started a sign-in
+	// can complete it. Required for intent login, refused otherwise.
+	Nonce string `json:"nonce,omitempty"`
 }
 
 type oauthStateResult struct {
@@ -43,6 +50,14 @@ type oauthFlowPayload struct {
 	Telegram        *oauth.TelegramOAuthFlow       `json:"telegram,omitempty"`
 	SessionIdentity *service.AuthIdentity          `json:"session_identity,omitempty"`
 	Authorization   *model.AuthFlowAuthorization   `json:"authorization,omitempty"`
+	NonceHash       string                         `json:"nonce_hash,omitempty"`
+}
+
+// hashOAuthNonce hashes the nonce a sign-in is bound to; the flow keeps only
+// the hash.
+func hashOAuthNonce(nonce string) string {
+	sum := sha256.Sum256([]byte(nonce))
+	return hex.EncodeToString(sum[:])
 }
 
 // providerParams returns the params of messages that name the OAuth provider.
@@ -53,9 +68,9 @@ func providerParams(name string) map[string]any {
 // GenerateOAuthCode generates a state code for OAuth CSRF protection
 //
 //	@Summary		创建 OAuth state
-//	@Description	flow_token 用作 OAuth 授权请求的 state，10 分钟内有效。intent 为 login、bind 或 verify：bind 和 verify 需要已登录的浏览器会话（Authorization: Bearer），bind 还需要 scope 为 account.binding.bind 的 X-Security-Proof，其 context 为 {provider}；verify 要提交 scope 和 context。aff 只用于 login。
+//	@Description	flow_token 用作 OAuth 授权请求的 state，10 分钟内有效。intent 为 login、bind 或 verify：login 必须提交 nonce（32 到 128 个字符的随机值，由发起登录的浏览器保存，回调时放在 X-OAuth-Nonce 请求头里交回）；bind 和 verify 需要已登录的浏览器会话（Authorization: Bearer），bind 还需要 scope 为 account.binding.bind 的 X-Security-Proof，其 context 为 {provider}；verify 要提交 scope 和 context。aff 只用于 login。
 //	@Tags			第三方登录
-//	@Param			body	body		oauthStateRequest	true	"provider、intent，以及 aff 或 scope 和 context"
+//	@Param			body	body		oauthStateRequest	true	"provider、intent，login 时的 nonce 和 aff，或 verify 时的 scope 和 context"
 //	@Success		200		{object}	common.ApiResponse{data=oauthStateResult}
 //	@Failure		401		{object}	common.ApiResponse
 //	@Router			/api/oauth/state [post]
@@ -68,17 +83,22 @@ func GenerateOAuthCode(c *gin.Context) {
 	request.Provider = strings.TrimSpace(request.Provider)
 	request.Intent = strings.TrimSpace(request.Intent)
 	request.Aff = strings.TrimSpace(request.Aff)
+	request.Nonce = strings.TrimSpace(request.Nonce)
 	if oauth.GetProvider(request.Provider) == nil ||
 		(request.Intent != model.AuthFlowIntentLogin && request.Intent != model.AuthFlowIntentBind && request.Intent != model.AuthFlowIntentVerify) ||
 		len(request.Aff) > 32 ||
 		(request.Intent != model.AuthFlowIntentLogin && request.Aff != "") ||
-		(request.Intent != model.AuthFlowIntentVerify && (request.Scope != "" || len(request.Context) != 0)) {
+		(request.Intent != model.AuthFlowIntentVerify && (request.Scope != "" || len(request.Context) != 0)) ||
+		(request.Intent == model.AuthFlowIntentLogin) != (len(request.Nonce) >= 32 && len(request.Nonce) <= 128) {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 	userID := 0
 	sessionID := ""
 	flowPayload := oauthFlowPayload{AffiliateCode: request.Aff}
+	if request.Nonce != "" {
+		flowPayload.NonceHash = hashOAuthNonce(request.Nonce)
+	}
 	bindingStarted := false
 	if request.Provider == "telegram" {
 		telegramFlow, err := oauth.NewTelegramOAuthFlow()
@@ -157,11 +177,12 @@ func GenerateOAuthCode(c *gin.Context) {
 // HandleOAuth handles OAuth callback for all standard OAuth providers
 //
 //	@Summary		OAuth 回调
-//	@Description	按 state 对应流程的 intent 处理：login 时 data 为访问令牌、登录会话和用户，并写入 new_api_refresh Cookie，账户需要二次登录验证时 data 改为 {require_verification: true, flow_token, expires_at, methods}；bind 时 data 为 {action: "bind", notification_warning}；verify 时 data 为 service.SecurityProof。
-//	@Description	bind 和 verify 必须由发起流程的浏览器会话调用（Authorization: Bearer）。提供方返回 error 时 success 为 false，message 为其 error_description。
+//	@Description	按 state 对应流程的 intent 处理：login 时 data 为访问令牌、refresh_token、登录会话和用户，账户需要二次登录验证时 data 改为 {require_verification: true, flow_token, expires_at, methods}；bind 时 data 为 {action: "bind", notification_warning}；verify 时 data 为 service.SecurityProof。
+//	@Description	login 须在 X-OAuth-Nonce 请求头里交回创建 state 时提交的 nonce，不一致时返回 403。bind 和 verify 必须由发起流程的浏览器会话调用（Authorization: Bearer）。提供方返回 error 时 success 为 false，message 为其 error_description。
 //	@Tags			第三方登录
 //	@Param			provider			path		string	true	"提供方：github、discord、oidc、linuxdo、telegram 或自定义 OAuth 的 slug"
 //	@Param			state				query		string	true	"POST /api/oauth/state 返回的 flow_token"
+//	@Param			X-OAuth-Nonce		header		string	false	"login 时必填：创建 state 时提交的 nonce"
 //	@Param			code				query		string	false	"授权码"
 //	@Param			error				query		string	false	"提供方返回的错误码"
 //	@Param			error_description	query		string	false	"提供方返回的错误说明"
@@ -227,6 +248,16 @@ func HandleOAuth(c *gin.Context) {
 	} else if pendingFlow.Intent != model.AuthFlowIntentLogin {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
+	} else {
+		// A sign-in completes only in the browser that started it, which
+		// sends back the nonce it kept when it asked for the state.
+		var payload oauthFlowPayload
+		nonce := strings.TrimSpace(c.GetHeader("X-OAuth-Nonce"))
+		if err := common.UnmarshalJsonStr(pendingFlow.Payload, &payload); err != nil || payload.NonceHash == "" || nonce == "" ||
+			!hmac.Equal([]byte(hashOAuthNonce(nonce)), []byte(payload.NonceHash)) {
+			writeAccountStatusError(c, http.StatusForbidden, "State parameter is empty or mismatched")
+			return
+		}
 	}
 
 	// 3. Check if provider is enabled

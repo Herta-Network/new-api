@@ -1,12 +1,12 @@
 # 用户鉴权与登录会话
 
-面板鉴权采用短期 Access Token、HttpOnly Refresh Cookie 与服务端登录会话控制面的组合。面板请求不再依赖 Gin session，也不再要求 `New-Api-User` 请求头。
+面板鉴权采用短期 Access Token、由前端保存并每次续期都轮换的 Refresh Token，以及服务端登录会话控制面的组合。面板不使用任何鉴权 Cookie，前端和后端可以部署在不同的域名上（见下文“前后端分开部署”）。面板请求不再依赖 Gin session，也不再要求 `New-Api-User` 请求头。
 
 ## 鉴权模型
 
 - Access Token 是有效期 15 分钟的 JWT，只保存在浏览器内存中，通过 `Authorization: Bearer <token>` 发送。
-- Refresh Token 是随机不透明值，有效期最长 30 天。浏览器只通过 `HttpOnly`、`SameSite=Strict` Cookie 持有它；服务端仅保存 HMAC 摘要，并在每次刷新时轮换。
-- `new_api_has_session` 是 Refresh Cookie 的会话提示，值恒为 `1`，`Path=/`、非 `HttpOnly`，与 Refresh Cookie 同时写入、同时清除、同一过期时间。它只声明"曾签发过 Refresh Cookie"，不含任何凭据，也不参与任何鉴权判定；伪造它唯一的效果是自费一次注定失败的 refresh。它存在的原因是 Refresh Cookie 被 `HttpOnly` 和 `Path=/api/user/auth` 双重限制，`/` 上的页面无法判断自己是否匿名，否则每次冷启动都要发一次注定 401 的 refresh，而该请求还会占用按 IP 计数的 `CriticalRateLimit` 配额。
+- Refresh Token 是随机不透明值（`<sid>.<secret>`），所属会话最长有效 30 天。登录和续期接口在响应体的 `refresh_token` 里返回它，前端保存在 localStorage 的 `new_api_refresh_token` 中，续期和登出时放在请求体里发回。服务端仅保存 HMAC 摘要，每次续期都换发新的 Refresh Token。
+- 前端以“是否保存着 Refresh Token”判断冷启动时是否值得续期，不再需要会话提示 Cookie。
 - `user_sessions` 是登录会话控制面，记录设备、IP、登录方式、最后活跃时间、到期时间和撤销状态。数据库中的 Session 状态是最终权威；撤销传播速度取决于下文所述的 Redis 拓扑。
 - 用户的密码、状态、角色或安全因子发生安全相关变化时，`auth_version` 会递增并使旧登录会话失效。订阅带来的分组升降级只刷新授权缓存，不会退出任何登录设备。
 - Redis 缓存保存用户鉴权快照和登录会话快照。版本栅栏和撤销 tombstone 防止旧缓存重新授权；Session 快照使用跟随 `SYNC_FREQUENCY` 的短 TTL，缓存未命中或未启用 Redis 时回退到数据库校验。
@@ -38,6 +38,7 @@
     "access_token": "...",
     "token_type": "Bearer",
     "access_expires_at": 1730000000,
+    "refresh_token": "<sid>.<secret>",
     "user": {},
     "session": {
       "sid": "...",
@@ -57,21 +58,30 @@
 
 | 接口 | 鉴权 | 用途 |
 | --- | --- | --- |
-| `POST /api/user/auth/refresh` | Refresh Cookie；Secure 模式附加 Origin 校验 | 轮换 Refresh Token 并签发新的 Access Token |
-| `POST /api/user/auth/logout` | Refresh Cookie；Secure 模式附加 Origin 校验，可同时携带 Bearer | 撤销当前登录会话并清除 Cookie |
+| `POST /api/user/auth/refresh` | 请求体 `{"refresh_token": "..."}` | 轮换 Refresh Token 并签发新的 Access Token |
+| `POST /api/user/auth/logout` | Bearer，或请求体里的 Refresh Token | 撤销当前登录会话；前端随后删除自己保存的 Refresh Token |
 | `GET /api/user/sessions` | Bearer | 查看当前鉴权版本的有效登录会话，当前会话优先，最多 100 条 |
 | `DELETE /api/user/sessions/:sid` | Bearer | 撤销指定登录会话，包括当前会话 |
 | `POST /api/user/sessions/revoke-others` | Bearer | 保留当前会话并撤销其他会话 |
 
-客户端内存中已有会话时，应在 refresh/logout 请求中发送 `X-Auth-Session: <sid>`。Refresh Cookie 与该 SID 不一致时，两个端点都返回 `409 AUTH_SESSION_MISMATCH`，且不会轮换、撤销或清除任何会话；客户端先通过 refresh 清除本标签页的旧 SID、恢复 Cookie 当前对应的会话，再重试 logout。冷启动尚无内存会话时可以省略该请求头。
+客户端内存中已有会话时，应在 refresh/logout 请求中发送 `X-Auth-Session: <sid>`。请求里的 Refresh Token 与该 SID 不一致时（例如另一个标签页登录了别的账户，localStorage 里的令牌已被替换），两个端点都返回 `409 AUTH_SESSION_MISMATCH`，且不会轮换或撤销任何会话；客户端先通过 refresh 清除本标签页的旧 SID、恢复当前保存的令牌对应的会话，再重试 logout。冷启动尚无内存会话时可以省略该请求头。
 
 并发使用同一个 Refresh Token 时，服务端通过确定性轮换恢复同一个后继 Token，多个浏览器标签页不会因丢失“胜者”响应而被迫退出。最近一代 Refresh Token 在短暂容错窗口结束后再次出现会撤销对应会话；无法识别的更早代或随机 Token 只会被拒绝，不会允许攻击者凭猜测踢掉会话。
 
-前端使用 Web Locks 串行化同一浏览器配置文件中的刷新，并通过 BroadcastChannel（不支持时回退到 `storage` 事件）仅同步会话标识和登录/退出事件；Access Token 与 Refresh Token 都不会通过跨标签页消息传递或持久化到 Web Storage。
+前端使用 Web Locks 串行化同一浏览器配置文件中的刷新，每次续期都在锁内重新读取 localStorage 里的 Refresh Token，因为别的标签页可能刚刚换发过；并通过 BroadcastChannel（不支持时回退到 `storage` 事件）仅同步会话标识和登录/退出事件。Access Token 只保存在各标签页的内存中，不会持久化，也不会通过跨标签页消息传递。
 
-前端将冷启动状态与登录状态分开管理。网络或服务端临时故障允许后续导航重试 refresh；服务端确认 Refresh Cookie 无效时才进入已完成的匿名状态。内存 SID 与 Cookie SID 不一致时，客户端清除旧内存身份并在不携带旧 SID 的情况下重试一次。
+前端将冷启动状态与登录状态分开管理。网络或服务端临时故障允许后续导航重试 refresh；服务端拒绝 Refresh Token（401）时，前端删除发出的那个令牌并进入已完成的匿名状态。会话结束（登出、撤销当前会话、注销账户、续期被拒）时才删除保存的令牌，并且只删除属于该会话的令牌，另一个标签页新登录保存的令牌不受影响；仅本标签页的状态重置（如 SID 不一致、续期竞争）不删除令牌。内存 SID 与令牌所属 SID 不一致时，客户端清除旧内存身份并在不携带旧 SID 的情况下重试一次。
 
-公开页面的冷启动会先读 `new_api_has_session`：提示不存在且内存中没有任何身份时跳过 refresh，直接按匿名渲染，且**不**把这次跳过记为已完成的匿名判定——跳过只是延后，不是服务端结论。会依据鉴权结果做跳转的位置（受保护路由与登录页）不看提示，内存为空时一律回源。因此提示缺失但 Refresh Cookie 有效的用户（该 Cookie 上线前建立的会话，或只清理了 `/` 站点数据的浏览器）会在公开页显示为匿名，并在进入上述任一位置时自动恢复登录态，不需要重新输入密码。提示因服务端撤销而过期时，那次 refresh 返回 401 并在同一响应里清除提示，浪费的请求只发生一次。
+公开页面的冷启动在内存和 localStorage 里都没有身份时跳过 refresh，直接按匿名渲染，且**不**把这次跳过记为已完成的匿名判定。会依据鉴权结果做跳转的位置（受保护路由与登录页）内存为空时一律回源。
+
+### 安全取舍：Refresh Token 由前端保存
+
+这是为支持前后端分开部署（不同站点之间的 Cookie 会被浏览器当作第三方 Cookie 拦截）所做的有意取舍，相比此前的 HttpOnly Cookie 有所削弱：
+
+- 同源脚本可以读取 localStorage。页面一旦出现 XSS，攻击者可以拿走 Refresh Token 并在别处续期，最长到会话 30 天的绝对期限；HttpOnly Cookie 只允许攻击者在页面打开期间借用会话。OWASP Session Management Cheat Sheet 建议不要把 Refresh Token 放进 Web Storage，ASVS 5.0 的 14.3.3 允许浏览器存储里保存会话令牌。
+- 缓解措施：每次续期都轮换 Refresh Token；已被替换的令牌在 30 秒宽限期后再次出现会撤销整个会话（ASVS 10.4.5），因此被盗令牌和合法客户端谁先续期，另一方再续期时就会让会话失效；会话最长 30 天（ASVS 10.4.8）；用户可在“登录会话”里查看并撤销任何会话（ASVS 10.4.9），修改密码等安全变更会撤销其余会话；Access Token 只在内存里、15 分钟过期；登出时服务端撤销会话、前端删除令牌（ASVS 7.4.1、14.3.1）。
+- 不再有凭据随浏览器自动发送，续期、登出和登录接口不再需要 CSRF 防护和 Origin 校验。
+- 未实现的加固：把 Refresh Token 绑定到不可导出的 WebCrypto 密钥（DPoP，RFC 9449），或改用后端代为保存令牌的 BFF 模式（RFC 10017）。
 
 ## Session 签发限额与保留策略
 
@@ -91,39 +101,47 @@
 
 仅 master 节点每小时分批删除过期 Session 和超过保留期的 revoked Session。`USER_SESSION_HOURLY_ALERT_THRESHOLD`（默认 `5000`）只在最近一小时全局签发量异常时记录告警，不会形成可被滥用的全站登录拒绝开关。
 
-## Refresh/Logout 的 Origin 校验
+## 前后端分开部署
 
-refresh/logout 的 Origin 防护与 Refresh Cookie 的 Secure 模式绑定：
+默认部署由后端自带的前端提供控制台，页面和接口同源，不需要下面任何配置。把控制台放在 CDN 或单独的静态主机上时，推荐让前端主机把 `/api`、`/pg` 反向代理到后端，这样页面和接口仍然同源，不涉及 CORS。确实要让浏览器直接访问另一个域名的后端时，需要三处配置：
 
-- 未配置 `SESSION_COOKIE_SECURE` 或显式设为 `false` 时，Refresh Cookie 可用于本地 HTTP，refresh/logout 的 OriginGuard 关闭，并且不得配置 `SESSION_COOKIE_TRUSTED_URL`。这使 `http://localhost` 上不同端口的 Rsbuild/Vite 开发代理可以正常转发请求。该模式仅用于可信的本地开发环境，不应暴露到公网。
-- `SESSION_COOKIE_SECURE=true` 时，Refresh Cookie 仅通过 HTTPS 发送，同时启用严格 OriginGuard。`POST /api/user/auth/refresh` 和 `POST /api/user/auth/logout` 会校验浏览器的 `Origin`；缺少 `Origin` 时只接受合法的单一 `Referer` 作为回退。允许来源包括请求自身的精确 Origin，以及 `SESSION_COOKIE_TRUSTED_URL` 中配置的精确 Origin。
+1. **前端的后端地址**：`index.html` 旁边的 `runtime-config.json`，例如 `{"apiBaseUrl": "https://api.example.com"}`。前端启动前读取它，所有接口请求、日志导出、Ollama 拉取流和 playground 的 SSE 都发往这个地址。改后端地址只需改这个文件，不用重新构建；文件缺失、无效或为空时请求保持同源。
+2. **后端的 CORS 白名单**：环境变量 `FRONTEND_ORIGINS`，逗号分隔的精确 Origin（协议、主机和端口，不带路径、通配符或域名后缀匹配），例如 `https://app.example.com`。系统设置「前端地址」的 Origin 也自动加入白名单。
+3. **系统设置「前端地址」**：控制台的公开地址。重置密码链接、邮件里的链接、支付完成返回页、OAuth 回调地址（`<前端地址>/oauth/<provider>`）和默认的 Passkey 域名都使用它；不填时回落到「服务器地址」。「服务器地址」改为只表示后端：AI 接口地址、支付回调、Midjourney 图片和视频等后端提供的文件都用它。
 
-Secure 模式的 Origin 校验不信任客户端直接发送的 `X-Forwarded-Proto`。TLS 在反向代理终止时，应将面板的公开 HTTPS Origin 明确写入 `SESSION_COOKIE_TRUSTED_URL`。
+CORS 规则：
 
-`SESSION_COOKIE_TRUSTED_URL` 现在具有明确的新语义：它是 refresh/logout Cookie 端点的可信 Origin 列表，不是 CORS 白名单。配置规则如下：
+- `/api` 和 `/pg`（控制台接口）只对 `FRONTEND_ORIGINS` 和「前端地址」的 Origin 返回 `Access-Control-Allow-Origin`（回显该 Origin，附 `Vary: Origin`），不返回 `Access-Control-Allow-Credentials`，预检只允许控制台用到的请求头（`Authorization`、`Content-Type`、`Cache-Control`、`X-Security-Proof`、`X-Auth-Session`、`X-OAuth-Nonce`）。不受信任的 Origin 不会得到任何 CORS 头，其预检返回 403。
+- AI 接口（`/v1`、`/v1beta`、`/mj`、任务插件路由、`/dashboard/billing`）以及 `/api/usage/token`、`/api/log/token` 用 API Key 鉴权，继续允许任意 Origin，浏览器里直接用 `sk-` 密钥调用的场景不受影响。
 
-- 仅在 `SESSION_COOKIE_SECURE=true` 时配置；多个值用英文逗号分隔。
-- 每项必须是精确的 HTTPS Origin，例如 `https://panel.example.com` 或 `https://panel.example.com:8443`。
-- 不接受通配符、路径、查询参数、用户信息或域名后缀匹配。
-- 不会修改 relay、旧 billing dashboard、`/api/usage/token` 或 `/api/log/token` 的 CORS 行为。浏览器使用 `sk-` key 直连 relay 的场景保持不变。
+域名相关的其它设置：
 
-本地 HTTP 开发示例（OriginGuard 关闭）：
+- OAuth：state 存在 `auth_flows` 表里，不依赖 Cookie。各提供方后台登记的回调地址要改为 `<前端地址>/oauth/<provider>`。
+- Passkey：WebAuthn 在前端页面上执行，RP ID 必须是前端域名本身或其上级域名。设置「前端地址」时，原来的隐式域名会保留为旧域名，已有 Passkey 继续可用；前端换到另一个主域名时，在旧域名上注册的 Passkey 无法在新域名使用，这是 WebAuthn 的限制。
+- Telegram：在 BotFather 里用 `/setdomain` 设置前端域名。
+- Turnstile：在 Cloudflare 后台把前端主机名加入组件允许的主机名列表。
 
-```env
-SESSION_SECRET=<local-random-value>
-SESSION_COOKIE_SECURE=false
-# SESSION_COOKIE_TRUSTED_URL 不得设置
-```
-
-生产 HTTPS 示例（OriginGuard 开启）：
+同域部署（默认）：
 
 ```env
 SESSION_SECRET=<high-entropy-random-value>
-SESSION_COOKIE_SECURE=true
-SESSION_COOKIE_TRUSTED_URL=https://panel.example.com,https://admin.example.com
+# FRONTEND_ORIGINS 不需要设置；runtime-config.json 的 apiBaseUrl 留空；「前端地址」留空
 ```
 
-该开关只控制面板 Refresh Cookie 和 refresh/logout 的 OriginGuard，不会修改 relay、旧 billing dashboard、`/api/usage/token` 或 `/api/log/token` 的 CORS 行为。
+前后端分开部署（控制台 `https://app.example.com`，后端 `https://api.example.com`）：
+
+```env
+SESSION_SECRET=<high-entropy-random-value>
+FRONTEND_ORIGINS=https://app.example.com
+```
+
+```json
+{ "apiBaseUrl": "https://api.example.com" }
+```
+
+并在系统设置里把「服务器地址」设为 `https://api.example.com`、「前端地址」设为 `https://app.example.com`。
+
+`SESSION_COOKIE_SECURE` 和 `SESSION_COOKIE_TRUSTED_URL` 已废弃：前者不再生效；后者的值会并入 `FRONTEND_ORIGINS`。设置了它们时启动日志会提示。
 
 ## 可信代理与 IP 限流
 
@@ -159,6 +177,8 @@ Redis 限流使用原子 Lua 固定窗口，替代旧的近似滑动窗口 List 
 
 OAuth state、2FA pending、Passkey ceremony、Telegram bind 等临时状态存放在 `auth_flows`。客户端只持有随机 `flow_token`，数据库仅保存 HMAC 摘要；流程具有用途、provider、intent、用户和登录会话绑定，并且只能原子消费一次。OAuth 注册的 affiliate code 也随登录 AuthFlow 保存。
 
+OAuth 登录的 state 绑定发起登录的浏览器标签页（ASVS 10.1.2）：前端生成 32 字节随机 nonce，随 `POST /api/oauth/state` 提交，服务端只在 AuthFlow 里保存其 SHA-256；前端把 nonce 存在本标签页的 sessionStorage 里，回调时放在 `X-OAuth-Nonce` 请求头交回。nonce 不一致或缺失时回调返回 403 且不消费 state，因此攻击者把自己发起的回调链接发给别人，无法让对方登录攻击者的账户。绑定和验证流程本就要求发起时的登录会话，不需要 nonce。
+
 标准 OAuth 绑定回调由 popup 通过同源 `postMessage` 交给 opener；只有 opener 使用自身内存中的 Bearer 调用后端绑定接口。Telegram 绑定先由已登录前端创建绑定 AuthFlow，再让 widget 回调携带路径中的 `flow_token`，回调时会重新确认原登录会话仍有效。Telegram 的已签名 widget assertion 也会登记为一次性凭据，重复回放会被拒绝。
 
 敏感操作使用有效期 1 分钟的 `X-Security-Proof`：
@@ -186,6 +206,9 @@ Proof 同时绑定用户、登录会话、用户鉴权版本、会话版本和 s
 ## 升级注意事项
 
 - 旧 `session` Cookie 不再使用；升级后现有面板登录会失效，用户需要重新登录。
+- Refresh Token 改由前端保存。升级前登录的会话仍持有 HttpOnly 的 `new_api_refresh` Cookie：前端没有保存令牌时，续期请求不带请求体，后端在请求来自控制台的 Origin（后端自己的主机或前端来源）时接受该 Cookie 续期一次，返回新的 Refresh Token，并删除 `new_api_refresh` 和 `new_api_has_session` 两个 Cookie。其它带有这两个 Cookie 的续期、登出和登录响应也会删除它们。
+- 升级时正在进行中的 OAuth 登录（state 创建于升级前，没有 nonce）会失败一次，重新点击登录即可。
+- 前后端分开部署时，OAuth 提供方登记的回调地址要改为前端地址，见“前后端分开部署”。
 - 数据库迁移会新增 `user_sessions`、`auth_flows`、`external_identity_claims` 和 `users.auth_version`，并为已有用户初始化鉴权版本、回填 Telegram 账号唯一归属；若历史数据中同一 Telegram ID 已绑定多个用户，迁移会拒绝继续启动，需先消除歧义。
 - 数据库迁移会为 Session 签发计数和分批清理新增索引；已有 `user_sessions` 很大时应为首次启动预留维护窗口。
 - `user_sessions.previous_refresh_hash` 会从定长 `char(64)` 迁移为 `varchar(64)`。应用会兼容读取历史定长字段留下的空格填充；迁移后的目标结构必须保持幂等，连续启动不应反复执行列类型变更。
