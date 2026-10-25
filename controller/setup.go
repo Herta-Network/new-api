@@ -24,24 +24,41 @@ type SetupRequest struct {
 	DemoSiteEnabled    bool   `json:"DemoSiteEnabled"`
 }
 
+type setupResponse struct {
+	Success bool  `json:"success"`
+	Data    Setup `json:"data"`
+}
+
+// @Summary		获取初始化状态
+// @Description	已初始化时 root_init 为 false、database_type 为空。
+// @Tags			系统
+// @Success		200	{object}	setupResponse
+// @Router			/api/setup [get]
 func GetSetup(c *gin.Context) {
 	setup := Setup{
 		Status: constant.Setup,
 	}
 	if constant.Setup {
-		c.JSON(200, gin.H{
-			"success": true,
-			"data":    setup,
+		c.JSON(200, setupResponse{
+			Success: true,
+			Data:    setup,
 		})
 		return
 	}
 	setup.RootInit = model.RootUserExists()
 	setup.DatabaseType = string(common.DatabaseTypePostgreSQL)
-	c.JSON(200, gin.H{
-		"success": true,
-		"data":    setup,
+	c.JSON(200, setupResponse{
+		Success: true,
+		Data:    setup,
 	})
 }
+
+//	@Summary		初始化系统
+//	@Description	只在系统未初始化时可用。尚无超级管理员时用 username、password 创建 root 账户（用户名最多 12 个字符），并保存自用模式和演示站点模式。
+//	@Tags			系统
+//	@Param			body	body		SetupRequest	true	"超级管理员账户和运营模式"
+//	@Success		200		{object}	common.ApiResponse
+//	@Router			/api/setup [post]
 
 func PostSetup(c *gin.Context) {
 	// Check if setup is already completed
