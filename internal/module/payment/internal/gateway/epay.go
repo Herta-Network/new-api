@@ -17,11 +17,12 @@
 // Pay answers over HTTPS, closing an unpaid order at the gateway) and
 // starts its payments either with the gateway's payment page or with the
 // API (mapi.php, /api/pay/create), which reports a gateway failure before
-// the buyer leaves and can answer with a QR code; an API checkout asks for
-// the payment form its method sets (a payment page, a QR code, or either by
-// the buyer's device) and shows a link answered for a QR code as the QR
-// code; answers read the code, pid and status as numbers or strings; the
-// order name is cut to what the gateway keeps; transport failures of
+// the buyer leaves and can answer with a QR code; an API checkout always asks
+// for the payment page, which the gateway answers before it reaches the
+// payment channel, and shows its link as a QR code when the payment form its
+// method sets (a payment page, a QR code, or either by the buyer's device)
+// asks for one; answers read the code, pid and status as numbers or strings;
+// the order name is cut to what the gateway keeps; transport failures of
 // requests without the merchant key in their URL keep their cause; a
 // payment the gateway turns down is marked refused.
 
@@ -80,14 +81,15 @@ const (
 	EPayCheckoutPage = "page"
 )
 
-// EPay payment forms an API checkout asks for: a payment page (jump), a QR
-// code, or by the buyer's device (auto), which asks a phone for the page and
-// a computer for the QR code. The page is asked for with jump (V1
-// device=jump, V2 method=jump), which the gateway answers with a page alone.
-// A QR code is asked for as the form a computer pays with (V1 device=pc, V2
-// method=web with device=pc), which the gateway's channel picks: mostly a QR
-// code, sometimes a page. V2's method=scan is not one: it charges a payment
-// code the buyer shows the merchant.
+// EPay payment forms of an API checkout: the payment page (jump), its link
+// as a QR code, or by the buyer's device (auto), which opens the page on a
+// phone and shows the QR code on a computer. Whatever the form, the gateway
+// is asked for its payment page (V1 device=jump, V2 method=jump), which a
+// Rainbow EPay gateway answers as soon as it has recorded the order. What a
+// computer pays with (V1 device=pc, V2 method=web with device=pc) is left to
+// the gateway's payment channel, which may answer HTML, never shown, or fail
+// once the order is recorded. V2's method=scan charges a payment code the
+// buyer shows the merchant.
 const (
 	EPayFormJump   = "jump"
 	EPayFormQRCode = "qrcode"
@@ -297,10 +299,10 @@ func (g *epayGateway) StartPayment(ctx context.Context, c Checkout) (*Action, er
 	return &Action{Type: ActionURL, URL: endpoint.String()}, nil
 }
 
-// createV1Payment creates the payment at mapi.php, asking for a payment page
-// (device=jump) or, when qrCode is set, for what a computer pays with
-// (device=pc). The gateway answers with exactly one way to pay: a payment
-// page, a QR code or an app link.
+// createV1Payment creates the payment at mapi.php, asking for the payment
+// page (device=jump), which becomes the buyer's QR code when qrCode is set.
+// The gateway answers with exactly one way to pay: a payment page, a QR code
+// or an app link.
 func (g *epayGateway) createV1Payment(ctx context.Context, params map[string]string, qrCode bool) (*Action, error) {
 	endpoint, err := g.endpoint("mapi.php")
 	if err != nil {
@@ -308,9 +310,6 @@ func (g *epayGateway) createV1Payment(ctx context.Context, params map[string]str
 	}
 	params["pid"] = g.config.PID
 	params["device"] = "jump"
-	if qrCode {
-		params["device"] = "pc"
-	}
 	form := url.Values{}
 	for key, value := range params {
 		if value != "" {
@@ -362,13 +361,11 @@ func (g *epayGateway) createV1Payment(ctx context.Context, params map[string]str
 // link (urlscheme) any link but a script or document one, and a QR code is
 // shown as it is.
 //
-// A QR code is shown whenever qrCode asked for one. A gateway whose channel
-// has no QR code for a computer answers a payment page or an app link
-// instead; that link, checked as above, becomes the QR code, which the buyer
-// scans with a phone. The console also offers to open a page address on the
-// computer itself, so the buyer is never worse off than with the page. Any
-// other answer, such as V2's html, is refused as before: gateway HTML is
-// never shown.
+// A QR code is shown whenever qrCode asked for one: the payment page or app
+// link, checked as above, becomes the QR code, which the buyer scans with a
+// phone. The console also offers to open a page address on the computer
+// itself, so the buyer is never worse off than with the page. Any other
+// answer, such as V2's html, is refused: gateway HTML is never shown.
 func epayPayAction(payType, value string, qrCode bool) (*Action, error) {
 	if value == "" {
 		return nil, errors.New("EPay answered an empty way to pay")

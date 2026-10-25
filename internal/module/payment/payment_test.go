@@ -944,7 +944,7 @@ func TestEPayAPICheckout(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, &Checkout{Type: gateway.ActionQRCode, QRCode: "https://pay.example/pay/T4", OrderNo: order.OrderNo}, checkout,
 		"a computer is shown the payment page as a QR code")
-	assert.Equal(t, "pc", f.epay.lastPayment().Get("device"))
+	assert.Equal(t, "jump", f.epay.lastPayment().Get("device"))
 	resumed, err = ResumeCheckout(ctx, testUser, order.OrderNo, Buyer{UserAgent: phoneUserAgent})
 	require.NoError(t, err)
 	assert.Equal(t, &Checkout{Type: gateway.ActionURL, URL: "https://pay.example/pay/T4", OrderNo: order.OrderNo}, resumed)
