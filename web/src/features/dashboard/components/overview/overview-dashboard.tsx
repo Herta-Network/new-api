@@ -53,6 +53,7 @@ import type { ApiKey } from '@/features/keys/types'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { handleServerError } from '@/lib/handle-server-error'
 import { MOTION_TRANSITION } from '@/lib/motion'
+import { apiOrigin } from '@/lib/runtime-config'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -138,13 +139,8 @@ function saveSetupGuideExpanded(expanded: boolean): void {
   )
 }
 
-function getCurrentOrigin(): string {
-  if (typeof window === 'undefined') return ''
-  return window.location.origin
-}
-
 function normalizeEndpoint(sourceUrl?: string): string {
-  const fallback = `${getCurrentOrigin()}/v1/chat/completions`
+  const fallback = `${apiOrigin()}/v1/chat/completions`
   const trimmed = sourceUrl?.trim()
   if (!trimmed) return fallback
 

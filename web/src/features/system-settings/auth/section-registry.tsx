@@ -47,7 +47,9 @@ const AUTH_SECTIONS = [
     titleKey: 'OAuth Integrations',
     build: (settings: AuthSettings) => (
       <OAuthSection
-        serverAddress={settings.ServerAddress}
+        serverAddress={
+          settings.FrontendAddress.trim() || settings.ServerAddress
+        }
         defaultValues={{
           GitHubOAuthEnabled: settings.GitHubOAuthEnabled,
           GitHubClientId: settings.GitHubClientId,
@@ -119,7 +121,11 @@ const AUTH_SECTIONS = [
     id: 'custom-oauth',
     titleKey: 'Custom OAuth',
     build: (settings: AuthSettings) => (
-      <CustomOAuthSection serverAddress={settings.ServerAddress} />
+      <CustomOAuthSection
+        serverAddress={
+          settings.FrontendAddress.trim() || settings.ServerAddress
+        }
+      />
     ),
   },
 ] as const

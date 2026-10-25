@@ -3,11 +3,16 @@ package middleware
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"path"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -105,5 +110,57 @@ func ServeFrontendFiles(frontendFS static.ServeFileSystem) gin.HandlerFunc {
 		if c.Request.Method != http.MethodHead {
 			_, _ = c.Writer.Write(file.body)
 		}
+	}
+}
+
+// consoleScriptSources are where console scripts may come from: the console's
+// own origin and the third parties it loads, the Telegram login widget,
+// Cloudflare Turnstile and Stripe.js. The build emits no inline script.
+const consoleScriptSources = "'self' https://telegram.org https://challenges.cloudflare.com https://js.stripe.com https://*.js.stripe.com"
+
+// consoleOtherDirectives complete the policy. Components inject styles, so
+// inline styles stay allowed. Images, media, frames and connections may reach
+// any host: administrators configure logos, home and about page iframes,
+// chat links, OIDC discovery and API addresses, and a console served apart
+// calls the backend on another origin. The page cannot be framed by other
+// sites, carry plugins, change its base URL, or post forms elsewhere.
+const consoleOtherDirectives = "style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; font-src 'self' data:; connect-src * data: blob:; frame-src *; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'"
+
+// ConsoleContentSecurityPolicy is the Content-Security-Policy of the console
+// page. A console served apart from the backend should send it from its own
+// host; the backend sends it, extended by ConsolePage, with the console it
+// serves.
+const ConsoleContentSecurityPolicy = "default-src 'self'; script-src " + consoleScriptSources + "; " + consoleOtherDirectives
+
+var htmlScriptPattern = regexp.MustCompile(`(?is)<script\b([^>]*)>(.*?)</script\s*>`)
+var htmlSrcAttributePattern = regexp.MustCompile(`(?is)\bsrc\s*=\s*["']([^"']+)["']`)
+
+// ConsolePage serves the console's index page for every path the frontend
+// routes: never cached, with ConsoleContentSecurityPolicy extended for the
+// analytics the backend injected into indexPage, its inline scripts by hash
+// and its external scripts by origin.
+func ConsolePage(indexPage []byte) gin.HandlerFunc {
+	sources := strings.Fields(consoleScriptSources)
+	for _, script := range htmlScriptPattern.FindAllSubmatch(indexPage, -1) {
+		source := ""
+		if src := htmlSrcAttributePattern.FindSubmatch(script[1]); src != nil {
+			parsed, err := url.Parse(string(src[1]))
+			if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
+				continue
+			}
+			source = parsed.Scheme + "://" + parsed.Host
+		} else {
+			sum := sha256.Sum256(script[2])
+			source = "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+		}
+		if !slices.Contains(sources, source) {
+			sources = append(sources, source)
+		}
+	}
+	policy := "default-src 'self'; script-src " + strings.Join(sources, " ") + "; " + consoleOtherDirectives
+	return func(c *gin.Context) {
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Content-Security-Policy", policy)
+		c.Data(http.StatusOK, "text/html; charset=utf-8", indexPage)
 	}
 }

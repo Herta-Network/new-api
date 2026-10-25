@@ -13,6 +13,8 @@ import (
 )
 
 func SetRouter(router *gin.Engine, assets WebAssets) {
+	// Registered before every route so preflights, which match none, get it too.
+	router.Use(middleware.CORS())
 	SetApiRouter(router)
 	SetDashboardRouter(router)
 	SetRelayRouter(router)

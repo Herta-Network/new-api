@@ -39,6 +39,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useStatus } from '@/hooks/use-status'
+import { apiOrigin } from '@/lib/runtime-config'
 
 import {
   buildRateLimits,
@@ -457,8 +458,7 @@ function CodeSamplesSection(props: {
     if (candidate && typeof candidate === 'string') {
       return candidate.replace(/\/$/, '')
     }
-    if (typeof window !== 'undefined') return window.location.origin
-    return 'https://api.example.com'
+    return apiOrigin() || 'https://api.example.com'
   }, [status])
 
   const endpoints = useMemo(() => {

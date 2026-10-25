@@ -195,7 +195,7 @@ git clone https://github.com/QuantumNous/new-api.git
 cd new-api
 ```
 
-起動前に `docker-compose.yml` を編集し、データベースと Redis のサービスおよび接続文字列にあるサンプルパスワードを変更します。永続的に使うランダムな `SESSION_SECRET` も設定してください（`openssl rand -hex 32` で生成可能）。HTTPS の管理画面には `SESSION_COOKIE_SECURE=true` を設定し、公開 HTTPS オリジンを `SESSION_COOKIE_TRUSTED_URL` に正確に指定します。
+起動前に `docker-compose.yml` を編集し、データベースと Redis のサービスおよび接続文字列にあるサンプルパスワードを変更します。永続的に使うランダムな `SESSION_SECRET` も設定してください（`openssl rand -hex 32` で生成可能）。管理画面をバックエンドと別のドメインで配信する場合は、[docs/authentication.md](docs/authentication.md) のフロントエンドとバックエンドの分離デプロイの節を参照してください。
 
 ```bash
 docker compose up -d
@@ -222,8 +222,7 @@ SQLite と MySQL には対応しておらず、それらからの移行ツール
 | `REDIS_CONN_STRING` | Redis 接続文字列 |
 | `SESSION_SECRET` | 永続的な認証用シークレット。全ノードで同じ値を使用 |
 | `CRYPTO_SECRET` | 既定は `SESSION_SECRET`。Redis を共有するノードは同じ実効値を使用 |
-| `SESSION_COOKIE_SECURE` | HTTPS の管理画面では `true`。Secure な更新用 Cookie と、更新・ログアウト時の厳格なオリジン検証を有効化 |
-| `SESSION_COOKIE_TRUSTED_URL` | Secure モードでは必須。パスやワイルドカードを含まない正確な HTTPS オリジンをカンマ区切りで指定。ローカル HTTP では未設定にする |
+| `FRONTEND_ORIGINS` | 管理画面をバックエンドと別のオリジンで配信する場合のみ設定。管理画面の API が CORS で許可する正確なオリジンをカンマ区切りで指定（パスやワイルドカード不可）。廃止された `SESSION_COOKIE_SECURE` と `SESSION_COOKIE_TRUSTED_URL` の後継 |
 | `TRUSTED_PROXIES` | 信頼するリバースプロキシの IP/CIDR、または `none`。実際のネットワークに合わせて明示的に設定 |
 
 詳細は[環境変数の例](./.env.example)、[環境変数リファレンス](https://docs.newapi.ai/ja/docs/installation/config-maintenance/environment-variables)、[認証とセッションの説明](./docs/authentication.md)を参照してください。コンテナの変数は Compose の `environment` または `env_file` で渡します。`.env.example` のコピーだけではコンテナに反映されません。

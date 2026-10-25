@@ -31,9 +31,9 @@ var ErrPasskeyRPIDUnavailable = errors.New("This Passkey domain is not available
 // mutable settings pointer with a WebAuthn ceremony.
 func PasskeySettingsSnapshot() PasskeySettings {
 	common.OptionMapRWMutex.RLock()
-	settings, serverAddress := defaultPasskeySettings, ServerAddress
+	settings, consoleAddress := defaultPasskeySettings, ConsoleAddress()
 	common.OptionMapRWMutex.RUnlock()
-	return settings.WithDefaults(serverAddress)
+	return settings.WithDefaults(consoleAddress)
 }
 
 // EffectiveRPID preserves the existing default and port handling for settings

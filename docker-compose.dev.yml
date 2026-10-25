@@ -31,11 +31,8 @@ services:
       - REDIS_CONN_STRING=redis://redis
       - TZ=Asia/Shanghai
       - BATCH_UPDATE_ENABLED=true
-      # Local HTTP dev mode: keep Secure=false and leave TRUSTED_URL unset. This disables the refresh/logout OriginGuard so the :5173 -> :3000 dev proxy works.
-      - SESSION_COOKIE_SECURE=false
-      # For HTTPS only: set Secure=true and list every exact trusted HTTPS browser Origin. This does not configure relay CORS.
-      # - SESSION_COOKIE_SECURE=true
-      # - SESSION_COOKIE_TRUSTED_URL=https://example.com,https://admin.example.com
+      # Only when the console is served from another origin than this backend: the console origins /api admits in CORS.
+      # - FRONTEND_ORIGINS=https://app.example.com
     depends_on:
       redis:
         condition: service_started

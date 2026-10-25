@@ -45,6 +45,7 @@ const STATUS_RELATED_KEYS = new Set([
   'payment_setting.exchange_rate_overrides',
   'oidc.display_name',
   'ServerAddress',
+  'FrontendAddress',
   'passkey.enabled',
   'passkey.rp_id',
   'passkey.legacy_rp_ids',

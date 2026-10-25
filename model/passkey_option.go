@@ -42,49 +42,52 @@ func (e *PasskeyDomainRemovalError) Error() string {
 }
 func (e *PasskeyDomainRemovalError) Unwrap() error { return ErrPasskeyDomainRemovalConfirmation }
 
-// ServerAddress and origins participate because either can change an implicit RP ID.
+// The console address (FrontendAddress, else ServerAddress) and origins
+// participate because either can change an implicit RP ID.
 func IsPasskeyDomainOption(key string) bool {
-	return key == "passkey.rp_id" || key == "passkey.legacy_rp_ids" || key == "passkey.origins" || key == "ServerAddress"
+	return key == "passkey.rp_id" || key == "passkey.legacy_rp_ids" || key == "passkey.origins" || key == "ServerAddress" || key == "FrontendAddress"
 }
 
 // lockPasskeyDomainSettings serializes trust changes and credential writes across
 // nodes. Callers also hold passkeyOptionMutex for local cache ordering.
 // Always acquire these option rows before any user/session/credential row locks.
-func lockPasskeyDomainSettings(tx *gorm.DB) (system_setting.PasskeySettings, string, error) {
+func lockPasskeyDomainSettings(tx *gorm.DB) (settings system_setting.PasskeySettings, serverAddress, frontendAddress string, err error) {
 	common.OptionMapRWMutex.RLock()
-	settings, serverAddress := *system_setting.GetPasskeySettings(), system_setting.ServerAddress
+	settings, serverAddress, frontendAddress = *system_setting.GetPasskeySettings(), system_setting.ServerAddress, system_setting.FrontendAddress
 	common.OptionMapRWMutex.RUnlock()
 	rows := []Option{
 		{Key: "ServerAddress", Value: serverAddress},
+		{Key: "FrontendAddress", Value: frontendAddress},
 		{Key: "passkey.legacy_rp_ids", Value: settings.LegacyRPIDs},
 		{Key: "passkey.origins", Value: settings.Origins},
 		{Key: "passkey.rp_id", Value: settings.RPID},
 	}
 	// Create missing rows first so every row below exists to be locked.
 	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error; err != nil {
-		return settings, serverAddress, err
+		return settings, serverAddress, frontendAddress, err
 	}
 	for i := range rows {
 		if err := lockForUpdate(tx).Where(&Option{Key: rows[i].Key}).First(&rows[i]).Error; err != nil {
-			return settings, serverAddress, err
+			return settings, serverAddress, frontendAddress, err
 		}
 	}
-	serverAddress = rows[0].Value
-	settings.LegacyRPIDs, settings.Origins, settings.RPID = rows[1].Value, rows[2].Value, rows[3].Value
-	return settings, serverAddress, nil
+	serverAddress, frontendAddress = rows[0].Value, rows[1].Value
+	settings.LegacyRPIDs, settings.Origins, settings.RPID = rows[2].Value, rows[3].Value, rows[4].Value
+	return settings, serverAddress, frontendAddress, nil
 }
 
 func validatePasskeyRPIDWithTx(tx *gorm.DB, rpID string) error {
-	settings, serverAddress, err := lockPasskeyDomainSettings(tx)
+	settings, serverAddress, frontendAddress, err := lockPasskeyDomainSettings(tx)
 	if err != nil {
 		return err
 	}
+	consoleAddress := system_setting.ConsoleAddressOf(frontendAddress, serverAddress)
 	// Preserve the existing request-derived default only when no domain or
 	// origin has ever been configured. Finish still checks the signed origin.
-	if settings.RPID == "" && settings.LegacyRPIDs == "" && settings.Origins == "" && serverAddress == "" {
+	if settings.RPID == "" && settings.LegacyRPIDs == "" && settings.Origins == "" && consoleAddress == "" {
 		return nil
 	}
-	if !slices.Contains(settings.WithDefaults(serverAddress).RelyingPartyIDs(), rpID) {
+	if !slices.Contains(settings.WithDefaults(consoleAddress).RelyingPartyIDs(), rpID) {
 		return system_setting.ErrPasskeyRPIDUnavailable
 	}
 	return nil
@@ -104,15 +107,20 @@ func UpdatePasskeyDomainOptions(values map[string]string, preview bool, confirma
 	}
 	var change *PasskeyDomainChange
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		settings, serverAddress, err := lockPasskeyDomainSettings(tx)
+		settings, serverAddress, frontendAddress, err := lockPasskeyDomainSettings(tx)
 		if err != nil {
 			return err
 		}
-		previous := settings.WithDefaults(serverAddress)
-		before := [4]string{serverAddress, settings.RPID, settings.LegacyRPIDs, settings.Origins}
+		previousConsoleAddress := system_setting.ConsoleAddressOf(frontendAddress, serverAddress)
+		previous := settings.WithDefaults(previousConsoleAddress)
+		before := [5]string{serverAddress, frontendAddress, settings.RPID, settings.LegacyRPIDs, settings.Origins}
 		if value, changed := values["ServerAddress"]; changed {
 			serverAddress = value
 		}
+		if value, changed := values["FrontendAddress"]; changed {
+			frontendAddress = value
+		}
+		consoleAddress := system_setting.ConsoleAddressOf(frontendAddress, serverAddress)
 		if value, changed := values["passkey.origins"]; changed {
 			origins := []string{}
 			for _, origin := range strings.FieldsFunc(value, func(c rune) bool { return c == ',' || c == '\n' || c == '\r' }) {
@@ -122,11 +130,11 @@ func UpdatePasskeyDomainOptions(values map[string]string, preview bool, confirma
 				}
 			}
 			settings.Origins = strings.Join(origins, ",")
-		} else if before[0] != serverAddress && (settings.Origins == "" || settings.Origins == "[]") {
+		} else if previousConsoleAddress != consoleAddress && (settings.Origins == "" || settings.Origins == "[]") {
 			// Retain the previously trusted implicit website as well as the new
 			// default, so retaining its RP ID does not leave its keys unusable.
 			origins := []string{}
-			for _, origin := range []string{previous.Origins, settings.WithDefaults(serverAddress).Origins} {
+			for _, origin := range []string{previous.Origins, settings.WithDefaults(consoleAddress).Origins} {
 				if origin != "" && !slices.Contains(origins, origin) {
 					origins = append(origins, origin)
 				}
@@ -136,7 +144,7 @@ func UpdatePasskeyDomainOptions(values map[string]string, preview bool, confirma
 		if value, changed := values["passkey.rp_id"]; changed {
 			settings.RPID = strings.TrimSpace(value)
 			if settings.RPID != "" {
-				settings.RPID, err = system_setting.NormalizePasskeyRPID(settings.RPID, settings.WithDefaults(serverAddress).Origins)
+				settings.RPID, err = system_setting.NormalizePasskeyRPID(settings.RPID, settings.WithDefaults(consoleAddress).Origins)
 				if err != nil {
 					return err
 				}
@@ -145,7 +153,7 @@ func UpdatePasskeyDomainOptions(values map[string]string, preview bool, confirma
 		if value, changed := values["passkey.legacy_rp_ids"]; changed {
 			settings.LegacyRPIDs = value
 		}
-		effective := settings.WithDefaults(serverAddress)
+		effective := settings.WithDefaults(consoleAddress)
 		legacy, err := system_setting.ParsePasskeyRPIDs(settings.LegacyRPIDs, effective.Origins)
 		if err != nil {
 			return err
@@ -161,8 +169,9 @@ func UpdatePasskeyDomainOptions(values map[string]string, preview bool, confirma
 		if _, err := system_setting.ParsePasskeyRPIDs(settings.LegacyRPIDs, effective.Origins); err != nil {
 			return err
 		}
-		// ServerAddress also supports non-WebAuthn deployments (for example an
-		// IP during initial setup). Restrict explicit RP IDs, not that URL.
+		// The console address also supports non-WebAuthn deployments (for
+		// example an IP during initial setup). Restrict explicit RP IDs, not
+		// that URL.
 		if settings.RPID != "" {
 			if _, err := system_setting.NormalizePasskeyRPID(nextRPID, effective.Origins); err != nil {
 				return err
@@ -172,7 +181,7 @@ func UpdatePasskeyDomainOptions(values map[string]string, preview bool, confirma
 			RPID: settings.RPID, LegacyRPIDs: settings.LegacyRPIDs, Origins: settings.Origins,
 			PreviousRPID: oldRPID, EffectiveRPID: nextRPID, RemovedRPIDs: []string{},
 		}
-		nextIDs := settings.WithDefaults(serverAddress).RelyingPartyIDs()
+		nextIDs := settings.WithDefaults(consoleAddress).RelyingPartyIDs()
 		for _, id := range previous.RelyingPartyIDs() {
 			if !slices.Contains(nextIDs, id) {
 				change.RemovedRPIDs = append(change.RemovedRPIDs, id)
@@ -209,11 +218,11 @@ func UpdatePasskeyDomainOptions(values map[string]string, preview bool, confirma
 		// This is an intent/freshness binding, not an authentication credential.
 		// Root authorization remains mandatory. No map iteration affects its hash.
 		payload, err := common.Marshal(struct {
-			Before         [4]string
-			After          [4]string
+			Before         [5]string
+			After          [5]string
 			Removed        []string
 			Known, Unknown int64
-		}{before, [4]string{serverAddress, settings.RPID, settings.LegacyRPIDs, settings.Origins}, change.RemovedRPIDs, change.AffectedCredentials, change.UnknownCredentials})
+		}{before, [5]string{serverAddress, frontendAddress, settings.RPID, settings.LegacyRPIDs, settings.Origins}, change.RemovedRPIDs, change.AffectedCredentials, change.UnknownCredentials})
 		if err != nil {
 			return err
 		}
@@ -225,7 +234,7 @@ func UpdatePasskeyDomainOptions(values map[string]string, preview bool, confirma
 			return &PasskeyDomainRemovalError{Change: change}
 		}
 		values["passkey.rp_id"], values["passkey.legacy_rp_ids"], values["passkey.origins"] = settings.RPID, settings.LegacyRPIDs, settings.Origins
-		values["ServerAddress"] = serverAddress
+		values["ServerAddress"], values["FrontendAddress"] = serverAddress, frontendAddress
 		keys := slices.Sorted(maps.Keys(values))
 		for _, key := range keys {
 			if err := tx.Save(&Option{Key: key, Value: values[key]}).Error; err != nil {
@@ -257,12 +266,15 @@ func applyPasskeyDomainOptions(values map[string]string) {
 	if common.OptionMap == nil {
 		common.OptionMap = make(map[string]string)
 	}
-	for _, key := range []string{"ServerAddress", "passkey.legacy_rp_ids", "passkey.origins", "passkey.rp_id"} {
+	for _, key := range []string{"ServerAddress", "FrontendAddress", "passkey.legacy_rp_ids", "passkey.origins", "passkey.rp_id"} {
 		if value, ok := values[key]; ok {
 			common.OptionMap[key] = value
-			if key == "ServerAddress" {
+			switch key {
+			case "ServerAddress":
 				system_setting.ServerAddress = value
-			} else {
+			case "FrontendAddress":
+				system_setting.FrontendAddress = value
+			default:
 				handleConfigUpdate(key, value)
 			}
 		}

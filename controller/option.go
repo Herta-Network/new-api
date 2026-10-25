@@ -194,7 +194,7 @@ func writePasskeyDomainSettingsError(c *gin.Context, err error) {
 }
 
 // @Summary		更新系统设置
-// @Description	一次更新一个设置项，value 可以是字符串、数字或布尔值，保存为字符串。Passkey 域名相关项（passkey.rp_id、passkey.legacy_rp_ids、passkey.origins、ServerAddress）成功时 data 是变更影响，移除的域名仍有 Passkey 时返回 409，需改用 PUT /api/option/passkey/domains 确认；其他项没有 data。
+// @Description	一次更新一个设置项，value 可以是字符串、数字或布尔值，保存为字符串。Passkey 域名相关项（passkey.rp_id、passkey.legacy_rp_ids、passkey.origins、ServerAddress、FrontendAddress）成功时 data 是变更影响，移除的域名仍有 Passkey 时返回 409，需改用 PUT /api/option/passkey/domains 确认；其他项没有 data。
 // @Tags			系统设置
 // @Param			body	body		OptionUpdateRequest	true	"设置项"
 // @Success		200		{object}	common.ApiResponse{data=model.PasskeyDomainChange}

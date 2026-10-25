@@ -138,7 +138,6 @@ func TestSecurityAccountDeletionAcceptsEitherFactorAndRevokesSessions(t *testing
 			var result securityEnrollmentResponse
 			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
 			require.True(t, result.Success, response.Body.String())
-			assert.Contains(t, response.Header().Get("Set-Cookie"), "Max-Age=0")
 			assert.Contains(t, response.Header().Get("Cache-Control"), "no-store")
 			var deleted model.User
 			require.NoError(t, model.DB.Unscoped().First(&deleted, user.Id).Error)

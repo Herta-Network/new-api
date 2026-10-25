@@ -1300,7 +1300,7 @@ func TestSecurityEnrollmentOAuthVerificationNeverChangesLoginOrBindings(t *testi
 			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
 			assert.Equal(t, scenario == "success", body.Success, body.Message)
 			assert.NotContains(t, response.Body.String(), "access_token")
-			assert.Empty(t, response.Header().Values("Set-Cookie"))
+			assert.NotContains(t, response.Body.String(), "refresh_token")
 			if scenario == "success" {
 				var proof service.SecurityProof
 				require.NoError(t, common.Unmarshal(body.Data, &proof))

@@ -7,7 +7,7 @@
     ],
     "swagger": "2.0",
     "info": {
-        "description": "new-api 控制台和管理后台使用的接口，路径都在 /api 下。\n\n响应：除另有说明外，响应体是 common.ApiResponse：success 表示是否成功，message 是提示文本，data 是数据。业务失败通常仍返回 HTTP 200，success 为 false；鉴权失败返回 401 或 403，并带 code（如 AUTH_UNAUTHORIZED）。\n\n鉴权：Authorization: Bearer \u003c访问令牌\u003e。访问令牌是登录得到的 15 分钟 JWT（用 POST /api/user/auth/refresh 凭 new_api_refresh Cookie 续期），或在安全设置里创建的个人访问令牌（PAT）。UserAuth、AdminAuth、RootAuth 是同一个请求头，区别在要求的角色。删除账户、绑定账号等敏感操作还要带 X-Security-Proof，先用 POST /api/verify 完成二次验证取得。",
+        "description": "new-api 控制台和管理后台使用的接口，路径都在 /api 下。\n\n响应：除另有说明外，响应体是 common.ApiResponse：success 表示是否成功，message 是提示文本，data 是数据。业务失败通常仍返回 HTTP 200，success 为 false；鉴权失败返回 401 或 403，并带 code（如 AUTH_UNAUTHORIZED）。\n\n鉴权：Authorization: Bearer \u003c访问令牌\u003e。访问令牌是登录得到的 15 分钟 JWT（用 POST /api/user/auth/refresh 凭登录时返回的 refresh_token 续期，每次续期都换发新的 refresh_token），或在安全设置里创建的个人访问令牌（PAT）。UserAuth、AdminAuth、RootAuth 是同一个请求头，区别在要求的角色。删除账户、绑定账号等敏感操作还要带 X-Security-Proof，先用 POST /api/verify 完成二次验证取得。\n\n跨域：前后端分开部署时，/api 和 /pg 只对环境变量 FRONTEND_ORIGINS 和系统设置「前端地址」里的来源返回 CORS 头，不带凭证；/api/usage/token 和 /api/log/token 与 AI 接口一样允许任意来源。",
         "title": "new-api 管理接口",
         "contact": {},
         "version": "1.0"
@@ -5816,14 +5816,14 @@
         },
         "/api/oauth/state": {
             "post": {
-                "description": "flow_token 用作 OAuth 授权请求的 state，10 分钟内有效。intent 为 login、bind 或 verify：bind 和 verify 需要已登录的浏览器会话（Authorization: Bearer），bind 还需要 scope 为 account.binding.bind 的 X-Security-Proof，其 context 为 {provider}；verify 要提交 scope 和 context。aff 只用于 login。",
+                "description": "flow_token 用作 OAuth 授权请求的 state，10 分钟内有效。intent 为 login、bind 或 verify：login 必须提交 nonce（32 到 128 个字符的随机值，由发起登录的浏览器保存，回调时放在 X-OAuth-Nonce 请求头里交回）；bind 和 verify 需要已登录的浏览器会话（Authorization: Bearer），bind 还需要 scope 为 account.binding.bind 的 X-Security-Proof，其 context 为 {provider}；verify 要提交 scope 和 context。aff 只用于 login。",
                 "tags": [
                     "第三方登录"
                 ],
                 "summary": "创建 OAuth state",
                 "parameters": [
                     {
-                        "description": "provider、intent，以及 aff 或 scope 和 context",
+                        "description": "provider、intent，login 时的 nonce 和 aff，或 verify 时的 scope 和 context",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -5927,7 +5927,7 @@
         },
         "/api/oauth/wechat": {
             "get": {
-                "description": "用公众号验证码登录，未绑定的微信在开放注册时自动注册。成功时 data 为访问令牌、登录会话和用户，并写入 new_api_refresh Cookie；账户需要二次登录验证时 data 改为 {require_verification: true, flow_token, expires_at, methods}。",
+                "description": "用公众号验证码登录，未绑定的微信在开放注册时自动注册。成功时 data 为访问令牌、refresh_token、登录会话和用户；账户需要二次登录验证时 data 改为 {require_verification: true, flow_token, expires_at, methods}。",
                 "tags": [
                     "第三方登录"
                 ],
@@ -6011,7 +6011,7 @@
         },
         "/api/oauth/{provider}": {
             "get": {
-                "description": "按 state 对应流程的 intent 处理：login 时 data 为访问令牌、登录会话和用户，并写入 new_api_refresh Cookie，账户需要二次登录验证时 data 改为 {require_verification: true, flow_token, expires_at, methods}；bind 时 data 为 {action: \"bind\", notification_warning}；verify 时 data 为 service.SecurityProof。\nbind 和 verify 必须由发起流程的浏览器会话调用（Authorization: Bearer）。提供方返回 error 时 success 为 false，message 为其 error_description。",
+                "description": "按 state 对应流程的 intent 处理：login 时 data 为访问令牌、refresh_token、登录会话和用户，账户需要二次登录验证时 data 改为 {require_verification: true, flow_token, expires_at, methods}；bind 时 data 为 {action: \"bind\", notification_warning}；verify 时 data 为 service.SecurityProof。\nlogin 须在 X-OAuth-Nonce 请求头里交回创建 state 时提交的 nonce，不一致时返回 403。bind 和 verify 必须由发起流程的浏览器会话调用（Authorization: Bearer）。提供方返回 error 时 success 为 false，message 为其 error_description。",
                 "tags": [
                     "第三方登录"
                 ],
@@ -6030,6 +6030,12 @@
                         "name": "state",
                         "in": "query",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "login 时必填：创建 state 时提交的 nonce",
+                        "name": "X-OAuth-Nonce",
+                        "in": "header"
                     },
                     {
                         "type": "string",
@@ -6126,7 +6132,7 @@
                         "RootAuth": []
                     }
                 ],
-                "description": "一次更新一个设置项，value 可以是字符串、数字或布尔值，保存为字符串。Passkey 域名相关项（passkey.rp_id、passkey.legacy_rp_ids、passkey.origins、ServerAddress）成功时 data 是变更影响，移除的域名仍有 Passkey 时返回 409，需改用 PUT /api/option/passkey/domains 确认；其他项没有 data。",
+                "description": "一次更新一个设置项，value 可以是字符串、数字或布尔值，保存为字符串。Passkey 域名相关项（passkey.rp_id、passkey.legacy_rp_ids、passkey.origins、ServerAddress、FrontendAddress）成功时 data 是变更影响，移除的域名仍有 Passkey 时返回 409，需改用 PUT /api/option/passkey/domains 确认；其他项没有 data。",
                 "tags": [
                     "系统设置"
                 ],
@@ -12298,7 +12304,7 @@
         },
         "/api/user/auth/logout": {
             "post": {
-                "description": "撤销 new_api_refresh Cookie 所属的登录会话并清除 Cookie；Cookie 安全模式下还校验请求的 Origin 或 Referer。\n同时带有效的 Authorization: Bearer \u003c访问令牌\u003e 时撤销该令牌所属会话，data 为被撤销的 sid 和是否清除了 Cookie；否则不返回 data。X-Auth-Session 与 Cookie 或访问令牌的会话不一致时返回 409 AUTH_SESSION_MISMATCH。",
+                "description": "撤销 Authorization: Bearer \u003c访问令牌\u003e 所属的登录会话；没有有效访问令牌时改为撤销请求体里 refresh_token 所属的会话。前端随后应删除自己保存的令牌。\n撤销了访问令牌所属会话时 data 为被撤销的 sid，否则不返回 data。X-Auth-Session 与访问令牌或 refresh_token 的会话不一致时返回 409 AUTH_SESSION_MISMATCH。升级前登录的会话也可以凭旧的 new_api_refresh Cookie 登出（仅限控制台来源的请求），响应会删除该 Cookie。",
                 "tags": [
                     "认证"
                 ],
@@ -12309,6 +12315,14 @@
                         "description": "客户端内存中的会话 sid",
                         "name": "X-Auth-Session",
                         "in": "header"
+                    },
+                    {
+                        "description": "refresh_token",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/controller.authRefreshRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -12341,7 +12355,7 @@
         },
         "/api/user/auth/refresh": {
             "post": {
-                "description": "凭 new_api_refresh Cookie（HttpOnly、SameSite=Strict、Path=/api/user/auth）轮换 Refresh Token 并签发新的访问令牌；Cookie 安全模式下还校验请求的 Origin 或 Referer。\nX-Auth-Session 与 Cookie 所属会话不一致时返回 409 AUTH_SESSION_MISMATCH；Refresh Token 无效或会话已撤销时返回 401 并清除 Cookie。",
+                "description": "用请求体里的 refresh_token 换取新的访问令牌和新的 refresh_token；旧的 refresh_token 随即失效，30 秒后再次使用会撤销整个会话。前端须保存返回的 refresh_token 供下次续期。\n升级前登录的会话可以不带请求体，改用旧的 new_api_refresh Cookie 续期一次（仅限控制台来源的请求），响应会删除该 Cookie。X-Auth-Session 与 refresh_token 所属会话不一致时返回 409 AUTH_SESSION_MISMATCH；refresh_token 无效或会话已撤销时返回 401。",
                 "tags": [
                     "认证"
                 ],
@@ -12352,6 +12366,14 @@
                         "description": "客户端内存中的会话 sid",
                         "name": "X-Auth-Session",
                         "in": "header"
+                    },
+                    {
+                        "description": "refresh_token",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/controller.authRefreshRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -12490,7 +12512,7 @@
         },
         "/api/user/login": {
             "post": {
-                "description": "username 可以是用户名或邮箱；开启登录密码加密时提交 password_encrypted 和 encryption_key_id 代替 password。成功时 data 为访问令牌、登录会话和用户，并写入 new_api_refresh Cookie。\n账户需要二次登录验证时 data 改为 {require_verification: true, flow_token, expires_at, methods}，再用 POST /api/user/login/verify 或 /api/user/login/passkey/* 完成登录。",
+                "description": "username 可以是用户名或邮箱；开启登录密码加密时提交 password_encrypted 和 encryption_key_id 代替 password。成功时 data 为访问令牌、refresh_token、登录会话和用户。\n账户需要二次登录验证时 data 改为 {require_verification: true, flow_token, expires_at, methods}，再用 POST /api/user/login/verify 或 /api/user/login/passkey/* 完成登录。",
                 "tags": [
                     "认证"
                 ],
@@ -12536,7 +12558,7 @@
         },
         "/api/user/login/2fa": {
             "post": {
-                "description": "与 POST /api/user/login/verify 相同：提交登录返回的 flow_token 和 TOTP 验证码或备用码，成功后返回访问令牌、登录会话和用户，并写入 new_api_refresh Cookie。",
+                "description": "与 POST /api/user/login/verify 相同：提交登录返回的 flow_token 和 TOTP 验证码或备用码，成功后返回访问令牌、refresh_token、登录会话和用户。",
                 "tags": [
                     "认证"
                 ],
@@ -12645,7 +12667,7 @@
         },
         "/api/user/login/passkey/finish": {
             "post": {
-                "description": "成功后 data 为访问令牌、登录会话和用户，并写入 new_api_refresh Cookie。",
+                "description": "成功后 data 为访问令牌、refresh_token、登录会话和用户。",
                 "tags": [
                     "认证"
                 ],
@@ -12685,7 +12707,7 @@
         },
         "/api/user/login/verify": {
             "post": {
-                "description": "提交登录返回的 flow_token 和 TOTP 验证码或备用码；method 只能为 2fa 或留空。成功后 data 为访问令牌、登录会话和用户，并写入 new_api_refresh Cookie。",
+                "description": "提交登录返回的 flow_token 和 TOTP 验证码或备用码；method 只能为 2fa 或留空。成功后 data 为访问令牌、refresh_token、登录会话和用户。",
                 "tags": [
                     "认证"
                 ],
@@ -13004,7 +13026,7 @@
         },
         "/api/user/passkey/login/finish": {
             "post": {
-                "description": "成功后直接签发会话，不再要求二次登录验证：data 为访问令牌、登录会话和用户，并写入 new_api_refresh Cookie。",
+                "description": "成功后直接签发会话，不再要求二次登录验证：data 为访问令牌、refresh_token、登录会话和用户。",
                 "tags": [
                     "认证"
                 ],
@@ -13470,7 +13492,7 @@
                         "UserAuth": []
                     }
                 ],
-                "description": "删除当前账户并清除 Refresh Cookie，data 为空对象；需要 scope 为 account.delete 的 X-Security-Proof，超级管理员不能注销。",
+                "description": "删除当前账户，data 为空对象，前端随后应删除自己保存的令牌；需要 scope 为 account.delete 的 X-Security-Proof，超级管理员不能注销。",
                 "tags": [
                     "个人"
                 ],
@@ -13611,7 +13633,7 @@
                         "UserAuth": []
                     }
                 ],
-                "description": "可以撤销当前会话；撤销的是 Refresh Cookie 所属会话时同时清除 Cookie。仅限浏览器登录会话，个人访问令牌调用返回 403 AUTH_SESSION_REQUIRED。",
+                "description": "可以撤销当前会话，此时 data.current 为 true，前端应删除自己保存的令牌。仅限浏览器登录会话，个人访问令牌调用返回 403 AUTH_SESSION_REQUIRED。",
                 "tags": [
                     "登录会话"
                 ],
@@ -16445,6 +16467,14 @@
                 }
             }
         },
+        "controller.authRefreshRequest": {
+            "type": "object",
+            "properties": {
+                "refresh_token": {
+                    "type": "string"
+                }
+            }
+        },
         "controller.backupCodesResult": {
             "type": "object",
             "properties": {
@@ -16459,6 +16489,10 @@
                     "items": {
                         "type": "string"
                     }
+                },
+                "refresh_token": {
+                    "description": "RefreshToken is present when a session is created or refreshed. The\nconsole keeps it and sends it to POST /api/user/auth/refresh, which\nreturns its replacement; a refresh token used again after that revokes\nthe session.",
+                    "type": "string"
                 },
                 "session": {
                     "$ref": "#/definitions/service.LoginSessionView"
@@ -17471,6 +17505,10 @@
                 "access_token": {
                     "type": "string"
                 },
+                "refresh_token": {
+                    "description": "RefreshToken is present when a session is created or refreshed. The\nconsole keeps it and sends it to POST /api/user/auth/refresh, which\nreturns its replacement; a refresh token used again after that revokes\nthe session.",
+                    "type": "string"
+                },
                 "session": {
                     "$ref": "#/definitions/service.LoginSessionView"
                 },
@@ -17499,9 +17537,6 @@
         "controller.logoutResult": {
             "type": "object",
             "properties": {
-                "cookie_cleared": {
-                    "type": "boolean"
-                },
                 "revoked_sid": {
                     "type": "string"
                 }
@@ -17667,6 +17702,10 @@
                 "intent": {
                     "type": "string"
                 },
+                "nonce": {
+                    "description": "Nonce is a random value the console keeps for this sign-in and sends\nagain with the callback, so only the browser that started a sign-in\ncan complete it. Required for intent login, refused otherwise.",
+                    "type": "string"
+                },
                 "provider": {
                     "type": "string"
                 },
@@ -17815,6 +17854,10 @@
                 },
                 "notification_warning": {
                     "type": "boolean"
+                },
+                "refresh_token": {
+                    "description": "RefreshToken is present when a session is created or refreshed. The\nconsole keeps it and sends it to POST /api/user/auth/refresh, which\nreturns its replacement; a refresh token used again after that revokes\nthe session.",
+                    "type": "string"
                 },
                 "session": {
                     "$ref": "#/definitions/service.LoginSessionView"
@@ -18132,6 +18175,10 @@
                     "type": "integer"
                 },
                 "access_token": {
+                    "type": "string"
+                },
+                "refresh_token": {
+                    "description": "RefreshToken is present when a session is created or refreshed. The\nconsole keeps it and sends it to POST /api/user/auth/refresh, which\nreturns its replacement; a refresh token used again after that revokes\nthe session.",
                     "type": "string"
                 },
                 "session": {

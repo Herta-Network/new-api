@@ -72,6 +72,11 @@ export interface AuthBundle {
   access_token: string
   token_type: 'Bearer' | string
   access_expires_at: number
+  /**
+   * Present when a session is created or refreshed. It is kept in
+   * localStorage (see `@/lib/refresh-token`), never in this store.
+   */
+  refresh_token?: string
   user: AuthUser
   session: LoginSession
 }

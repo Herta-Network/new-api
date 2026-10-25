@@ -41,6 +41,7 @@ import {
 } from '@/features/auth/lib/oauth-bind-window'
 import {
   getOAuthSessionStorage,
+  consumeOAuthLoginNonce,
   consumeOAuthLoginRedirect,
   resolveOAuthCallbackMode,
 } from '@/features/auth/lib/oauth-callback-mode'
@@ -219,6 +220,8 @@ function OAuthCallback() {
           skipAuthRefresh: true,
         }
         if (loginExchange.current?.key !== loginKey) {
+          const nonce = consumeOAuthLoginNonce(state)
+          if (nonce) config.headers = { 'X-OAuth-Nonce': nonce }
           loginExchange.current = {
             key: loginKey,
             request: api.get<LoginResponse>(`/api/oauth/${provider}`, config),

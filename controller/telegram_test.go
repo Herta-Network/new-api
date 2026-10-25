@@ -152,7 +152,11 @@ func setupTelegramOAuthTest(t *testing.T) *telegramOAuthFixture {
 
 func (fixture *telegramOAuthFixture) authorization(t *testing.T, intent string, identity service.AuthIdentity, scope string, claims jwt.MapClaims) (string, string) {
 	t.Helper()
-	request, err := common.Marshal(oauthStateRequest{Provider: "telegram", Intent: intent, Scope: scope})
+	nonce := ""
+	if intent == "login" {
+		nonce = testOAuthNonce
+	}
+	request, err := common.Marshal(oauthStateRequest{Provider: "telegram", Intent: intent, Scope: scope, Nonce: nonce})
 	require.NoError(t, err)
 	proof := ""
 	if intent == "bind" {
@@ -194,6 +198,9 @@ func telegramOAuthCallback(state, code string, identity service.AuthIdentity) *h
 	path := "/api/oauth/telegram?" + url.Values{"state": {state}, "code": {code}}.Encode()
 	return securityEnrollmentRequest("GET", path, "", "", identity, func(c *gin.Context) {
 		c.Params = gin.Params{{Key: "provider", Value: "telegram"}}
+		if identity.UserID == 0 {
+			c.Request.Header.Set("X-OAuth-Nonce", testOAuthNonce)
+		}
 		HandleOAuth(c)
 	})
 }
@@ -393,7 +400,7 @@ func TestTelegramOAuthConfigurationAndLegacyEndpoints(t *testing.T) {
 			case "conflict":
 				require.Error(t, oauth.RegisterCustom("telegram", oauth.NewGenericOAuthProvider(&model.CustomOAuthProvider{Slug: "telegram"})))
 			}
-			response := securityEnrollmentRequest("POST", "/api/oauth/state", `{"provider":"telegram","intent":"login"}`, "", service.AuthIdentity{}, GenerateOAuthCode)
+			response := securityEnrollmentRequest("POST", "/api/oauth/state", `{"provider":"telegram","intent":"login","nonce":"`+testOAuthNonce+`"}`, "", service.AuthIdentity{}, GenerateOAuthCode)
 			assert.Contains(t, response.Body.String(), `"success":false`)
 			assert.NotContains(t, response.Body.String(), "flow_token")
 			for _, scope := range []string{"2fa.setup", "passkey.register"} {

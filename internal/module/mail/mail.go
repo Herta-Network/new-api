@@ -252,9 +252,9 @@ func sampleData(kind, lang string) map[string]any {
 	if kind == common.EmailKindBindingNew || kind == common.EmailKindBindingCurrent {
 		minutes = int(model.EmailBindingTTL / time.Minute)
 	}
-	link := service.PaymentReturnURL("/user/wallet")
+	link := service.ConsoleURL("/user/wallet")
 	if kind == common.EmailKindPasswordReset {
-		link = service.PaymentReturnURL("/user/reset?" + url.Values{"email": {"user@example.com"}, "token": {"sample-token"}}.Encode())
+		link = service.ConsoleURL("/user/reset?" + url.Values{"email": {"user@example.com"}, "token": {"sample-token"}}.Encode())
 	}
 	return map[string]any{
 		"Code":    "123456",

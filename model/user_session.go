@@ -602,7 +602,7 @@ func RevokeUserSession(userID int, sid, reason string) (bool, error) {
 }
 
 // RevokeUserSessionByRefreshHash is used when logout is authenticated only by
-// the HttpOnly refresh cookie. Possession of a SID alone is insufficient. The
+// the refresh token. Possession of a SID alone is insufficient. The
 // immediately previous digest is accepted only inside the refresh race window.
 func RevokeUserSessionByRefreshHash(sid, presentedHash, reason string) (bool, error) {
 	if sid == "" || presentedHash == "" {

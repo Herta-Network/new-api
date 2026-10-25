@@ -17,17 +17,28 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient } from '@tanstack/react-query'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import { useAuthStore, type AuthBundle } from '../stores/auth-store'
 import {
+  applyAuthBundle,
   applyAuthRotation,
   bootstrapAuthentication,
   clearAuthenticatedClientState,
+  clearAuthentication,
   createRefreshRunner,
   isAuthBundle,
+  refreshAuthentication,
   type AuthRefreshRuntime,
 } from './auth-session'
+import {
+  LEGACY_SESSION_HINT_COOKIE_NAME,
+  REFRESH_TOKEN_STORAGE_KEY,
+  forgetRefreshToken,
+  hasSessionHint,
+  readRefreshToken,
+} from './refresh-token'
+import { setApiBaseUrl } from './runtime-config'
 
 const bundle: AuthBundle = {
   access_token: 'access-token',
@@ -52,7 +63,37 @@ const bundle: AuthBundle = {
 
 afterEach(() => {
   useAuthStore.getState().auth.reset('idle')
+  window.localStorage.clear()
+  document.cookie = `${LEGACY_SESSION_HINT_COOKIE_NAME}=; max-age=0`
+  setApiBaseUrl('')
+  vi.restoreAllMocks()
 })
+
+type RefreshCall = { url: string; body: unknown; withCredentials: boolean }
+
+/** Answer the refresh request over XHR with status and data. */
+function stubRefreshResponse(status: number, data: unknown): RefreshCall[] {
+  const calls: RefreshCall[] = []
+  const open = vi.spyOn(XMLHttpRequest.prototype, 'open')
+  vi.spyOn(XMLHttpRequest.prototype, 'send').mockImplementation(function (
+    this: XMLHttpRequest,
+    body?: Document | XMLHttpRequestBodyInit | null
+  ) {
+    calls.push({
+      url: String(open.mock.calls.at(-1)?.[1]),
+      body: typeof body === 'string' ? JSON.parse(body) : body,
+      withCredentials: this.withCredentials,
+    })
+    Object.defineProperties(this, {
+      status: { value: status, configurable: true },
+      statusText: { value: 'Refresh response', configurable: true },
+      responseText: { value: JSON.stringify(data), configurable: true },
+      readyState: { value: 4, configurable: true },
+    })
+    this.onloadend?.(new ProgressEvent('loadend'))
+  })
+  return calls
+}
 
 describe('authentication session coordination', () => {
   test('bootstrap distinguishes a completed anonymous check from an active session', async () => {
@@ -241,6 +282,91 @@ describe('authentication session coordination', () => {
 
     expect(outcome.kind).toBe('transient_error')
     expect(accepted).toBe(false)
+  })
+
+  test('a refresh sends the stored token to the configured backend and keeps its replacement', async () => {
+    setApiBaseUrl('https://api.example.com/')
+    window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, 'session-a.old')
+    const calls = stubRefreshResponse(200, {
+      success: true,
+      data: { ...bundle, refresh_token: 'session-a.new' },
+    })
+
+    const outcome = await refreshAuthentication()
+
+    expect(outcome.kind).toBe('authenticated')
+    expect(calls).toEqual([
+      {
+        url: 'https://api.example.com/api/user/auth/refresh',
+        body: { refresh_token: 'session-a.old' },
+        withCredentials: false,
+      },
+    ])
+    expect(readRefreshToken()).toBe('session-a.new')
+    expect(useAuthStore.getState().auth.accessToken).toBe(bundle.access_token)
+  })
+
+  test('a refused refresh forgets the stored token even without a session in memory', async () => {
+    window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, 'session-a.revoked')
+    stubRefreshResponse(401, { success: false, code: 'AUTH_SESSION_REVOKED' })
+
+    expect(await refreshAuthentication()).toEqual({ kind: 'anonymous' })
+    expect(readRefreshToken()).toBe(null)
+    expect(hasSessionHint()).toBe(false)
+  })
+
+  test('a refresh without a stored token lets the legacy cookie migrate', async () => {
+    document.cookie = `${LEGACY_SESSION_HINT_COOKIE_NAME}=1`
+    expect(hasSessionHint()).toBe(true)
+    const calls = stubRefreshResponse(200, {
+      success: true,
+      data: { ...bundle, refresh_token: 'session-a.migrated' },
+    })
+
+    expect((await bootstrapAuthentication()).kind).toBe('authenticated')
+    expect(calls).toHaveLength(1)
+    expect(calls[0].body).toBe(null)
+    expect(readRefreshToken()).toBe('session-a.migrated')
+  })
+
+  test('a refused refresh without a stored token removes the legacy marker', async () => {
+    document.cookie = `${LEGACY_SESSION_HINT_COOKIE_NAME}=1`
+    stubRefreshResponse(401, { success: false, code: 'AUTH_UNAUTHORIZED' })
+
+    expect(await bootstrapAuthentication()).toEqual({ kind: 'anonymous' })
+    expect(hasSessionHint()).toBe(false)
+  })
+
+  test('a login keeps the refresh token and only an ended session forgets it', () => {
+    applyAuthBundle({ ...bundle, refresh_token: 'session-a.login' })
+    expect(readRefreshToken()).toBe('session-a.login')
+    expect(useAuthStore.getState().auth.accessToken).toBe(bundle.access_token)
+
+    // A local reset leaves the token another tab may still use.
+    clearAuthentication(false)
+    expect(readRefreshToken()).toBe('session-a.login')
+
+    // Ending session A cannot remove the token of a newer sign-in.
+    useAuthStore.getState().auth.setBundle(bundle)
+    window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, 'session-b.other')
+    clearAuthentication()
+    expect(readRefreshToken()).toBe('session-b.other')
+
+    useAuthStore.getState().auth.setBundle({
+      ...bundle,
+      session: { ...bundle.session, sid: 'session-b' },
+    })
+    clearAuthentication()
+    expect(readRefreshToken()).toBe(null)
+  })
+
+  test('forgetting a refresh token matches the exact token or its session', () => {
+    window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, 'session-a.current')
+    forgetRefreshToken({ token: 'session-a.older' })
+    forgetRefreshToken({ sid: 'session-b' })
+    expect(readRefreshToken()).toBe('session-a.current')
+    forgetRefreshToken({ token: 'session-a.current' })
+    expect(readRefreshToken()).toBe(null)
   })
 
   test('explicit rotations update only the current session', () => {
