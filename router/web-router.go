@@ -1,45 +1,36 @@
 package router
 
 import (
-	"embed"
+	"net/http"
 	"strings"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
-	"github.com/gin-contrib/gzip"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 )
 
-// WebAssets holds the embedded dashboard frontend assets.
-type WebAssets struct {
-	BuildFS   embed.FS
-	IndexPage []byte
-}
-
-func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.HandlerFunc) {
-	frontendFS := common.EmbedFolder(assets.BuildFS, "web/dist")
-	compress := gzip.Gzip(gzip.DefaultCompression)
-
+// SetWebRouter answers the paths no API or plugin route claims. The backend
+// serves no console: the console is deployed apart from it (new-api-frontend).
+// A browser that opens a console path on the backend, such as an old email
+// link or an OAuth callback registered at the backend's address, is sent to
+// the console at the Frontend Address, with the path and query kept. Unknown
+// API paths, and every path while no Frontend Address is set, get the relay's
+// not-found answer.
+func SetWebRouter(router *gin.Engine, pluginDispatcher gin.HandlerFunc) {
 	router.NoRoute(
 		pluginDispatcher,
 		middleware.RouteTag("web"),
-		func(c *gin.Context) {
-			// ServeFrontendFiles sends build files already compressed.
-			if !frontendFS.Exists("/", c.Request.URL.Path) {
-				compress(c)
-			}
-		},
 		middleware.AccessTokenAudit(),
-		middleware.GlobalWebRateLimit(frontendFS),
-		middleware.Cache(),
-		middleware.ServeFrontendFiles(frontendFS),
+		middleware.GlobalWebRateLimit(),
 		func(c *gin.Context) {
-			if strings.HasPrefix(c.Request.RequestURI, "/v1") || strings.HasPrefix(c.Request.RequestURI, "/api") || strings.HasPrefix(c.Request.RequestURI, "/assets") {
+			consoleAddress := strings.TrimSuffix(strings.TrimSpace(system_setting.FrontendAddress), "/")
+			uri := c.Request.RequestURI
+			if consoleAddress == "" || strings.HasPrefix(uri, "/v1") || strings.HasPrefix(uri, "/api") || strings.HasPrefix(uri, "/assets") {
 				controller.RelayNotFound(c)
-				c.Abort()
+				return
 			}
+			c.Redirect(http.StatusFound, consoleAddress+uri)
 		},
-		middleware.ConsolePage(assets.IndexPage),
 	)
 }

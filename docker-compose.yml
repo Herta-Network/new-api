@@ -2,7 +2,9 @@
 # 
 # Quick Start:
 #   1. docker compose up -d
-#   2. Access at http://localhost:3000
+#   2. The API listens on http://localhost:3000. The console is deployed
+#      separately (new-api-frontend); its setup wizard records the console's
+#      origin as the Frontend Address.
 #
 # The main database must be PostgreSQL 18 or later.
 # Upgrading from a postgres:15 setup: PostgreSQL 18 cannot open older data directories.
@@ -37,7 +39,7 @@ services:
 #      - STREAMING_TIMEOUT=300  # 流模式无响应超时时间，单位秒，默认120秒，如果出现空补全可以尝试改为更大值 （Streaming timeout in seconds, default is 120s. Increase if experiencing empty completions）
 #      - RELAY_IDLE_CONN_TIMEOUT=90  # Relay HTTP 客户端空闲连接超时时间，单位秒，默认跟随 Go 标准库，设置为0表示不限制 (Relay HTTP client idle keep-alive timeout in seconds, defaults to Go standard library; set 0 to disable)
 #      - SESSION_SECRET=random_string  # 多机部署时设置，必须修改这个随机字符串！！ （multi-node deployment, set this to a random string!!!!!!!）
-#      - FRONTEND_ORIGINS=https://app.example.com  # 控制台部署在其他 Origin 时的 CORS 白名单，不支持通配符/路径 (Console origins admitted in CORS when the console is served elsewhere; no wildcard/path)
+#      - FRONTEND_ORIGINS=https://app.example.com  # 可选：「前端地址」之外额外放行 CORS 的控制台 Origin，不支持通配符/路径 (Optional console origins admitted in CORS besides the Frontend Address; no wildcard/path)
 #      - TRUSTED_PROXIES=172.20.0.0/16  # 未配置时信任回环/RFC1918/fc00::/7 并告警，none 为严格模式，显式列表替代默认值 (Unset trusts loopback/RFC 1918/fc00::/7 with a warning; none trusts no proxies; an explicit list replaces defaults)
 #      - USER_SESSION_ACTIVE_LIMIT=50
 #      - USER_SESSION_ISSUANCE_LIMIT=100
@@ -45,9 +47,6 @@ services:
 #      - USER_SESSION_REVOKED_RETENTION_DAYS=7
 #      - USER_SESSION_HOURLY_ALERT_THRESHOLD=5000  # 仅告警，不做全局拒绝 (alert only; never globally rejects login)
 #      - SYNC_FREQUENCY=60  # Uncomment if regular database syncing is needed
-#      - GOOGLE_ANALYTICS_ID=G-XXXXXXXXXX  # Google Analytics 的测量 ID (Google Analytics Measurement ID)
-#      - UMAMI_WEBSITE_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  # Umami 网站 ID (Umami Website ID)
-#      - UMAMI_SCRIPT_URL=https://analytics.umami.is/script.js  # Umami 脚本 URL，默认为官方地址 (Umami Script URL, defaults to official URL)
 
     depends_on:
       - redis

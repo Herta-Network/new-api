@@ -225,13 +225,30 @@ func validateOptionValue(key string, value string) error {
 		return setting.ValidateMaxTokenAutoGroups(value)
 	}
 	// The console is served at the root of its origin, so the frontend
-	// address is an origin; empty means the backend serves the console.
+	// address is an origin; empty means the console is at ServerAddress.
 	if key == "FrontendAddress" && strings.TrimSpace(value) != "" {
 		if _, err := common.NormalizeOrigin(value); err != nil {
 			return common.NewMessage("Enter the frontend address as an origin, such as https://app.example.com")
 		}
 	}
 	return nil
+}
+
+// SetFrontendAddressAtSetup saves the console's origin as the Frontend
+// Address while the system is set up. No passkey can exist before setup, so
+// unlike a later change through UpdateOption it keeps no previous implicit
+// domain trusted for passkeys.
+func SetFrontendAddressAtSetup(origin string) error {
+	if err := validateOptionValue("FrontendAddress", origin); err != nil {
+		return err
+	}
+	passkeyOptionMutex.Lock()
+	defer passkeyOptionMutex.Unlock()
+	option := Option{Key: "FrontendAddress"}
+	if err := DB.Where(Option{Key: "FrontendAddress"}).Assign(Option{Value: origin}).FirstOrCreate(&option).Error; err != nil {
+		return err
+	}
+	return updateOptionMap("FrontendAddress", origin)
 }
 
 func UpdateOption(key string, value string) error {

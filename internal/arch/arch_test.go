@@ -29,7 +29,7 @@ var tableOwners = map[string]string{
 }
 
 // skippedDirs are not Go code of the root module.
-var skippedDirs = map[string]bool{"web": true, "relaykit": true, "tokenkit": true, "docs": true, "plugins": true, "bin": true}
+var skippedDirs = map[string]bool{"relaykit": true, "tokenkit": true, "docs": true, "plugins": true, "bin": true}
 
 type goFile struct {
 	dir     string // repository-relative package directory

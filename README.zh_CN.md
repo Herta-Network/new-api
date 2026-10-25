@@ -1,6 +1,6 @@
 <div align="center">
 
-![new-api](/web/public/logo.png)
+![new-api](/assets/logo.png)
 
 # New API
 
@@ -172,7 +172,7 @@ cd new-api
 docker compose up -d
 ```
 
-打开 [http://localhost:3000](http://localhost:3000)，按初始化向导创建管理员账号。PostgreSQL 数据保存在 `pg_data` 数据卷中，更换容器后仍会保留。Compose 文件使用示例密码，并在所有网卡上开放 3000 端口；对外开放前请先按[部署与运维](#deployment)修改配置。
+API 监听 3000 端口；控制台由 [new-api-frontend](https://github.com/Herta-Network/new-api-frontend) 单独部署。本地试用时，在该仓库的检出目录运行 `bun install` 和 `bun run dev`，打开 [http://localhost:5173](http://localhost:5173)，按初始化向导创建管理员账号。PostgreSQL 数据保存在 `pg_data` 数据卷中，更换容器后仍会保留。Compose 文件使用示例密码，并在所有网卡上开放 3000 端口；对外开放前请先按[部署与运维](#deployment)修改配置。
 
 ### 发起第一次请求
 
@@ -210,7 +210,7 @@ git clone https://github.com/QuantumNous/new-api.git
 cd new-api
 ```
 
-启动前编辑 `docker-compose.yml`：同时替换数据库、Redis 服务及对应连接串中的示例密码，并设置固定的随机 `SESSION_SECRET`（可用 `openssl rand -hex 32` 生成）。要把控制台部署在与后端不同的域名上，见 [docs/authentication.md](docs/authentication.md) 的“前后端分开部署”。
+启动前编辑 `docker-compose.yml`：同时替换数据库、Redis 服务及对应连接串中的示例密码，并设置固定的随机 `SESSION_SECRET`（可用 `openssl rand -hex 32` 生成）。控制台从 new-api-frontend 部署（例如按其 README 部署到 Cloudflare Pages）；在控制台上完成初始化向导时，后端把控制台的 Origin 记为系统设置「前端地址」，这是后端唯一需要知道的控制台地址。其余相关设置见 [docs/authentication.md](docs/authentication.md) 的“前后端分开部署”。
 
 ```bash
 docker compose up -d
@@ -237,7 +237,7 @@ docker compose logs -f new-api
 | `REDIS_CONN_STRING` | Redis 连接串 |
 | `SESSION_SECRET` | 持久保存的鉴权密钥，所有节点必须一致 |
 | `CRYPTO_SECRET` | 默认使用 `SESSION_SECRET`；共享 Redis 的节点必须使用相同的有效值 |
-| `FRONTEND_ORIGINS` | 仅在控制台与后端不同源时设置：控制台接口在 CORS 中放行的精确 Origin，逗号分隔，不含路径或通配符。取代已废弃的 `SESSION_COOKIE_SECURE` 和 `SESSION_COOKIE_TRUSTED_URL` |
+| `FRONTEND_ORIGINS` | 可选：除初始化时记录的「前端地址」外，控制台接口在 CORS 中额外放行的精确 Origin，逗号分隔，不含路径或通配符。取代已废弃的 `SESSION_COOKIE_SECURE` 和 `SESSION_COOKIE_TRUSTED_URL` |
 | `TRUSTED_PROXIES` | 可信反向代理 IP/CIDR，或 `none`；按实际网络显式配置 |
 
 完整配置见[环境变量示例](./.env.example)、[环境变量文档](https://docs.newapi.ai/zh/docs/installation/config-maintenance/environment-variables)和[鉴权与登录会话说明](./docs/authentication.md)。容器变量应通过 Compose 的 `environment` 或 `env_file` 注入；只复制 `.env.example` 不会自动将变量传入容器。
@@ -250,28 +250,16 @@ docker compose logs -f new-api
 
 ## 开发与扩展
 
-后端使用 Go 和 Gin；控制台使用 React 19、TypeScript、Rsbuild、TanStack 与 Tailwind CSS 4。前端依赖和脚本使用 Bun；Go 语言基线见 [go.mod](./go.mod)，容器构建工具链见 [Dockerfile](./Dockerfile)。
+后端使用 Go 和 Gin；Go 语言基线见 [go.mod](./go.mod)，容器构建工具链见 [Dockerfile](./Dockerfile)。后端不包含任何前端文件，控制台（React 19、TypeScript、Rsbuild、TanStack、Tailwind CSS 4、Bun）在独立仓库中开发和部署。
 
-后端会嵌入 `web/dist`，首次启动前先构建前端：
+在仓库根目录启动后端：
 
 ```bash
-# 仓库根目录
-cd web
-bun install --frozen-lockfile
-bun run build
-cd ..
 # SQL_DSN 须指向 PostgreSQL 18 及以上的数据库
 SQL_DSN=postgresql://user:password@localhost:5432/new-api go run .
 ```
 
-在另一个终端启动前端开发服务器：
-
-```bash
-cd web
-bun run dev -- --port 5173
-```
-
-访问 [http://localhost:5173](http://localhost:5173)，开发服务器会将 API 请求代理到 3000 端口的后端。需要容器化开发后端时，参阅 [docker-compose.dev.yml](./docker-compose.dev.yml) 和 [makefile](./makefile) 中的 `make dev`。
+控制台是独立的 [new-api-frontend](https://github.com/Herta-Network/new-api-frontend) 仓库。在它的检出目录中运行 `bun install` 和 `bun run dev`，然后访问 [http://localhost:5173](http://localhost:5173)，开发服务器会将 API 请求代理到 3000 端口的后端。需要容器化开发后端时，参阅 [docker-compose.dev.yml](./docker-compose.dev.yml) 和 [makefile](./makefile) 中的 `make dev`。
 
 | 目录 | 职责 |
 | --- | --- |
@@ -280,9 +268,9 @@ bun run dev -- --port 5173
 | `service/`、`model/` | 业务逻辑与持久化 |
 | [relaykit/](./relaykit/README.md) | 可独立构建的协议 DTO 与转换 Go 模块 |
 | [plugins/tasks/](./plugins/tasks/) | JavaScript 任务插件；编写方式与宿主边界见 [Task Plugin API v1](./docs/plugin-api/v1.md) |
-| `web/` | Web 控制台，参阅[前端开发约定](./web/AGENTS.md) |
+| [new-api-frontend](https://github.com/Herta-Network/new-api-frontend) | Web 控制台，独立仓库，参阅其 AGENTS.md |
 
-贡献前请阅读 [AGENTS.md](./AGENTS.md)。按改动范围执行检查：Go 模块使用 `make test`（数据库测试需要 `TEST_POSTGRES_DSN`，可用 `make test-db` 启动本地 PostgreSQL 18 并输出该变量）；前端在 `web/` 下运行 `bun check -b`、`bun run lint`、`bun run test` 和 `bun run build`。修改 RelayKit 后还必须在 `relaykit/` 下执行 `GOWORK=off go build ./...`。
+贡献前请阅读 [AGENTS.md](./AGENTS.md)。按改动范围执行检查：Go 模块使用 `make test`（数据库测试需要 `TEST_POSTGRES_DSN`，可用 `make test-db` 启动本地 PostgreSQL 18 并输出该变量）；控制台的改动提交到 new-api-frontend，按其规范检查。修改 RelayKit 后还必须在 `relaykit/` 下执行 `GOWORK=off go build ./...`。
 
 <a id="documentation"></a>
 

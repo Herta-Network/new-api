@@ -1,6 +1,6 @@
 <div align="center">
 
-![new-api](/web/public/logo.png)
+![new-api](/assets/logo.png)
 
 # New API
 
@@ -176,7 +176,7 @@ cd new-api
 docker compose up -d
 ```
 
-Open [http://localhost:3000](http://localhost:3000) and complete the setup wizard to create the administrator account. PostgreSQL data persists in the `pg_data` volume across container replacements. The Compose file uses example passwords and publishes port 3000 on all interfaces; follow [Deployment](#deployment) before exposing it.
+The API listens on port 3000; the web console is deployed separately from [new-api-frontend](https://github.com/Herta-Network/new-api-frontend). To try it locally, run `bun install` and `bun run dev` in a checkout of that repository, open [http://localhost:5173](http://localhost:5173), and complete the setup wizard to create the administrator account. PostgreSQL data persists in the `pg_data` volume across container replacements. The Compose file uses example passwords and publishes port 3000 on all interfaces; follow [Deployment](#deployment) before exposing it.
 
 ### Make your first request
 
@@ -214,7 +214,7 @@ git clone https://github.com/QuantumNous/new-api.git
 cd new-api
 ```
 
-Before starting, edit `docker-compose.yml`: replace the database and Redis example passwords in both the services and connection strings, and set a persistent random `SESSION_SECRET` (generate one with `openssl rand -hex 32`). To serve the console from another domain than the backend, see the split deployment section of [docs/authentication.md](docs/authentication.md).
+Before starting, edit `docker-compose.yml`: replace the database and Redis example passwords in both the services and connection strings, and set a persistent random `SESSION_SECRET` (generate one with `openssl rand -hex 32`). Deploy the console from new-api-frontend (for example on Cloudflare Pages, as its README describes); completing the setup wizard there records the console's origin as the Frontend Address setting, the only console address the backend needs. See the split deployment section of [docs/authentication.md](docs/authentication.md) for the related settings.
 
 ```bash
 docker compose up -d
@@ -241,12 +241,12 @@ SQLite and MySQL are not supported, and there is no built-in migration from them
 | `REDIS_CONN_STRING` | Redis connection string |
 | `SESSION_SECRET` | Persistent authentication secret; all nodes must use the same value |
 | `CRYPTO_SECRET` | Defaults to `SESSION_SECRET`; nodes sharing Redis must use the same effective value |
-| `FRONTEND_ORIGINS` | Only when the console is served from another origin than the backend: comma-separated exact origins the console API admits in CORS, without paths or wildcards. Replaces the deprecated `SESSION_COOKIE_SECURE` and `SESSION_COOKIE_TRUSTED_URL` |
+| `FRONTEND_ORIGINS` | Optional: console origins the console API admits in CORS besides the Frontend Address, which setup records; comma-separated exact origins, without paths or wildcards. Replaces the deprecated `SESSION_COOKIE_SECURE` and `SESSION_COOKIE_TRUSTED_URL` |
 | `TRUSTED_PROXIES` | Trusted reverse-proxy IPs/CIDRs, or `none`; explicitly configure for your network |
 
 See the [environment example](./.env.example), [environment reference](https://docs.newapi.ai/en/docs/installation/config-maintenance/environment-variables), and [authentication and session guide](./docs/authentication.md) for full configuration. Configure container variables in Compose's `environment` or `env_file`; copying `.env.example` alone does not inject variables into the container.
 
-For production, put the console behind HTTPS and configure your reverse proxy for streaming and WebSocket upgrades. Persist and back up the database and mounted data. Multi-node deployments must share the main database and authentication secrets; separate Redis instances or in-memory rate limiters count limits independently per node. The session guide describes propagation behavior for each topology.
+For production, put the backend behind HTTPS and configure your reverse proxy for streaming and WebSocket upgrades. Persist and back up the database and mounted data. Multi-node deployments must share the main database and authentication secrets; separate Redis instances or in-memory rate limiters count limits independently per node. The session guide describes propagation behavior for each topology.
 
 Pin an image version from [Releases](https://github.com/QuantumNous/new-api/releases), review its upgrade notes, and back up before upgrading. The `latest` tag follows published builds and can change; migrations and compatibility must be assessed for your existing installation.
 
@@ -254,28 +254,16 @@ Pin an image version from [Releases](https://github.com/QuantumNous/new-api/rele
 
 ## Development and extensions
 
-The backend uses Go and Gin. The web console uses React 19, TypeScript, Rsbuild, TanStack, and Tailwind CSS 4. Use Bun for frontend dependencies and scripts; see [go.mod](./go.mod) for the Go language baseline and [Dockerfile](./Dockerfile) for the container build toolchain.
+The backend uses Go and Gin; see [go.mod](./go.mod) for the Go language baseline and [Dockerfile](./Dockerfile) for the container build toolchain. The backend serves no frontend files: the web console (React 19, TypeScript, Rsbuild, TanStack, Tailwind CSS 4, Bun) is developed and deployed from its own repository.
 
-Build the frontend before starting the backend, which embeds `web/dist`:
+Start the backend from the repository root:
 
 ```bash
-# Repository root
-cd web
-bun install --frozen-lockfile
-bun run build
-cd ..
 # SQL_DSN must point to a PostgreSQL 18+ database
 SQL_DSN=postgresql://user:password@localhost:5432/new-api go run .
 ```
 
-In a second terminal, start the frontend development server:
-
-```bash
-cd web
-bun run dev -- --port 5173
-```
-
-Open [http://localhost:5173](http://localhost:5173); the development server proxies API requests to the backend on port 3000. For a containerized development backend, see [docker-compose.dev.yml](./docker-compose.dev.yml) and the `make dev` target in [makefile](./makefile).
+The web console is the separate [new-api-frontend](https://github.com/Herta-Network/new-api-frontend) repository. In a checkout of it, run `bun install` and `bun run dev`, then open [http://localhost:5173](http://localhost:5173); the development server proxies API requests to the backend on port 3000. For a containerized development backend, see [docker-compose.dev.yml](./docker-compose.dev.yml) and the `make dev` target in [makefile](./makefile).
 
 | Location | Responsibility |
 | --- | --- |
@@ -284,9 +272,9 @@ Open [http://localhost:5173](http://localhost:5173); the development server prox
 | `service/`, `model/` | Business logic and persistence |
 | [relaykit/](./relaykit/README.md) | Independently buildable Go module for protocol DTOs and conversions |
 | [plugins/tasks/](./plugins/tasks/) | JavaScript task plugins; see [Task Plugin API v1](./docs/plugin-api/v1.md) for authoring and host boundaries |
-| `web/` | Web console; see [frontend conventions](./web/AGENTS.md) |
+| [new-api-frontend](https://github.com/Herta-Network/new-api-frontend) | Web console, in its own repository; see its AGENTS.md |
 
-Read [AGENTS.md](./AGENTS.md) before contributing. Run checks appropriate to your change, including `make test` for the Go modules (database tests need `TEST_POSTGRES_DSN`; `make test-db` starts a local PostgreSQL 18 and prints it) and `bun check -b`, `bun run lint`, `bun run test`, and `bun run build` in `web/` for frontend changes. Changes to RelayKit must also pass `GOWORK=off go build ./...` from `relaykit/`.
+Read [AGENTS.md](./AGENTS.md) before contributing. Run checks appropriate to your change, including `make test` for the Go modules (database tests need `TEST_POSTGRES_DSN`; `make test-db` starts a local PostgreSQL 18 and prints it). Console changes belong in new-api-frontend and follow its checks. Changes to RelayKit must also pass `GOWORK=off go build ./...` from `relaykit/`.
 
 <a id="documentation"></a>
 

@@ -1,6 +1,6 @@
 <div align="center">
 
-![new-api](/web/public/logo.png)
+![new-api](/assets/logo.png)
 
 # New API
 
@@ -157,7 +157,7 @@ cd new-api
 docker compose up -d
 ```
 
-Ouvrez [http://localhost:3000](http://localhost:3000) et suivez l'assistant pour créer le compte administrateur. Le volume `pg_data` conserve les données PostgreSQL lors du remplacement des conteneurs. Le fichier Compose utilise des mots de passe d'exemple et publie le port 3000 sur toutes les interfaces ; suivez la section [Déploiement](#deployment) avant de l'exposer.
+L'API écoute sur le port 3000 ; la console est déployée séparément depuis [new-api-frontend](https://github.com/Herta-Network/new-api-frontend). Pour l'essayer localement, exécutez `bun install` puis `bun run dev` dans une copie de ce dépôt, ouvrez [http://localhost:5173](http://localhost:5173) et suivez l'assistant pour créer le compte administrateur. Le volume `pg_data` conserve les données PostgreSQL lors du remplacement des conteneurs. Le fichier Compose utilise des mots de passe d'exemple et publie le port 3000 sur toutes les interfaces ; suivez la section [Déploiement](#deployment) avant de l'exposer.
 
 ### Première requête
 
@@ -195,7 +195,7 @@ git clone https://github.com/QuantumNous/new-api.git
 cd new-api
 ```
 
-Avant de démarrer, modifiez `docker-compose.yml` : remplacez les mots de passe d'exemple de la base et de Redis dans les services et les chaînes de connexion, puis définissez un `SESSION_SECRET` aléatoire et persistant (générable avec `openssl rand -hex 32`). Pour servir la console depuis un autre domaine que le backend, voir la section sur le déploiement séparé de [docs/authentication.md](docs/authentication.md).
+Avant de démarrer, modifiez `docker-compose.yml` : remplacez les mots de passe d'exemple de la base et de Redis dans les services et les chaînes de connexion, puis définissez un `SESSION_SECRET` aléatoire et persistant (générable avec `openssl rand -hex 32`). Déployez la console depuis new-api-frontend (par exemple sur Cloudflare Pages, comme le décrit son README) ; terminer l'assistant d'installation depuis la console enregistre son origine comme réglage « Adresse du frontend », la seule adresse de la console dont le backend a besoin. Consultez la section sur le déploiement séparé de [docs/authentication.md](docs/authentication.md) pour les autres réglages.
 
 ```bash
 docker compose up -d
@@ -222,7 +222,7 @@ SQLite et MySQL ne sont pas pris en charge, et aucune migration depuis ces bases
 | `REDIS_CONN_STRING` | Chaîne de connexion Redis |
 | `SESSION_SECRET` | Secret d'authentification persistant, identique sur tous les nœuds |
 | `CRYPTO_SECRET` | Vaut `SESSION_SECRET` par défaut ; même valeur effective pour les nœuds partageant Redis |
-| `FRONTEND_ORIGINS` | Seulement si la console est servie depuis une autre origine que le backend : origines exactes, séparées par des virgules, que l'API de la console admet en CORS, sans chemin ni joker. Remplace `SESSION_COOKIE_SECURE` et `SESSION_COOKIE_TRUSTED_URL`, obsolètes |
+| `FRONTEND_ORIGINS` | Facultatif : origines exactes, séparées par des virgules, que l'API de la console admet en CORS en plus de l'adresse du frontend enregistrée à l'installation, sans chemin ni joker. Remplace `SESSION_COOKIE_SECURE` et `SESSION_COOKIE_TRUSTED_URL`, obsolètes |
 | `TRUSTED_PROXIES` | IP/CIDR des proxys de confiance, ou `none` ; à configurer selon votre réseau |
 
 Consultez l'[exemple d'environnement](./.env.example), la [référence des variables](https://docs.newapi.ai/en/docs/installation/config-maintenance/environment-variables) et le [guide des sessions](./docs/authentication.md). Injectez les variables du conteneur avec `environment` ou `env_file` dans Compose ; copier `.env.example` ne suffit pas.
@@ -235,28 +235,16 @@ Choisissez une version précise d'image dans les [versions publiées](https://gi
 
 ## Développement et extensions
 
-Le backend utilise Go et Gin ; la console utilise React 19, TypeScript, Rsbuild, TanStack et Tailwind CSS 4. Utilisez Bun pour le frontend. Consultez [go.mod](./go.mod) pour la version de référence du langage Go et [Dockerfile](./Dockerfile) pour la chaîne de compilation du conteneur.
+Le backend utilise Go et Gin. Consultez [go.mod](./go.mod) pour la version de référence du langage Go et [Dockerfile](./Dockerfile) pour la chaîne de compilation du conteneur. Le backend ne contient aucun fichier frontend : la console (React 19, TypeScript, Rsbuild, TanStack, Tailwind CSS 4, Bun) est développée et déployée depuis son propre dépôt.
 
-Compilez le frontend avant de démarrer le backend, qui intègre `web/dist` :
+Démarrez le backend depuis la racine du dépôt :
 
 ```bash
-# Racine du dépôt
-cd web
-bun install --frozen-lockfile
-bun run build
-cd ..
 # SQL_DSN doit pointer vers une base PostgreSQL 18 ou ultérieure
 SQL_DSN=postgresql://user:password@localhost:5432/new-api go run .
 ```
 
-Dans un second terminal, démarrez le serveur de développement frontend :
-
-```bash
-cd web
-bun run dev -- --port 5173
-```
-
-Ouvrez [http://localhost:5173](http://localhost:5173) ; les requêtes API sont relayées vers le backend sur le port 3000. Pour un backend de développement en conteneur, consultez [docker-compose.dev.yml](./docker-compose.dev.yml) et la cible `make dev` du [makefile](./makefile).
+La console est le dépôt séparé [new-api-frontend](https://github.com/Herta-Network/new-api-frontend). Dans une copie de ce dépôt, exécutez `bun install` puis `bun run dev`, et ouvrez [http://localhost:5173](http://localhost:5173) ; les requêtes API sont relayées vers le backend sur le port 3000. Pour un backend de développement en conteneur, consultez [docker-compose.dev.yml](./docker-compose.dev.yml) et la cible `make dev` du [makefile](./makefile).
 
 | Emplacement | Responsabilité |
 | --- | --- |
@@ -265,9 +253,9 @@ Ouvrez [http://localhost:5173](http://localhost:5173) ; les requêtes API sont r
 | `service/`, `model/` | Logique métier et persistance |
 | [relaykit/](./relaykit/README.md) | Module Go autonome pour les DTO et conversions de protocoles |
 | [plugins/tasks/](./plugins/tasks/) | Extensions de tâches JavaScript ; contrat et limites de l'hôte dans [Task Plugin API v1](./docs/plugin-api/v1.md) |
-| `web/` | Console web ; voir les [conventions frontend](./web/AGENTS.md) |
+| [new-api-frontend](https://github.com/Herta-Network/new-api-frontend) | Console web, dans son propre dépôt ; voir son AGENTS.md |
 
-Lisez [AGENTS.md](./AGENTS.md) avant de contribuer. Exécutez les vérifications adaptées : `make test` pour les modules Go (les tests de base de données exigent `TEST_POSTGRES_DSN` ; `make test-db` démarre un PostgreSQL 18 local et l'affiche) ; `bun check -b`, `bun run lint`, `bun run test` et `bun run build` dans `web/` pour le frontend. Une modification de RelayKit nécessite aussi `GOWORK=off go build ./...` depuis `relaykit/`.
+Lisez [AGENTS.md](./AGENTS.md) avant de contribuer. Exécutez les vérifications adaptées : `make test` pour les modules Go (les tests de base de données exigent `TEST_POSTGRES_DSN` ; `make test-db` démarre un PostgreSQL 18 local et l'affiche). Les modifications de la console vont dans new-api-frontend et suivent ses vérifications. Une modification de RelayKit nécessite aussi `GOWORK=off go build ./...` depuis `relaykit/`.
 
 <a id="documentation"></a>
 
