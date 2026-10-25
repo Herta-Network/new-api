@@ -320,16 +320,25 @@ export type BillingSettings = {
   'checkin_setting.max_quota': number
 }
 
+export type EmailProvider = 'smtp' | 'resend' | 'cloudflare'
+
 export type OperationsSettings = {
   DefaultCollapseSidebar: boolean
   DemoSiteEnabled: boolean
   SelfUseModeEnabled: boolean
   QuotaRemindEnabled: boolean
   QuotaRemindThreshold: string
-  EmailProvider: 'smtp' | 'resend'
+  EmailProvider: EmailProvider
+  /** '' when no backup method sends emails the primary did not send. */
+  EmailBackupProvider: EmailProvider | ''
   ResendApiKey: string
   ResendKeyConfigured: boolean
   ResendFrom: string
+  CloudflareEmailAccountId: string
+  /** Never returned by the server; a blank value keeps the saved token. */
+  CloudflareEmailApiToken: string
+  CloudflareEmailTokenConfigured: boolean
+  CloudflareEmailFrom: string
   SMTPServer: string
   SMTPPort: string
   SMTPAccount: string

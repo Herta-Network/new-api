@@ -17,11 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useMemo } from 'react'
+import { Send } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
-import { PasswordInput } from '@/components/password-input'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -34,6 +36,14 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { parseQuotaFromDollars, quotaUnitsToDollars } from '@/lib/format'
@@ -43,6 +53,7 @@ import {
   SettingsControlChildren,
   SettingsControlGroup,
   SettingsForm,
+  SettingsFormGrid,
   SettingsSwitchContent,
   SettingsSwitchItem,
 } from '../components/settings-form-layout'
@@ -50,37 +61,49 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useResetForm } from '../hooks/use-reset-form'
 import { useUpdateOption } from '../hooks/use-update-option'
+import type { EmailProvider } from '../types'
+import { EMAIL_PROVIDER_LABELS } from './email-api'
+import {
+  CloudflareFields,
+  ResendFields,
+  SmtpFields,
+} from './email-provider-fields'
 import {
   createEmailSchema,
+  formatSender,
+  getSmtpSecurityMode,
+  parseCloudflareSender,
   parseResendSender,
   type EmailFormValues,
 } from './email-settings-schema'
+import { EmailTestDialog } from './email-test-dialog'
 
 type EmailSettingsSectionProps = {
-  defaultValues: Omit<EmailFormValues, 'ResendSenderName'>
+  defaultValues: Omit<
+    EmailFormValues,
+    'ResendSenderName' | 'CloudflareSenderName'
+  >
 }
 
-type SmtpSecurityMode = 'none' | 'ssl_tls' | 'starttls'
+const EMAIL_PROVIDERS: EmailProvider[] = ['smtp', 'resend', 'cloudflare']
+const NO_BACKUP = 'none'
 
-function getSmtpSecurityMode(values: {
-  SMTPSSLEnabled: boolean
-  SMTPStartTLSEnabled: boolean
-}): SmtpSecurityMode {
-  if (values.SMTPSSLEnabled) return 'ssl_tls'
-  if (values.SMTPStartTLSEnabled) return 'starttls'
-  return 'none'
-}
-
-export function EmailSettingsSection({
-  defaultValues,
-}: EmailSettingsSectionProps) {
+export function EmailSettingsSection(props: EmailSettingsSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
   const emailSchema = createEmailSchema(t)
+  const defaultValues = props.defaultValues
+  const [testDialogOpen, setTestDialogOpen] = useState(false)
   const initialValues = useMemo(
     () => ({
       ...defaultValues,
+      // A backup equal to the primary sends nothing; it shows as none.
+      EmailBackupProvider:
+        defaultValues.EmailBackupProvider === defaultValues.EmailProvider
+          ? ('' as const)
+          : defaultValues.EmailBackupProvider,
       ...parseResendSender(defaultValues.ResendFrom),
+      ...parseCloudflareSender(defaultValues.CloudflareEmailFrom),
       QuotaRemindThreshold: String(
         quotaUnitsToDollars(Number(defaultValues.QuotaRemindThreshold) || 0)
       ),
@@ -93,119 +116,99 @@ export function EmailSettingsSection({
     defaultValues: initialValues,
   })
 
-  const [provider, smtpSSL, smtpStartTLS, quotaRemindEnabled] = useWatch({
+  const [provider, backupProvider, quotaRemindEnabled] = useWatch({
     control: form.control,
-    name: [
-      'EmailProvider',
-      'SMTPSSLEnabled',
-      'SMTPStartTLSEnabled',
-      'QuotaRemindEnabled',
-    ],
+    name: ['EmailProvider', 'EmailBackupProvider', 'QuotaRemindEnabled'],
   })
+  const providersInUse = backupProvider
+    ? [provider, backupProvider]
+    : [provider]
   const tokensOnly = getCurrencyDisplay().meta.kind === 'tokens'
   const isSaving = form.formState.isSubmitting || updateOption.isPending
   useResetForm(form, isSaving ? undefined : initialValues)
 
   const onSubmit = async (values: EmailFormValues) => {
-    const securityMode = getSmtpSecurityMode(values)
-    const sanitized = {
-      SMTPServer: values.SMTPServer.trim(),
-      SMTPPort: values.SMTPPort.trim(),
-      SMTPAccount: values.SMTPAccount.trim(),
-      SMTPFrom: values.SMTPFrom.trim(),
-      SMTPToken: values.SMTPToken.trim(),
-      SMTPSSLEnabled: securityMode === 'ssl_tls',
-      SMTPStartTLSEnabled: securityMode === 'starttls',
-      SMTPInsecureSkipVerify: values.SMTPInsecureSkipVerify,
-      SMTPForceAuthLogin: values.SMTPForceAuthLogin,
-    }
-
-    const initial = {
-      SMTPServer: defaultValues.SMTPServer.trim(),
-      SMTPPort: defaultValues.SMTPPort.trim(),
-      SMTPAccount: defaultValues.SMTPAccount.trim(),
-      SMTPFrom: defaultValues.SMTPFrom.trim(),
-      SMTPToken: defaultValues.SMTPToken.trim(),
-      SMTPSSLEnabled: defaultValues.SMTPSSLEnabled,
-      SMTPStartTLSEnabled: defaultValues.SMTPStartTLSEnabled,
-      SMTPInsecureSkipVerify: defaultValues.SMTPInsecureSkipVerify,
-      SMTPForceAuthLogin: defaultValues.SMTPForceAuthLogin,
-    }
-
+    const inUse = new Set([values.EmailProvider, values.EmailBackupProvider])
     const updates: Array<{ key: string; value: string | boolean }> = []
+    const pushChanged = (
+      key: string,
+      value: string | boolean,
+      initial: string | boolean
+    ) => {
+      if (value !== initial) updates.push({ key, value })
+    }
 
-    if (values.EmailProvider === 'resend') {
-      const from = values.ResendFrom.trim()
-      const name = values.ResendSenderName.trim()
-      if (
-        from !== initialValues.ResendFrom ||
-        name !== initialValues.ResendSenderName
-      ) {
-        // Quote display names so commas, quotes and angle brackets stay text,
-        // not mailbox syntax. The server also validates the combined address.
-        const escapedName = name.replaceAll('\\', '\\\\').replaceAll('"', '\\"')
-        const sender = name ? `"${escapedName}" <${from}>` : from
-        updates.push({ key: 'ResendFrom', value: sender })
-      }
+    // Only the methods in use are saved; the others keep their drafts.
+    if (inUse.has('resend')) {
+      pushChanged(
+        'ResendFrom',
+        formatSender(values.ResendFrom.trim(), values.ResendSenderName.trim()),
+        formatSender(initialValues.ResendFrom, initialValues.ResendSenderName)
+      )
       const key = values.ResendApiKey.trim()
       if (key) updates.push({ key: 'ResendApiKey', value: key })
-    } else {
-      if (sanitized.SMTPServer !== initial.SMTPServer) {
-        updates.push({ key: 'SMTPServer', value: sanitized.SMTPServer })
+    }
+    if (inUse.has('cloudflare')) {
+      pushChanged(
+        'CloudflareEmailAccountId',
+        values.CloudflareEmailAccountId.trim(),
+        initialValues.CloudflareEmailAccountId.trim()
+      )
+      pushChanged(
+        'CloudflareEmailFrom',
+        formatSender(
+          values.CloudflareEmailFrom.trim(),
+          values.CloudflareSenderName.trim()
+        ),
+        formatSender(
+          initialValues.CloudflareEmailFrom,
+          initialValues.CloudflareSenderName
+        )
+      )
+      const token = values.CloudflareEmailApiToken.trim()
+      if (token) updates.push({ key: 'CloudflareEmailApiToken', value: token })
+    }
+    if (inUse.has('smtp')) {
+      const securityMode = getSmtpSecurityMode(values)
+      for (const key of [
+        'SMTPServer',
+        'SMTPPort',
+        'SMTPAccount',
+        'SMTPFrom',
+      ] as const) {
+        pushChanged(key, values[key].trim(), defaultValues[key].trim())
       }
-
-      if (sanitized.SMTPPort !== initial.SMTPPort) {
-        updates.push({ key: 'SMTPPort', value: sanitized.SMTPPort })
+      const token = values.SMTPToken.trim()
+      if (token && token !== defaultValues.SMTPToken.trim()) {
+        updates.push({ key: 'SMTPToken', value: token })
       }
-
-      if (sanitized.SMTPAccount !== initial.SMTPAccount) {
-        updates.push({ key: 'SMTPAccount', value: sanitized.SMTPAccount })
-      }
-
-      if (sanitized.SMTPFrom !== initial.SMTPFrom) {
-        updates.push({ key: 'SMTPFrom', value: sanitized.SMTPFrom })
-      }
-
-      if (sanitized.SMTPToken && sanitized.SMTPToken !== initial.SMTPToken) {
-        updates.push({ key: 'SMTPToken', value: sanitized.SMTPToken })
-      }
-
-      if (sanitized.SMTPSSLEnabled !== initial.SMTPSSLEnabled) {
-        updates.push({
-          key: 'SMTPSSLEnabled',
-          value: sanitized.SMTPSSLEnabled,
-        })
-      }
-
-      if (sanitized.SMTPStartTLSEnabled !== initial.SMTPStartTLSEnabled) {
-        updates.push({
-          key: 'SMTPStartTLSEnabled',
-          value: sanitized.SMTPStartTLSEnabled,
-        })
-      }
-
-      if (sanitized.SMTPInsecureSkipVerify !== initial.SMTPInsecureSkipVerify) {
-        updates.push({
-          key: 'SMTPInsecureSkipVerify',
-          value: sanitized.SMTPInsecureSkipVerify,
-        })
-      }
-
-      if (sanitized.SMTPForceAuthLogin !== initial.SMTPForceAuthLogin) {
-        updates.push({
-          key: 'SMTPForceAuthLogin',
-          value: sanitized.SMTPForceAuthLogin,
-        })
-      }
+      pushChanged(
+        'SMTPSSLEnabled',
+        securityMode === 'ssl_tls',
+        defaultValues.SMTPSSLEnabled
+      )
+      pushChanged(
+        'SMTPStartTLSEnabled',
+        securityMode === 'starttls',
+        defaultValues.SMTPStartTLSEnabled
+      )
+      pushChanged(
+        'SMTPInsecureSkipVerify',
+        values.SMTPInsecureSkipVerify,
+        defaultValues.SMTPInsecureSkipVerify
+      )
+      pushChanged(
+        'SMTPForceAuthLogin',
+        values.SMTPForceAuthLogin,
+        defaultValues.SMTPForceAuthLogin
+      )
     }
 
-    if (values.QuotaRemindEnabled !== defaultValues.QuotaRemindEnabled) {
-      updates.push({
-        key: 'QuotaRemindEnabled',
-        value: values.QuotaRemindEnabled,
-      })
-    }
-
+    pushChanged(
+      'QuotaRemindEnabled',
+      values.QuotaRemindEnabled,
+      defaultValues.QuotaRemindEnabled
+    )
     const threshold = values.QuotaRemindThreshold.trim()
     if (threshold !== initialValues.QuotaRemindThreshold) {
       updates.push({
@@ -214,11 +217,18 @@ export function EmailSettingsSection({
       })
     }
 
-    // Save credentials first. A failed configuration write must not activate
-    // the new provider; only the final selector write changes delivery.
-    if (values.EmailProvider !== defaultValues.EmailProvider) {
-      updates.push({ key: 'EmailProvider', value: values.EmailProvider })
-    }
+    // Save credentials first: a failed settings write must not activate a
+    // method. The primary goes before the backup, so two methods can swap.
+    pushChanged(
+      'EmailProvider',
+      values.EmailProvider,
+      defaultValues.EmailProvider
+    )
+    pushChanged(
+      'EmailBackupProvider',
+      values.EmailBackupProvider,
+      defaultValues.EmailBackupProvider
+    )
 
     try {
       for (const update of updates) {
@@ -226,8 +236,12 @@ export function EmailSettingsSection({
         if (update.key === 'ResendApiKey') {
           form.setValue('ResendKeyConfigured', true)
         }
+        if (update.key === 'CloudflareEmailApiToken') {
+          form.setValue('CloudflareEmailTokenConfigured', true)
+        }
       }
       form.setValue('ResendApiKey', '')
+      form.setValue('CloudflareEmailApiToken', '')
     } catch (error) {
       handleServerError(error)
     }
@@ -250,343 +264,142 @@ export function EmailSettingsSection({
                 <FormControl>
                   <RadioGroup
                     value={field.value}
-                    onValueChange={field.onChange}
+                    onValueChange={(value) => {
+                      field.onChange(value)
+                      // The new primary cannot also be the backup.
+                      if (form.getValues('EmailBackupProvider') === value) {
+                        form.setValue('EmailBackupProvider', '', {
+                          shouldDirty: true,
+                        })
+                      }
+                    }}
                     disabled={isSaving}
-                    className='grid-cols-1 gap-3 sm:grid-cols-2'
+                    className='grid-cols-1 gap-3 sm:grid-cols-3'
                   >
-                    <Label
-                      className='flex cursor-pointer items-center gap-3 rounded-lg border p-4'
-                      htmlFor='email-provider-smtp'
-                    >
-                      <RadioGroupItem value='smtp' id='email-provider-smtp' />
-                      SMTP
-                    </Label>
-                    <Label
-                      className='flex cursor-pointer items-center gap-3 rounded-lg border p-4'
-                      htmlFor='email-provider-resend'
-                    >
-                      <RadioGroupItem
-                        value='resend'
-                        id='email-provider-resend'
-                      />
-                      Resend API
-                    </Label>
+                    {EMAIL_PROVIDERS.map((item) => (
+                      <Label
+                        key={item}
+                        className='flex cursor-pointer items-center gap-3 rounded-lg border p-4'
+                        htmlFor={`email-provider-${item}`}
+                      >
+                        <RadioGroupItem
+                          value={item}
+                          id={`email-provider-${item}`}
+                        />
+                        {EMAIL_PROVIDER_LABELS[item]}
+                      </Label>
+                    ))}
                   </RadioGroup>
                 </FormControl>
                 <FormDescription>
                   {t(
-                    'Only the selected method sends email. The other method keeps its settings.'
+                    'The primary method sends every email. Methods not in use keep their settings.'
                   )}
                 </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
           />
-          {provider === 'resend' ? (
-            <>
-              <FormField
-                control={form.control}
-                name='ResendFrom'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Sender email address')}</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        autoComplete='off'
-                        disabled={isSaving}
-                        type='email'
-                        placeholder='noreply@example.com'
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t('The domain must be verified in Resend')}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name='ResendSenderName'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Sender name')}</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        autoComplete='off'
-                        disabled={isSaving}
-                        placeholder='New API'
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t(
-                        'The name recipients see. Leave blank to use the site name.'
-                      )}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name='ResendApiKey'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Resend API key')}</FormLabel>
-                    <FormControl>
-                      <PasswordInput
-                        {...field}
-                        autoComplete='new-password'
-                        disabled={isSaving}
-                        placeholder={t('Enter new token to update')}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t('Leave blank to keep the existing key')}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </>
-          ) : (
-            <>
-              <FormField
-                control={form.control}
-                name='SMTPServer'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('SMTP Host')}</FormLabel>
-                    <FormControl>
-                      <Input
-                        autoComplete='off'
-                        placeholder={t('smtp.example.com')}
-                        {...field}
-                        onChange={(event) => field.onChange(event.target.value)}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t('Hostname or IP of your SMTP provider')}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <div className='grid gap-6 md:grid-cols-2'>
-                <FormField
-                  control={form.control}
-                  name='SMTPPort'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>{t('Port')}</FormLabel>
-                      <FormControl>
-                        <Input
-                          autoComplete='off'
-                          type='number'
-                          placeholder='587'
-                          {...field}
-                          onChange={(event) =>
-                            field.onChange(event.target.value)
-                          }
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        {t('Common ports include 25, 465, and 587')}
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormItem>
-                  <FormLabel>{t('SMTP encryption')}</FormLabel>
+          <FormField
+            control={form.control}
+            name='EmailBackupProvider'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Backup sending method')}</FormLabel>
+                <Select
+                  items={[
+                    { value: NO_BACKUP, label: t('No backup') },
+                    ...EMAIL_PROVIDERS.filter((item) => item !== provider).map(
+                      (item) => ({
+                        value: item,
+                        label: EMAIL_PROVIDER_LABELS[item],
+                      })
+                    ),
+                  ]}
+                  value={field.value || NO_BACKUP}
+                  onValueChange={(value) =>
+                    field.onChange(value === NO_BACKUP ? '' : value)
+                  }
+                  disabled={isSaving}
+                >
                   <FormControl>
-                    <RadioGroup
-                      value={getSmtpSecurityMode({
-                        SMTPSSLEnabled: smtpSSL,
-                        SMTPStartTLSEnabled: smtpStartTLS,
-                      })}
-                      onValueChange={(value) => {
-                        const mode = value as SmtpSecurityMode
-                        form.setValue('SMTPSSLEnabled', mode === 'ssl_tls', {
-                          shouldDirty: true,
-                        })
-                        form.setValue(
-                          'SMTPStartTLSEnabled',
-                          mode === 'starttls',
-                          {
-                            shouldDirty: true,
-                          }
-                        )
-                      }}
-                      className='gap-3'
+                    <SelectTrigger
+                      aria-label={t('Backup sending method')}
+                      className='w-full'
                     >
-                      <div className='flex items-center gap-2'>
-                        <RadioGroupItem value='none' id='smtp-security-none' />
-                        <Label
-                          htmlFor='smtp-security-none'
-                          className='cursor-pointer font-normal'
-                        >
-                          {t('No encryption')}
-                        </Label>
-                      </div>
-                      <div className='flex items-center gap-2'>
-                        <RadioGroupItem
-                          value='ssl_tls'
-                          id='smtp-security-ssl-tls'
-                        />
-                        <Label
-                          htmlFor='smtp-security-ssl-tls'
-                          className='cursor-pointer font-normal'
-                        >
-                          {t('SSL/TLS')}
-                        </Label>
-                      </div>
-                      <div className='flex items-center gap-2'>
-                        <RadioGroupItem
-                          value='starttls'
-                          id='smtp-security-starttls'
-                        />
-                        <Label
-                          htmlFor='smtp-security-starttls'
-                          className='cursor-pointer font-normal'
-                        >
-                          {t('STARTTLS')}
-                        </Label>
-                      </div>
-                    </RadioGroup>
+                      <SelectValue />
+                    </SelectTrigger>
                   </FormControl>
-                  <FormDescription>
-                    {t('Choose one SMTP transport security mode')}
-                  </FormDescription>
-                </FormItem>
-
-                <FormField
-                  control={form.control}
-                  name='SMTPInsecureSkipVerify'
-                  render={({ field }) => (
-                    <SettingsSwitchItem>
-                      <SettingsSwitchContent>
-                        <FormLabel>
-                          {t('Skip SMTP TLS certificate verification')}
-                        </FormLabel>
-                        <FormDescription>
-                          {t(
-                            'Allow self-signed or hostname-mismatched SMTP certificates'
-                          )}
-                        </FormDescription>
-                      </SettingsSwitchContent>
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                      </FormControl>
-                    </SettingsSwitchItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name='SMTPForceAuthLogin'
-                  render={({ field }) => (
-                    <SettingsSwitchItem>
-                      <SettingsSwitchContent>
-                        <FormLabel>{t('Force AUTH LOGIN')}</FormLabel>
-                        <FormDescription>
-                          {t(
-                            'Force SMTP authentication using AUTH LOGIN method'
-                          )}
-                        </FormDescription>
-                      </SettingsSwitchContent>
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                      </FormControl>
-                    </SettingsSwitchItem>
-                  )}
-                />
-              </div>
-
-              <FormField
-                control={form.control}
-                name='SMTPAccount'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Username')}</FormLabel>
-                    <FormControl>
-                      <Input
-                        autoComplete='off'
-                        placeholder={t('noreply@example.com')}
-                        {...field}
-                        onChange={(event) => field.onChange(event.target.value)}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t(
-                        'Account used when authenticating with the SMTP server'
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      <SelectItem value={NO_BACKUP}>
+                        {t('No backup')}
+                      </SelectItem>
+                      {EMAIL_PROVIDERS.filter((item) => item !== provider).map(
+                        (item) => (
+                          <SelectItem key={item} value={item}>
+                            {EMAIL_PROVIDER_LABELS[item]}
+                          </SelectItem>
+                        )
                       )}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FormDescription>
+                  {t(
+                    'Sends an email only when the primary method certainly did not, such as a refused request or an unreachable server. After a timeout the email is not sent again, so nobody receives it twice.'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          {providersInUse.map((item) => (
+            <fieldset
+              key={item}
+              data-settings-form-span='full'
+              className='flex min-w-0 flex-col gap-4'
+            >
+              <legend className='mb-4 flex items-center gap-2 text-sm font-medium'>
+                {EMAIL_PROVIDER_LABELS[item]}
+                <Badge variant='outline'>
+                  {item === provider ? t('Primary') : t('Backup')}
+                </Badge>
+              </legend>
+              <SettingsFormGrid>
+                {item === 'smtp' && (
+                  <SmtpFields form={form} isSaving={isSaving} />
                 )}
-              />
-
-              <FormField
-                control={form.control}
-                name='SMTPFrom'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('From Address')}</FormLabel>
-                    <FormControl>
-                      <Input
-                        autoComplete='off'
-                        placeholder={t(
-                          'noreply@example.com or Name <noreply@example.com>'
-                        )}
-                        {...field}
-                        onChange={(event) => field.onChange(event.target.value)}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t(
-                        'An email address, or Name <email address>. Without a name, recipients see the site name.'
-                      )}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
+                {item === 'resend' && (
+                  <ResendFields form={form} isSaving={isSaving} />
                 )}
-              />
-
-              <FormField
-                control={form.control}
-                name='SMTPToken'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Password / Access Token')}</FormLabel>
-                    <FormControl>
-                      <Input
-                        autoComplete='off'
-                        type='password'
-                        placeholder={t('Enter new token to update')}
-                        {...field}
-                        onChange={(event) => field.onChange(event.target.value)}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t('Leave blank to keep the existing credential')}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
+                {item === 'cloudflare' && (
+                  <CloudflareFields form={form} isSaving={isSaving} />
                 )}
-              />
-            </>
-          )}
+              </SettingsFormGrid>
+            </fieldset>
+          ))}
+          <div className='flex min-w-0 flex-col gap-2'>
+            <span className='text-sm font-medium'>{t('Test email')}</span>
+            <div>
+              <Button
+                type='button'
+                variant='outline'
+                onClick={() => setTestDialogOpen(true)}
+                disabled={isSaving || form.formState.isDirty}
+              >
+                <Send data-icon='inline-start' />
+                {t('Send test email')}
+              </Button>
+            </div>
+            <p className='text-muted-foreground text-sm'>
+              {form.formState.isDirty
+                ? t('Save your changes before sending a test email')
+                : t(
+                    'Sends a sample email through one method with the saved settings'
+                  )}
+            </p>
+          </div>
           <SettingsControlGroup>
             <FormField
               control={form.control}
@@ -642,6 +455,11 @@ export function EmailSettingsSection({
           </SettingsControlGroup>
         </SettingsForm>
       </Form>
+      <EmailTestDialog
+        open={testDialogOpen}
+        onOpenChange={setTestDialogOpen}
+        provider={defaultValues.EmailProvider}
+      />
     </SettingsSection>
   )
 }

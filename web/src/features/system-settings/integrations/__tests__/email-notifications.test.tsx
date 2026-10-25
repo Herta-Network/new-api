@@ -36,9 +36,14 @@ function Fixture() {
         <EmailSettingsSection
           defaultValues={{
             EmailProvider: 'smtp',
+            EmailBackupProvider: '',
             ResendApiKey: '',
             ResendKeyConfigured: false,
             ResendFrom: '',
+            CloudflareEmailAccountId: '',
+            CloudflareEmailApiToken: '',
+            CloudflareEmailTokenConfigured: false,
+            CloudflareEmailFrom: '',
             SMTPServer: 'smtp.example.com',
             SMTPPort: '587',
             SMTPAccount: 'noreply@example.com',
