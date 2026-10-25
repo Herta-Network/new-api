@@ -264,6 +264,22 @@ func GetContextKeyType[T any](c *gin.Context, key constant.ContextKey) (T, bool)
 	return t, false
 }
 
+// ApiResponse is the body the Api* helpers write, named for the API
+// documents. A failed request answers HTTP 200 with Success false unless the
+// handler chose another status; Data is then absent.
+type ApiResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	// MessageKey and MessageParams are present when Message is web console
+	// text, which the web console translates.
+	MessageKey    string         `json:"message_key,omitempty"`
+	MessageParams map[string]any `json:"message_params,omitempty"`
+	// Code is the stable error code some failures carry, such as
+	// AUTH_UNAUTHORIZED.
+	Code string `json:"code,omitempty"`
+	Data any    `json:"data"`
+}
+
 // ApiError responds with err's text. When err is or wraps a *Message, the
 // response also carries message_key and message_params for the web console.
 func ApiError(c *gin.Context, err error) {
