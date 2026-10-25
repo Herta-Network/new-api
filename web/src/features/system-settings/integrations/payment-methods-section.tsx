@@ -337,7 +337,7 @@ export function PaymentMethodsSection(props: PaymentMethodsSectionProps) {
 /**
  * Failed checkouts of a channel this server saw: a tripped channel is tried
  * after the others until its cooldown ends. The last error is in the badge's
- * title.
+ * title, which replaces the label StatusBadge would show there.
  */
 function ChannelHealth(props: { method: PaymentMethod }) {
   const { t } = useTranslation()
@@ -346,19 +346,18 @@ function ChannelHealth(props: { method: PaymentMethod }) {
   const tripped = health.tripped_until * 1000 > Date.now()
   return (
     <BadgeCell>
-      <span title={health.last_error}>
-        <StatusBadge
-          label={
-            tripped
-              ? t('Tripped until {{time}}', {
-                  time: formatTimestampToDate(health.tripped_until),
-                })
-              : t('{{count}} failed checkouts', { count: health.failures })
-          }
-          variant={tripped ? 'danger' : 'warning'}
-          copyable={false}
-        />
-      </span>
+      <StatusBadge
+        label={
+          tripped
+            ? t('Tripped until {{time}}', {
+                time: formatTimestampToDate(health.tripped_until),
+              })
+            : t('{{count}} failed checkouts', { count: health.failures })
+        }
+        variant={tripped ? 'danger' : 'warning'}
+        copyable={false}
+        title={health.last_error}
+      />
     </BadgeCell>
   )
 }
