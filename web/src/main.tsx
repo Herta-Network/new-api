@@ -26,6 +26,7 @@ import { applyFaviconToDom } from '@/lib/dom-utils'
 import '@/lib/dayjs'
 import { initializeFrontendCache } from '@/lib/frontend-cache'
 import { createAppQueryClient } from '@/lib/query-client'
+import { loadRuntimeConfig } from '@/lib/runtime-config'
 import { readCachedStatus, statusQueryOptions } from '@/lib/status-query'
 
 import { DirectionProvider } from './context/direction-provider'
@@ -42,6 +43,8 @@ import './styles/index.css'
 // VChart theme is driven by our ThemeProvider (html.light/html.dark) via per-chart `theme` prop.
 initializeFrontendCache()
 installBuildMetadata()
+// Requests wait for the backend address of /runtime-config.json.
+const runtimeConfigReady = loadRuntimeConfig()
 
 const queryClient = createAppQueryClient(() => {
   void router.navigate({ to: '/500' })
@@ -91,8 +94,8 @@ if (!rootElement) {
     // before React mounts, so the root guard and every status consumer reuse
     // this one request instead of firing their own. `fetchStatus` owns the
     // localStorage write and the system-config store sync.
-    queryClient
-      .ensureQueryData(statusQueryOptions)
+    runtimeConfigReady
+      .then(() => queryClient.ensureQueryData(statusQueryOptions))
       .then((s) => {
         if (s?.system_name) apply(s.system_name as string)
         if (s?.logo) applyFaviconToDom(s.logo as string)
@@ -106,22 +109,24 @@ if (!rootElement) {
 })()
 if (!rootElement.innerHTML) {
   const root = ReactDOM.createRoot(rootElement)
-  // Paint only after the interface language bundle is loaded, so the first
-  // frame never shows untranslated keys. `finally` keeps an unexpected i18n
-  // setup error from leaving the page blank.
-  void i18nReady.finally(() => {
-    root.render(
-      <StrictMode>
-        <QueryClientProvider client={queryClient}>
-          <ThemeProvider>
-            <FontProvider>
-              <DirectionProvider>
-                <RouterProvider router={router} />
-              </DirectionProvider>
-            </FontProvider>
-          </ThemeProvider>
-        </QueryClientProvider>
-      </StrictMode>
-    )
-  })
+  // Paint only after the backend address and the interface language bundle
+  // are loaded, so the first frame never shows untranslated keys. `finally`
+  // keeps an unexpected i18n setup error from leaving the page blank.
+  void runtimeConfigReady
+    .then(() => i18nReady)
+    .finally(() => {
+      root.render(
+        <StrictMode>
+          <QueryClientProvider client={queryClient}>
+            <ThemeProvider>
+              <FontProvider>
+                <DirectionProvider>
+                  <RouterProvider router={router} />
+                </DirectionProvider>
+              </FontProvider>
+            </ThemeProvider>
+          </QueryClientProvider>
+        </StrictMode>
+      )
+    })
 }

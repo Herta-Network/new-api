@@ -25,7 +25,10 @@ import type { AuthBundle } from '@/stores/auth-store'
 
 import { executeLogout } from './api'
 import { useOAuthLogin } from './hooks/use-oauth-login'
-import { consumeOAuthLoginRedirect } from './lib/oauth-callback-mode'
+import {
+  consumeOAuthLoginNonce,
+  consumeOAuthLoginRedirect,
+} from './lib/oauth-callback-mode'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -76,6 +79,13 @@ test.each([true, false])(
       expect(consumeOAuthLoginRedirect('telegram-state')).toBe(
         '/console/personal'
       )
+      const stateRequest = post.mock.calls.find(
+        ([url]) => url === '/api/oauth/state'
+      )
+      const nonce = (stateRequest?.[1] as { nonce?: string } | undefined)?.nonce
+      expect(nonce).toMatch(/^[A-Za-z0-9_-]{43}$/)
+      expect(consumeOAuthLoginNonce('telegram-state')).toBe(nonce)
+      expect(consumeOAuthLoginNonce('telegram-state')).toBeNull()
     } else {
       expect(post).not.toHaveBeenCalled()
       expect(open).not.toHaveBeenCalled()

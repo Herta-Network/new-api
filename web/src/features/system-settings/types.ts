@@ -137,6 +137,7 @@ export type SiteSettings = {
   About: string
   HomePageContent: string
   ServerAddress: string
+  FrontendAddress: string
   TaskPublicAddress: string
   'general_setting.docs_link': string
   'legal.user_agreement': string
@@ -154,6 +155,7 @@ export type AuthSettings = {
   EmailAliasRestrictionEnabled: boolean
   EmailDomainWhitelist: string
   ServerAddress: string
+  FrontendAddress: string
   GitHubOAuthEnabled: boolean
   GitHubClientId: string
   GitHubClientSecret: string

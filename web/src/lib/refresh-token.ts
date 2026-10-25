@@ -16,24 +16,28 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+
 /**
- * Detection of the server's login-session hint cookie.
+ * The refresh token of the browser's login session.
  *
- * The Refresh Cookie is `HttpOnly` and scoped to `/api/user/auth`, so a page at
- * `/` cannot read it and cannot tell an anonymous visitor from a returning one.
- * The server therefore writes `new_api_has_session=1` alongside it — same
- * expiry, `Path=/`, not `HttpOnly` — purely so the frontend can skip a refresh
- * that is certain to fail.
+ * The console keeps it in localStorage so a session survives reloads and is
+ * shared by every tab, also when the console and the backend are on different
+ * sites, where a cookie of the backend would be a blocked third-party cookie.
+ * Script on this origin can read it, so the session's other limits matter:
+ * every refresh replaces it, a replaced token used again ends the session, and
+ * the session ends after 30 days or at sign-out.
  *
- * This is an optimization, never an authorization signal. A present hint means
- * "a Refresh Cookie was issued at some point"; it can be stale after a
- * server-side revocation, and it can be absent while a usable Refresh Cookie
- * still exists (a visitor who cleared site data for `/` only, or any session
- * created before this cookie shipped). Callers must treat a missing hint as
- * "not worth a request right now", not as "signed out", and must still be able
- * to reach the server when authentication actually matters.
+ * The token has the form `<sid>.<secret>`; the SID tells which session a
+ * stored token belongs to without a request.
  */
-export const SESSION_HINT_COOKIE_NAME = 'new_api_has_session'
+export const REFRESH_TOKEN_STORAGE_KEY = 'new_api_refresh_token'
+
+/**
+ * The script-readable marker the backend wrote beside its legacy refresh
+ * cookie. A session signed in before the console kept the token itself still
+ * has that cookie, which the backend accepts for one refresh.
+ */
+export const LEGACY_SESSION_HINT_COOKIE_NAME = 'new_api_has_session'
 
 /** Read a cookie value out of a `document.cookie`-shaped string. */
 export function readCookie(cookieHeader: string, name: string): string | null {
@@ -46,14 +50,71 @@ export function readCookie(cookieHeader: string, name: string): string | null {
   return null
 }
 
+/** The stored refresh token, or `null` when there is none or storage fails. */
+export function readRefreshToken(): string | null {
+  try {
+    return window.localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY) || null
+  } catch {
+    return null
+  }
+}
+
+/** Keep the refresh token a login or refresh returned. */
+export function storeRefreshToken(token: string): void {
+  if (!token) return
+  try {
+    window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, token)
+  } catch {
+    // Without storage the session lasts until the access token expires.
+  }
+}
+
+/** The SID of a refresh token, or `''` when it has none. */
+export function refreshTokenSID(token: string): string {
+  const separator = token.indexOf('.')
+  return separator > 0 ? token.slice(0, separator) : ''
+}
+
 /**
- * Whether the server currently claims a login session exists.
+ * Remove the stored refresh token, but only while it is still the one that
+ * ended: the token `token`, or any token of session `sid`. Another tab may
+ * already have stored the token of a newer sign-in, which must survive.
+ */
+export function forgetRefreshToken(match: { sid?: string; token?: string }) {
+  const stored = readRefreshToken()
+  if (!stored) return
+  const matches =
+    (match.token !== undefined && stored === match.token) ||
+    (match.sid !== undefined && refreshTokenSID(stored) === match.sid)
+  if (!matches) return
+  try {
+    window.localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY)
+  } catch {
+    // Nothing more to do when storage is unavailable.
+  }
+}
+
+/**
+ * Delete the legacy session marker once a refresh without a stored token is
+ * refused. The backend deletes it itself when it shares the console's host;
+ * on a console served from another host only the page can.
+ */
+export function forgetLegacySessionHint(): void {
+  if (typeof document === 'undefined') return
+  document.cookie = `${LEGACY_SESSION_HINT_COOKIE_NAME}=; path=/; max-age=0`
+}
+
+/**
+ * Whether a refresh may succeed: the browser keeps a refresh token, or still
+ * has the legacy session marker of a session signed in before the change.
  *
- * Returns `true` when the hint cannot be read at all (no `document`, as in SSR
- * or a non-DOM test environment). An unreadable hint is not evidence of
- * absence, and the safe direction is to let the refresh proceed.
+ * Returns `true` when neither can be read at all (no `window`, as in SSR or a
+ * non-DOM test environment): an unreadable hint is not evidence of absence.
  */
 export function hasSessionHint(): boolean {
-  if (typeof document === 'undefined') return true
-  return readCookie(document.cookie, SESSION_HINT_COOKIE_NAME) !== null
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return true
+  }
+  if (readRefreshToken()) return true
+  return readCookie(document.cookie, LEGACY_SESSION_HINT_COOKIE_NAME) !== null
 }

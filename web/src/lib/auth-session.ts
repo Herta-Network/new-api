@@ -21,7 +21,14 @@ import axios from 'axios'
 import { t } from 'i18next'
 
 import { publishAuthSessionEvent } from '@/lib/auth-session-sync'
-import { hasSessionHint } from '@/lib/session-hint'
+import {
+  forgetLegacySessionHint,
+  forgetRefreshToken,
+  hasSessionHint,
+  readRefreshToken,
+  storeRefreshToken,
+} from '@/lib/refresh-token'
+import { getApiBaseUrl } from '@/lib/runtime-config'
 import {
   useAuthStore,
   type AuthBootstrapState,
@@ -68,12 +75,14 @@ export class AuthRotationError extends Error {
 }
 
 const authClient = axios.create({
-  baseURL: '',
-  withCredentials: true,
   headers: {
     // no-store forbids storage; no-cache also revalidates any older cached response.
     'Cache-Control': 'no-cache, no-store',
   },
+})
+authClient.interceptors.request.use((config) => {
+  config.baseURL = getApiBaseUrl()
+  return config
 })
 
 const refreshRaceDelays = [80, 200, 500] as const
@@ -153,6 +162,7 @@ export function applyAuthBundle(
 ): void {
   const previousSID = useAuthStore.getState().auth.session?.sid
   authEpoch += 1
+  if (bundle.refresh_token) storeRefreshToken(bundle.refresh_token)
   useAuthStore.getState().auth.setBundle(bundle)
   if (synchronizeTabs && previousSID !== bundle.session.sid) {
     publishAuthSessionEvent('authenticated', bundle.session.sid)
@@ -184,6 +194,12 @@ export function applyAuthRotation(value: unknown): void {
   )
 }
 
+/**
+ * Forget this tab's authentication. With `synchronizeTabs` the session has
+ * ended (sign-out, revocation, a refused refresh): its stored refresh token
+ * is removed and the other tabs are told. Without it only this tab resets,
+ * and a refresh token another tab keeps stays usable.
+ */
 export function clearAuthentication(
   synchronizeTabs = true,
   bootstrapState: AuthBootstrapState = 'complete'
@@ -192,6 +208,7 @@ export function clearAuthentication(
   authEpoch += 1
   useAuthStore.getState().auth.reset(bootstrapState)
   if (synchronizeTabs && sid) {
+    forgetRefreshToken({ sid })
     publishAuthSessionEvent('signed_out', sid)
   }
 }
@@ -274,12 +291,15 @@ export function createRefreshRunner(
 }
 
 async function requestRefresh(
+  refreshToken: string | null,
   expectedSID?: string
 ): Promise<AuthRefreshHTTPResponse> {
   try {
+    // Without a stored token the backend may still accept the legacy refresh
+    // cookie of a session signed in before the console kept the token.
     const response = await authClient.post(
       '/api/user/auth/refresh',
-      undefined,
+      refreshToken ? { refresh_token: refreshToken } : undefined,
       {
         headers: expectedSID ? { 'X-Auth-Session': expectedSID } : undefined,
       }
@@ -296,8 +316,14 @@ async function requestRefresh(
 }
 
 function runRefresh(refreshEpoch: number): Promise<RefreshOutcome> {
+  let sentToken: string | null = null
   return createRefreshRunner({
-    request: requestRefresh,
+    // Read the token for every attempt inside the cross-tab lock: another tab
+    // may have just replaced it.
+    request: (expectedSID) => {
+      sentToken = readRefreshToken()
+      return requestRefresh(sentToken, expectedSID)
+    },
     getExpectedSID: () => useAuthStore.getState().auth.session?.sid,
     parseBundle: (value) => (isAuthBundle(value) ? value : null),
     acceptBundle: (bundle) => applyAuthBundle(bundle, false),
@@ -306,6 +332,9 @@ function runRefresh(refreshEpoch: number): Promise<RefreshOutcome> {
         useAuthStore.getState().auth.reset('idle')
         return
       }
+      // A refused token is useless even when this tab had no session yet.
+      if (synchronizeTabs && sentToken) forgetRefreshToken({ token: sentToken })
+      if (synchronizeTabs && !sentToken) forgetLegacySessionHint()
       clearAuthentication(synchronizeTabs, bootstrapState)
     },
     markTransient: () => useAuthStore.getState().auth.setBootstrapState('idle'),

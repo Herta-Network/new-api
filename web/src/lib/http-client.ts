@@ -26,6 +26,7 @@ import {
   refreshAuthentication,
 } from '@/lib/auth-session'
 import { handleServerError } from '@/lib/handle-server-error'
+import { getApiBaseUrl } from '@/lib/runtime-config'
 import {
   getServerErrorMessage,
   safeServerErrorMessage,
@@ -46,9 +47,9 @@ declare module 'axios' {
 
 export type ApiRequestConfig = AxiosRequestConfig
 
+// Requests go to the backend of the runtime configuration and carry no
+// cookies: the access token travels in the Authorization header.
 export const api = axios.create({
-  baseURL: '',
-  withCredentials: true,
   headers: {
     // no-store forbids storage; no-cache also revalidates any older cached response.
     'Cache-Control': 'no-cache, no-store',
@@ -145,6 +146,7 @@ api.interceptors.response.use(
 )
 
 api.interceptors.request.use(async (config) => {
+  config.baseURL = getApiBaseUrl()
   if (config.singleUseAuthorization || config.headers.has('X-Security-Proof')) {
     // Refresh before spending a proof/flow, never by replaying its request.
     config.skipAuthRefresh = true

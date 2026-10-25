@@ -41,6 +41,46 @@ export function consumeOAuthLoginRedirect(state: string): string | null {
   }
 }
 
+const OAUTH_LOGIN_NONCE_KEY_PREFIX = 'oauth_login_nonce:'
+
+/**
+ * A random value that binds a sign-in to this tab: POST /api/oauth/state
+ * receives it, the tab keeps it in sessionStorage under the returned state,
+ * and the callback sends it back, so a callback link started in another
+ * browser cannot sign this one in.
+ */
+export function createOAuthLoginNonce(): string {
+  const bytes = new Uint8Array(32)
+  globalThis.crypto.getRandomValues(bytes)
+  return btoa(String.fromCharCode(...bytes))
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replace(/=+$/, '')
+}
+
+export function rememberOAuthLoginNonce(state: string, nonce: string): void {
+  try {
+    window.sessionStorage.setItem(
+      `${OAUTH_LOGIN_NONCE_KEY_PREFIX}${state}`,
+      nonce
+    )
+  } catch {
+    // The callback then cannot prove the sign-in started here and fails.
+  }
+}
+
+/** Read and forget the nonce of a sign-in; `null` when this tab has none. */
+export function consumeOAuthLoginNonce(state: string): string | null {
+  try {
+    const key = `${OAUTH_LOGIN_NONCE_KEY_PREFIX}${state}`
+    const nonce = window.sessionStorage.getItem(key)
+    window.sessionStorage.removeItem(key)
+    return nonce
+  } catch {
+    return null
+  }
+}
+
 /** Minimal shape of `sessionStorage`, kept structural so tests can fake it. */
 export interface OAuthModeStorage {
   getItem: (key: string) => string | null

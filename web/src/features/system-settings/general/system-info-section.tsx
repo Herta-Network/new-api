@@ -46,9 +46,28 @@ import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { isValidTaskPublicAddress } from './task-public-address'
 
+/** An empty value, or an http(s) origin: the console is served at its root. */
+function isValidFrontendAddress(value: string): boolean {
+  if (!value.trim()) return true
+  try {
+    const url = new URL(value.trim())
+    return (
+      (url.protocol === 'https:' || url.protocol === 'http:') &&
+      !url.username &&
+      !url.password &&
+      url.pathname === '/' &&
+      !url.search &&
+      !url.hash
+    )
+  } catch {
+    return false
+  }
+}
+
 const _systemInfoSchema = z.object({
   SystemName: z.string().min(1),
   ServerAddress: z.string().optional(),
+  FrontendAddress: z.string().refine(isValidFrontendAddress),
   TaskPublicAddress: z.string().refine(isValidTaskPublicAddress),
   Logo: z.string().url().optional().or(z.literal('')),
   Footer: z.string().optional(),
@@ -81,6 +100,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
   const normalizedDefaults: SystemInfoFormValues = {
     SystemName: normalizeValue(defaultValues.SystemName),
     ServerAddress: normalizeValue(defaultValues.ServerAddress),
+    FrontendAddress: normalizeValue(defaultValues.FrontendAddress),
     TaskPublicAddress: normalizeValue(defaultValues.TaskPublicAddress),
     Logo: normalizeValue(defaultValues.Logo),
     Footer: normalizeValue(defaultValues.Footer),
@@ -100,6 +120,12 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
       error: () => t('System name is required'),
     }),
     ServerAddress: z.string().optional(),
+    FrontendAddress: z.string().refine(isValidFrontendAddress, {
+      error: () =>
+        t(
+          'Enter the frontend address as an origin, such as https://app.example.com'
+        ),
+    }),
     TaskPublicAddress: z.string().refine(isValidTaskPublicAddress, {
       error: () =>
         t(
@@ -130,7 +156,11 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
       onSubmit: async (_data, changedFields) => {
         for (const [key, value] of Object.entries(changedFields)) {
           let v = normalizeValue(value)
-          if (key === 'ServerAddress' || key === 'TaskPublicAddress') {
+          if (
+            key === 'ServerAddress' ||
+            key === 'FrontendAddress' ||
+            key === 'TaskPublicAddress'
+          ) {
             v = v.replace(/\/+$/, '')
           }
           await updateOption.mutateAsync({
@@ -184,7 +214,26 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                     </FormControl>
                     <FormDescription>
                       {t(
-                        'The public URL of your server, used for OAuth callbacks, webhooks, and other external integrations'
+                        'The public URL of the backend, used for the AI API, payment callbacks, and files the backend serves. It is also the console address while Frontend Address is empty.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='FrontendAddress'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Frontend Address')}</FormLabel>
+                    <FormControl>
+                      <Input placeholder='https://app.example.com' {...field} />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'The public URL of the console when it is deployed apart from the backend. Email links, payment return pages, OAuth callbacks, and the default Passkey domain use it. Leave empty when the backend serves the console.'
                       )}
                     </FormDescription>
                     <FormMessage />

@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import axios from 'axios'
 
 import { api, refreshAuthentication, type RefreshOutcome } from '@/lib/api'
+import { forgetRefreshToken, readRefreshToken } from '@/lib/refresh-token'
 import { AuthOperationError } from '@/lib/secure-verification'
 import {
   getServerErrorMessageKey,
@@ -26,6 +27,10 @@ import {
 } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
+import {
+  createOAuthLoginNonce,
+  rememberOAuthLoginNonce,
+} from './lib/oauth-callback-mode'
 import {
   clearPasswordEncryptionCache,
   encryptPassword,
@@ -133,11 +138,19 @@ export async function logout(): Promise<ApiResponse> {
   return executeLogout({
     getExpectedSID: () => useAuthStore.getState().auth.session?.sid,
     request: async (sid) => {
-      const res = await api.post('/api/user/auth/logout', undefined, {
-        headers: sid ? { 'X-Auth-Session': sid } : undefined,
-        skipAuthRefresh: true,
-        skipErrorHandler: true,
-      })
+      const refreshToken = readRefreshToken()
+      const res = await api.post(
+        '/api/user/auth/logout',
+        refreshToken ? { refresh_token: refreshToken } : undefined,
+        {
+          headers: sid ? { 'X-Auth-Session': sid } : undefined,
+          skipAuthRefresh: true,
+          skipErrorHandler: true,
+        }
+      )
+      if (res.data?.success && refreshToken) {
+        forgetRefreshToken({ token: refreshToken })
+      }
       return res.data
     },
     refresh: refreshAuthentication,
@@ -178,12 +191,14 @@ export async function createOAuthAuthorization(
   proofToken?: string
 ): Promise<{ state: string; authorizationUrl?: string }> {
   const aff = intent === 'login' ? getAffiliateCode() : ''
+  const nonce = intent === 'login' ? createOAuthLoginNonce() : undefined
   const res = await api.post(
     '/api/oauth/state',
     {
       provider,
       intent,
       aff: aff || undefined,
+      nonce,
       scope: operation?.scope,
       ...(operation?.context ? { context: operation.context } : {}),
     },
@@ -197,12 +212,19 @@ export async function createOAuthAuthorization(
     }
   )
   if (res.data?.success) {
-    if (typeof res.data.data === 'string') return { state: res.data.data }
-    if (typeof res.data.data?.flow_token === 'string') {
-      return {
+    let authorization: { state: string; authorizationUrl?: string } | null =
+      null
+    if (typeof res.data.data === 'string') {
+      authorization = { state: res.data.data }
+    } else if (typeof res.data.data?.flow_token === 'string') {
+      authorization = {
         state: res.data.data.flow_token,
         authorizationUrl: res.data.data.authorization_url,
       }
+    }
+    if (authorization) {
+      if (nonce) rememberOAuthLoginNonce(authorization.state, nonce)
+      return authorization
     }
   }
   throw new AuthOperationError(
