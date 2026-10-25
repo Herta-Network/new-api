@@ -72,7 +72,7 @@ export type PaymentPlatformsInfo = {
   exchange_rate_api_key_configured: boolean
 }
 
-/** Fee modes of a payment method (model.PaymentFee*). */
+/** Fee modes of a payment method (entity.PaymentFee*). */
 export const PAYMENT_FEE_MODE = {
   NONE: 0,
   RATE: 1,
@@ -87,25 +87,68 @@ export const PAYMENT_FEE_MODE_OPTIONS = [
   { value: PAYMENT_FEE_MODE.RATE_AND_FIXED, labelKey: 'Percentage + fixed' },
 ] as const
 
-/** The wallet balance method: fixed id, can be disabled but never deleted. */
+/**
+ * The wallet balance: a payment method of fixed id that can be disabled but
+ * never deleted, collected by a channel of its own that is not edited.
+ */
+export const BALANCE_PAYMENT_OPTION_ID = -1
 export const BALANCE_PAYMENT_METHOD_ID = -1
 export const BALANCE_PAYMENT_PLATFORM = 'balance'
 
-/** A payment method as the administrator sees it, secrets blanked. */
-export type PaymentMethod = {
+/**
+ * A payment method buyers choose (entity.PaymentOption): its name, icon and
+ * fee; its channels collect it.
+ */
+export type PaymentOption = {
   id: number
   name: string
-  platform: string
   icon: string
   description: string
   sort: number
   enabled: boolean
-  domain: string
   fee_mode: number
   /** Basis points of the price. */
   fee_rate_bp: number
   /** Hundredths of the site currency. */
   fee_fixed: number
+  created_at: number
+  updated_at: number
+  /** How many channels collect it */
+  methods: number
+}
+
+export type PaymentOptionInput = Pick<
+  PaymentOption,
+  | 'name'
+  | 'icon'
+  | 'description'
+  | 'sort'
+  | 'enabled'
+  | 'fee_mode'
+  | 'fee_rate_bp'
+  | 'fee_fixed'
+>
+
+/**
+ * A payment channel (entity.PaymentMethod) as the administrator sees it,
+ * secrets blanked: a gateway account that collects a payment method within
+ * an amount range, by priority and weight. Buyers never see it.
+ */
+export type PaymentMethod = {
+  id: number
+  name: string
+  platform: string
+  /** The payment method it collects */
+  option_id: number
+  enabled: boolean
+  /** Hundredths of the site currency; 0 leaves that end open. */
+  min_amount: number
+  max_amount: number
+  /** The lowest priority is tried first. */
+  priority: number
+  /** Shares the orders of its priority by weight. */
+  weight: number
+  domain: string
   created_at: number
   updated_at: number
   config: Record<string, unknown>
@@ -118,37 +161,118 @@ export type PaymentMethodInput = Pick<
   PaymentMethod,
   | 'name'
   | 'platform'
-  | 'icon'
-  | 'description'
-  | 'sort'
+  | 'option_id'
   | 'enabled'
+  | 'min_amount'
+  | 'max_amount'
+  | 'priority'
+  | 'weight'
   | 'domain'
   | 'config'
-  | 'fee_mode'
-  | 'fee_rate_bp'
-  | 'fee_fixed'
 >
 
+export const paymentOptionsQueryKey = ['payment-options'] as const
 export const paymentMethodsQueryKey = ['payment-methods'] as const
 export const paymentPlatformsQueryKey = ['payment-platforms'] as const
 
-/** The editable fields of a method; secret config values stay blank. */
+/** The editable fields of a payment method. */
+export function toPaymentOptionInput(
+  option: PaymentOption
+): PaymentOptionInput {
+  return {
+    name: option.name,
+    icon: option.icon,
+    description: option.description,
+    sort: option.sort,
+    enabled: option.enabled,
+    fee_mode: option.fee_mode,
+    fee_rate_bp: option.fee_rate_bp,
+    fee_fixed: option.fee_fixed,
+  }
+}
+
+/** The editable fields of a channel; secret config values stay blank. */
 export function toPaymentMethodInput(
   method: PaymentMethod
 ): PaymentMethodInput {
   return {
     name: method.name,
     platform: method.platform,
-    icon: method.icon,
-    description: method.description,
-    sort: method.sort,
+    option_id: method.option_id,
     enabled: method.enabled,
+    min_amount: method.min_amount,
+    max_amount: method.max_amount,
+    priority: method.priority,
+    weight: method.weight,
     domain: method.domain,
     config: method.config,
-    fee_mode: method.fee_mode,
-    fee_rate_bp: method.fee_rate_bp,
-    fee_fixed: method.fee_fixed,
   }
+}
+
+export function usePaymentOptions() {
+  return useQuery({
+    queryKey: paymentOptionsQueryKey,
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<PaymentOption[]>>(
+        '/api/payment/settings/options'
+      )
+      return requireServerSuccess(res.data).data ?? []
+    },
+  })
+}
+
+type SavePaymentOptionRequest = {
+  /** Absent for a new payment method. */
+  id?: number
+  input: PaymentOptionInput
+}
+
+/** What buyers are offered changed: their lists and the admin's. */
+function invalidatePaymentLists(
+  queryClient: ReturnType<typeof useQueryClient>
+) {
+  void queryClient.invalidateQueries({ queryKey: paymentOptionsQueryKey })
+  void queryClient.invalidateQueries({ queryKey: paymentMethodsQueryKey })
+  void queryClient.invalidateQueries({ queryKey: paymentQueryKeys.allMethods })
+}
+
+export function useSavePaymentOption() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (request: SavePaymentOptionRequest) => {
+      const res =
+        request.id === undefined
+          ? await api.post<ApiResponse<PaymentOption>>(
+              '/api/payment/settings/options',
+              request.input
+            )
+          : await api.put<ApiResponse<PaymentOption>>(
+              `/api/payment/settings/options/${request.id}`,
+              request.input
+            )
+      return requireServerSuccess(res.data).data
+    },
+    onSuccess: () => {
+      toast.success(i18next.t('Payment method saved'))
+      invalidatePaymentLists(queryClient)
+    },
+  })
+}
+
+export function useDeletePaymentOption() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const res = await api.delete<ApiResponse<null>>(
+        `/api/payment/settings/options/${id}`
+      )
+      return requireServerSuccess(res.data)
+    },
+    onSuccess: () => {
+      toast.success(i18next.t('Payment method deleted'))
+      invalidatePaymentLists(queryClient)
+    },
+  })
 }
 
 export function usePaymentPlatforms() {
@@ -198,11 +322,8 @@ export function useSavePaymentMethod() {
       return requireServerSuccess(res.data).data
     },
     onSuccess: () => {
-      toast.success(i18next.t('Payment method saved'))
-      void queryClient.invalidateQueries({ queryKey: paymentMethodsQueryKey })
-      void queryClient.invalidateQueries({
-        queryKey: paymentQueryKeys.allMethods,
-      })
+      toast.success(i18next.t('Payment channel saved'))
+      invalidatePaymentLists(queryClient)
     },
   })
 }
@@ -217,11 +338,8 @@ export function useDeletePaymentMethod() {
       return requireServerSuccess(res.data)
     },
     onSuccess: () => {
-      toast.success(i18next.t('Payment method deleted'))
-      void queryClient.invalidateQueries({ queryKey: paymentMethodsQueryKey })
-      void queryClient.invalidateQueries({
-        queryKey: paymentQueryKeys.allMethods,
-      })
+      toast.success(i18next.t('Payment channel deleted'))
+      invalidatePaymentLists(queryClient)
     },
   })
 }
@@ -237,10 +355,7 @@ export function useSyncPaymentWebhook() {
     },
     onSuccess: () => {
       toast.success(i18next.t('Webhook synced'))
-      void queryClient.invalidateQueries({ queryKey: paymentMethodsQueryKey })
-      void queryClient.invalidateQueries({
-        queryKey: paymentQueryKeys.allMethods,
-      })
+      invalidatePaymentLists(queryClient)
     },
   })
 }

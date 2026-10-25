@@ -165,7 +165,73 @@ func GetPaymentPlatforms(c *gin.Context) {
 	})
 }
 
-// AdminListPaymentMethods lists the payment methods with their secrets
+// AdminListPaymentOptions lists the payment options with the number of
+// their channels.
+func AdminListPaymentOptions(c *gin.Context) {
+	options, err := payment.AdminOptions()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, options)
+}
+
+func decodePaymentOption(c *gin.Context) (payment.OptionInput, bool) {
+	var in payment.OptionInput
+	if err := common.DecodeJson(c.Request.Body, &in); err != nil {
+		common.ApiErrorT(c, "Invalid parameters")
+		return in, false
+	}
+	return in, true
+}
+
+func AdminCreatePaymentOption(c *gin.Context) {
+	in, ok := decodePaymentOption(c)
+	if !ok {
+		return
+	}
+	option, err := payment.CreateOption(in)
+	if err != nil {
+		paymentAPIError(c, err)
+		return
+	}
+	recordAudit(c, "payment.option_create", map[string]any{"id": option.Id, "name": option.Name})
+	common.ApiSuccess(c, option)
+}
+
+func AdminUpdatePaymentOption(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	in, ok := decodePaymentOption(c)
+	if !ok {
+		return
+	}
+	option, err := payment.UpdateOption(id, in)
+	if err != nil {
+		paymentAPIError(c, err)
+		return
+	}
+	recordAudit(c, "payment.option_update", map[string]any{"id": option.Id, "name": option.Name})
+	common.ApiSuccess(c, option)
+}
+
+func AdminDeletePaymentOption(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	if err := payment.DeleteOption(id); err != nil {
+		paymentAPIError(c, err)
+		return
+	}
+	common.ApiSuccess(c, nil)
+}
+
+// AdminListPaymentMethods lists the payment channels with their secrets
 // masked.
 func AdminListPaymentMethods(c *gin.Context) {
 	methods, err := payment.AdminMethods()

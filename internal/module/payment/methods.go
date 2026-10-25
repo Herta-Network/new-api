@@ -16,32 +16,35 @@ import (
 )
 
 var (
-	errMethodNotFound        error = common.NewMessage("Payment method not found")
-	errMethodNameRequired    error = common.NewMessage("The payment method name is required")
+	errMethodNotFound        error = common.NewMessage("Payment channel not found")
+	errMethodNameRequired    error = common.NewMessage("The payment channel name is required")
 	errMethodPlatform        error = common.NewMessage("Unsupported payment platform")
-	errMethodPlatformChanged error = common.NewMessage("The platform of a payment method cannot be changed")
+	errMethodPlatformChanged error = common.NewMessage("The platform of a payment channel cannot be changed")
 	errMethodFee             error = common.NewMessage("Invalid payment fee")
 	errMethodDomain          error = common.NewMessage("The callback domain must be a public http(s) URL without a query")
-	errMethodPendingOrders   error = common.NewMessage("This payment method has pending orders. Change or delete it after they are paid or closed.")
-	errBalanceUndeletable    error = common.NewMessage("The balance payment method cannot be deleted")
-	errNotifyAddressMissing  error = common.NewMessage("Set a public callback domain for this payment method, or a public server address, first")
+	errMethodPendingOrders   error = common.NewMessage("This payment channel has pending orders. Change or delete it after they are paid or closed.")
+	errMethodOption          error = common.NewMessage("Choose the payment method this channel collects")
+	errMethodAmountRange     error = common.NewMessage("Enter a lowest and highest amount with at most two decimal places; the highest must not be below the lowest")
+	errMethodRouting         error = common.NewMessage("Use a priority from 0 to 1000 and a weight from 1 to 1000")
+	errBalanceChannel        error = common.NewMessage("The balance channel cannot be changed. Change the balance payment method instead.")
+	errNotifyAddressMissing  error = common.NewMessage("Set a public callback domain for this payment channel, or a public server address, first")
 )
 
-// MethodInput is an administrator's payment method form. In Config, a
+// MethodInput is an administrator's payment channel form. In Config, a
 // secret field left empty keeps its stored value and server-managed fields
-// are ignored.
+// are ignored. Amounts count hundredths of the site currency; 0 leaves that
+// end of the range open.
 type MethodInput struct {
-	Name        string         `json:"name"`
-	Platform    string         `json:"platform"`
-	Icon        string         `json:"icon"`
-	Description string         `json:"description"`
-	Sort        int            `json:"sort"`
-	Enabled     bool           `json:"enabled"`
-	Domain      string         `json:"domain"`
-	Config      map[string]any `json:"config"`
-	FeeMode     int            `json:"fee_mode"`
-	FeeRateBp   int64          `json:"fee_rate_bp"`
-	FeeFixed    int64          `json:"fee_fixed"`
+	Name      string         `json:"name"`
+	Platform  string         `json:"platform"`
+	OptionId  int            `json:"option_id"`
+	Enabled   bool           `json:"enabled"`
+	MinAmount int64          `json:"min_amount"`
+	MaxAmount int64          `json:"max_amount"`
+	Priority  int            `json:"priority"`
+	Weight    int            `json:"weight"`
+	Domain    string         `json:"domain"`
+	Config    map[string]any `json:"config"`
 }
 
 // MethodDetail is a payment method as the administrator sees it. Secret
@@ -155,15 +158,29 @@ func normalizeMethodConfig(platform string, merged []byte) (string, error) {
 	return "", common.NewMessage("Invalid payment configuration: {{error}}", map[string]any{"error": err.Error()})
 }
 
-// validateMethodInput checks the fields every platform shares.
+// validateMethodInput checks the fields every platform shares: the channel
+// collects a payment option other than the balance, within an amount range,
+// by priority and weight.
 func validateMethodInput(in *MethodInput) error {
-	in.Name, in.Icon, in.Domain = strings.TrimSpace(in.Name), strings.TrimSpace(in.Icon), strings.TrimSpace(in.Domain)
-	if in.Name == "" || len(in.Name) > 100 || len(in.Icon) > 255 {
+	in.Name, in.Domain = strings.TrimSpace(in.Name), strings.TrimSpace(in.Domain)
+	if in.Name == "" || len(in.Name) > 100 {
 		return errMethodNameRequired
 	}
-	if in.FeeMode < entity.PaymentFeeNone || in.FeeMode > entity.PaymentFeeRateAndFixed ||
-		in.FeeRateBp < 0 || in.FeeRateBp > 10000 || in.FeeFixed < 0 || in.FeeFixed > maxOrderAmount {
-		return errMethodFee
+	if in.OptionId == entity.BalancePaymentOptionID {
+		return errMethodOption
+	}
+	if _, err := store.GetOption(in.OptionId); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errMethodOption
+		}
+		return err
+	}
+	if in.MinAmount < 0 || in.MaxAmount < 0 || in.MinAmount > maxOrderAmount || in.MaxAmount > maxOrderAmount ||
+		(in.MaxAmount != 0 && in.MaxAmount < in.MinAmount) {
+		return errMethodAmountRange
+	}
+	if in.Priority < 0 || in.Priority > 1000 || in.Weight < 1 || in.Weight > 1000 {
+		return errMethodRouting
 	}
 	if in.Domain != "" {
 		if _, err := gateway.NotifyURL(gateway.Method{Platform: "check", Token: "check", Domain: in.Domain}, ""); err != nil || len(in.Domain) > 255 {
@@ -193,8 +210,8 @@ func CreateMethod(ctx context.Context, in MethodInput) (*MethodDetail, error) {
 		return nil, err
 	}
 	method := &entity.PaymentMethod{
-		Name: in.Name, Platform: in.Platform, Icon: in.Icon, Description: in.Description, Sort: in.Sort, Enabled: in.Enabled,
-		Domain: in.Domain, Config: config, FeeMode: in.FeeMode, FeeRateBp: in.FeeRateBp, FeeFixed: in.FeeFixed, Token: token,
+		Name: in.Name, Platform: in.Platform, OptionId: in.OptionId, Enabled: in.Enabled, MinAmount: in.MinAmount, MaxAmount: in.MaxAmount,
+		Priority: in.Priority, Weight: in.Weight, Domain: in.Domain, Config: config, Token: token,
 	}
 	var registered *registeredWebhook
 	if method.Platform == gateway.PlatformStripe {
@@ -227,21 +244,18 @@ func UpdateMethod(ctx context.Context, id int, in MethodInput) (*MethodDetail, e
 		return nil, errMethodPlatformChanged
 	}
 	if method.Platform == entity.PaymentPlatformBalance {
-		// The balance has no gateway: no configuration, domain or fee.
-		in.Domain, in.FeeMode, in.FeeRateBp, in.FeeFixed = "", entity.PaymentFeeNone, 0, 0
+		return nil, errBalanceChannel
 	}
 	if err := validateMethodInput(&in); err != nil {
 		return nil, err
 	}
-	config := method.Config
-	if method.Platform != entity.PaymentPlatformBalance {
-		merged, err := mergeConfig(method.Platform, method.Config, in.Config)
-		if err != nil {
-			return nil, errInvalidPurchase
-		}
-		if config, err = normalizeMethodConfig(method.Platform, merged); err != nil {
-			return nil, err
-		}
+	merged, err := mergeConfig(method.Platform, method.Config, in.Config)
+	if err != nil {
+		return nil, errInvalidPurchase
+	}
+	config, err := normalizeMethodConfig(method.Platform, merged)
+	if err != nil {
+		return nil, err
 	}
 	// The stored configuration is compared in its canonical form: one a
 	// startup migration rewrote may order its fields differently.
@@ -259,8 +273,8 @@ func UpdateMethod(ctx context.Context, id int, in MethodInput) (*MethodDetail, e
 		}
 	}
 	previous := *method
-	method.Name, method.Icon, method.Description, method.Sort, method.Enabled = in.Name, in.Icon, in.Description, in.Sort, in.Enabled
-	method.Domain, method.Config, method.FeeMode, method.FeeRateBp, method.FeeFixed = in.Domain, config, in.FeeMode, in.FeeRateBp, in.FeeFixed
+	method.Name, method.OptionId, method.Enabled, method.MinAmount, method.MaxAmount = in.Name, in.OptionId, in.Enabled, in.MinAmount, in.MaxAmount
+	method.Priority, method.Weight, method.Domain, method.Config = in.Priority, in.Weight, in.Domain, config
 	var registered *registeredWebhook
 	if method.Platform == gateway.PlatformStripe {
 		if registered, err = followStripeWebhook(ctx, &previous, method); err != nil {
@@ -287,7 +301,7 @@ func DeleteMethod(ctx context.Context, id int) error {
 		return err
 	}
 	if method.Id == entity.BalancePaymentMethodID {
-		return errBalanceUndeletable
+		return errBalanceChannel
 	}
 	pending, err := store.CountPendingInvoices(method.Id)
 	if err != nil {

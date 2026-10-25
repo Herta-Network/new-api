@@ -33,10 +33,11 @@ var (
 	errQuotaUnitMisconfigured error = common.NewMessage("Quota unit is misconfigured")
 )
 
-// PurchaseRequest is what a buyer asks to buy.
+// PurchaseRequest is what a buyer asks to buy, and the payment option to
+// pay with.
 type PurchaseRequest struct {
 	Purpose         string `json:"purpose"`
-	PaymentMethodId int    `json:"payment_method_id"`
+	PaymentOptionId int    `json:"payment_option_id"`
 	// Amount is the top-up amount in the site currency, with at most two
 	// decimal places.
 	Amount json.Number `json:"amount"`
@@ -62,17 +63,23 @@ type Quote struct {
 	QuotaAmount int    `json:"quota_amount"`
 	QuotaRate   string `json:"quota_rate"`
 	// PaymentAmount and PaymentCurrency preview what the gateway collects;
-	// empty for the balance.
+	// empty for the balance, and when the option's channels for the price
+	// collect different currencies.
 	PaymentAmount   int64  `json:"payment_amount"`
 	PaymentCurrency string `json:"payment_currency"`
 
-	method *entity.PaymentMethod
-	plan   *model.SubscriptionPlan
+	option *entity.PaymentOption
+	// channels are the channels to invoice, in order; method is the first,
+	// or the balance.
+	channels []channel
+	method   *entity.PaymentMethod
+	plan     *model.SubscriptionPlan
 }
 
-// QuotePurchase prices a purchase for userId with the chosen payment method.
-// A free plan needs no payment method: it completes like a balance purchase
-// of nothing.
+// QuotePurchase prices a purchase for userId with the chosen payment
+// option and routes it to the option's channels that take its price. A free
+// plan needs no payment option: it completes like a balance purchase of
+// nothing.
 func QuotePurchase(ctx context.Context, userId int, req PurchaseRequest) (*Quote, error) {
 	currency := operation_setting.PaymentCurrency()
 	if currency == "" {
@@ -97,18 +104,30 @@ func QuotePurchase(ctx context.Context, userId int, req PurchaseRequest) (*Quote
 	if quote.Amount > maxOrderAmount {
 		return nil, errAmountOutOfRange
 	}
-	if quote.method.Platform == entity.PaymentPlatformBalance {
+	if quote.option.Id == entity.BalancePaymentOptionID {
+		method, err := store.GetMethodIncludingDeleted(entity.BalancePaymentMethodID)
+		if err != nil {
+			return nil, err
+		}
+		quote.method = method
 		return quote, nil
 	}
-	gw, err := openGateway(quote.method)
-	if err != nil {
-		return nil, errMethodUnavailable
-	}
-	rate, err := chargeRate(ctx, gw, currency)
+	channels, err := routeChannels(ctx, quote.option, quote.Price, currency)
 	if err != nil {
 		return nil, err
 	}
-	charge, err := gateway.ChargeFor(gw, quote.Amount, currency, rate)
+	quote.channels, quote.method = channels, channels[0].method
+	first := channels[0].gw
+	for _, candidate := range channels[1:] {
+		if candidate.gw.ChargeCurrency() != first.ChargeCurrency() {
+			return quote, nil
+		}
+	}
+	rate, err := chargeRate(ctx, first, currency)
+	if err != nil {
+		return nil, err
+	}
+	charge, err := gateway.ChargeFor(first, quote.Amount, currency, rate)
 	if err != nil {
 		return nil, err
 	}
@@ -117,14 +136,14 @@ func QuotePurchase(ctx context.Context, userId int, req PurchaseRequest) (*Quote
 }
 
 // quoteTopup prices a wallet top-up: the group ratio and the amount discount
-// change the price, the method's fee is added, and the quota is the amount
+// change the price, the option's fee is added, and the quota is the amount
 // converted to USD.
 func quoteTopup(ctx context.Context, userId int, req PurchaseRequest, quote *Quote) error {
-	method, err := buyableMethod(req.PaymentMethodId)
+	option, err := buyableOption(req.PaymentOptionId)
 	if err != nil {
 		return err
 	}
-	if method.Platform == entity.PaymentPlatformBalance {
+	if option.Id == entity.BalancePaymentOptionID {
 		return errBalanceTopup
 	}
 	topup, err := gateway.ParseAmount(req.Amount.String())
@@ -164,11 +183,11 @@ func quoteTopup(ctx context.Context, userId int, req PurchaseRequest, quote *Quo
 	if err := model.ValidateTopUpQuotaCapacity(userId, quota); err != nil {
 		return err
 	}
-	fee, err := methodFee(method, due.IntPart())
+	fee, err := optionFee(option, due.IntPart())
 	if err != nil {
 		return err
 	}
-	quote.method = method
+	quote.option = option
 	quote.Subject = "Top-up " + gateway.FormatAmount(topup) + " " + quote.Currency
 	quote.TopupAmount = topup
 	quote.Price = topup
@@ -180,8 +199,8 @@ func quoteTopup(ctx context.Context, userId int, req PurchaseRequest, quote *Quo
 }
 
 // quoteSubscription prices a plan: its price in the site currency, plus the
-// method's fee. The balance pays the price converted to quota, rounded up,
-// without a fee; a free plan costs nothing whatever the method.
+// option's fee. The balance pays the price converted to quota, rounded up,
+// without a fee; a free plan costs nothing whatever the option.
 func quoteSubscription(ctx context.Context, req PurchaseRequest, quote *Quote) error {
 	plan, err := model.GetSubscriptionPlanById(req.PlanId)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -200,20 +219,16 @@ func quoteSubscription(ctx context.Context, req PurchaseRequest, quote *Quote) e
 	quote.plan, quote.PlanId, quote.Subject = plan, plan.Id, plan.Title
 	quote.Price, quote.Amount = price, price
 	if price == 0 {
-		method, err := store.GetMethodIncludingDeleted(entity.BalancePaymentMethodID)
-		if err != nil {
-			return err
-		}
-		quote.method = method
+		quote.option = &entity.PaymentOption{Id: entity.BalancePaymentOptionID}
 		return nil
 	}
-	method, err := buyableMethod(req.PaymentMethodId)
+	option, err := buyableOption(req.PaymentOptionId)
 	if err != nil {
 		return err
 	}
-	quote.method = method
-	if method.Platform != entity.PaymentPlatformBalance {
-		fee, err := methodFee(method, price)
+	quote.option = option
+	if option.Id != entity.BalancePaymentOptionID {
+		fee, err := optionFee(option, price)
 		if err != nil {
 			return err
 		}
@@ -259,32 +274,16 @@ func PlanPrice(priceAmount float64) (int64, error) {
 	return price.IntPart(), nil
 }
 
-// buyableMethod loads a payment method a buyer may choose: it exists and is
-// enabled.
-func buyableMethod(id int) (*entity.PaymentMethod, error) {
-	method, err := store.GetMethod(id)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, errMethodUnavailable
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !method.Enabled {
-		return nil, errMethodUnavailable
-	}
-	return method, nil
-}
-
-// methodFee is the fee a method charges on top of due, in hundredths: a
+// optionFee is the fee an option charges on top of due, in hundredths: a
 // share of due in basis points, rounded down, a fixed amount, or both, as
-// the method's fee mode selects.
-func methodFee(method *entity.PaymentMethod, due int64) (int64, error) {
+// the option's fee mode selects.
+func optionFee(option *entity.PaymentOption, due int64) (int64, error) {
 	fee := decimal.Zero
-	if method.FeeMode == entity.PaymentFeeRate || method.FeeMode == entity.PaymentFeeRateAndFixed {
-		fee = decimal.NewFromInt(due).Mul(decimal.NewFromInt(method.FeeRateBp)).Shift(-4).Floor()
+	if option.FeeMode == entity.PaymentFeeRate || option.FeeMode == entity.PaymentFeeRateAndFixed {
+		fee = decimal.NewFromInt(due).Mul(decimal.NewFromInt(option.FeeRateBp)).Shift(-4).Floor()
 	}
-	if method.FeeMode == entity.PaymentFeeFixed || method.FeeMode == entity.PaymentFeeRateAndFixed {
-		fee = fee.Add(decimal.NewFromInt(method.FeeFixed))
+	if option.FeeMode == entity.PaymentFeeFixed || option.FeeMode == entity.PaymentFeeRateAndFixed {
+		fee = fee.Add(decimal.NewFromInt(option.FeeFixed))
 	}
 	if fee.IsNegative() || fee.GreaterThan(decimal.NewFromInt(maxOrderAmount)) {
 		return 0, errAmountOutOfRange

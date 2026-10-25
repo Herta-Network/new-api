@@ -72,7 +72,7 @@ it('lists the invoices of an order with the payment that completed it and why th
     invoice({ status: 3, close_reason: 'order_paid' }),
     invoice({
       id: 2,
-      invoice_no: order.order_no + 'R2',
+      invoice_no: `${order.order_no}R2`,
       platform: 'epay',
       payment_amount: 14411,
       payment_currency: 'CNY',

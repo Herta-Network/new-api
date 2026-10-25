@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { ShieldAlert } from 'lucide-react'
-import { useEffect, useMemo } from 'react'
+import { useEffect } from 'react'
 import { useForm, useWatch, type Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
@@ -27,7 +27,6 @@ import { PasswordInput } from '@/components/password-input'
 import { StatusBadge } from '@/components/status-badge'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Combobox } from '@/components/ui/combobox'
 import {
   Form,
   FormControl,
@@ -48,7 +47,6 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import { PAYMENT_ICONS } from '@/features/wallet/lib/payment-icons'
 
 import {
   SettingsForm,
@@ -60,15 +58,13 @@ import {
   createPaymentMethodSchema,
   paymentMethodFormDefaults,
   toPaymentMethodRequest,
-  usesFeeRate,
-  usesFixedFee,
   type PaymentMethodFormValues,
 } from './payment-method-form'
 import {
-  BALANCE_PAYMENT_PLATFORM,
-  PAYMENT_FEE_MODE_OPTIONS,
+  BALANCE_PAYMENT_OPTION_ID,
   useSavePaymentMethod,
   type PaymentMethod,
+  type PaymentOption,
   type PaymentPlatform,
 } from './payment-methods-api'
 
@@ -77,19 +73,28 @@ const PAYMENT_METHOD_FORM_ID = 'payment-method-form'
 type PaymentMethodDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** The method to edit; null creates a gateway method. */
+  /** The channel to edit; null creates one. */
   method: PaymentMethod | null
   platforms: PaymentPlatform[]
-  /** Site currency the fixed fee is entered in. */
+  /** The payment methods a channel can collect. */
+  options: PaymentOption[]
+  /** Site currency the amount range is entered in. */
   currency: string
 }
 
+/**
+ * Creates or edits a payment channel: a gateway account, the payment method
+ * it collects, and the amounts, priority and weight it takes orders by.
+ */
 export function PaymentMethodDialog(props: PaymentMethodDialogProps) {
   const { t } = useTranslation()
   const saveMethod = useSavePaymentMethod()
   const secretsSet = props.method?.secrets_set ?? {}
   const fieldsOf = (platform: string) =>
     props.platforms.find((item) => item.platform === platform)?.fields ?? []
+  const collectable = props.options.filter(
+    (option) => option.id !== BALANCE_PAYMENT_OPTION_ID
+  )
 
   const form = useForm<PaymentMethodFormValues>({
     // The schema follows the platform chosen in the form.
@@ -101,25 +106,12 @@ export function PaymentMethodDialog(props: PaymentMethodDialogProps) {
       )(values, context, options),
     defaultValues: paymentMethodFormDefaults([], null, ''),
   })
-  const [platform, feeMode, config] = useWatch({
+  const [platform, config] = useWatch({
     control: form.control,
-    name: ['platform', 'fee_mode', 'config'],
+    name: ['platform', 'config'],
   })
   // A field shown only under a choice of another one follows that choice.
   const fields = applicablePaymentFields(fieldsOf(platform), config ?? {})
-  // An empty icon shows the platform's own icon to buyers.
-  const iconOptions = useMemo(
-    () => [
-      { value: '', label: t('Platform icon') },
-      ...PAYMENT_ICONS.map((icon) => ({
-        value: icon.name,
-        label: t(icon.labelKey),
-        icon: <icon.Icon className='size-4' />,
-      })),
-    ],
-    [t]
-  )
-  const isBalance = platform === BALANCE_PAYMENT_PLATFORM
   const isEditing = props.method !== null
 
   useEffect(() => {
@@ -131,10 +123,13 @@ export function PaymentMethodDialog(props: PaymentMethodDialogProps) {
         props.platforms.find((item) => item.platform === initialPlatform)
           ?.fields ?? [],
         props.method,
-        initialPlatform
+        initialPlatform,
+        collectable.length === 1 ? collectable[0].id : undefined
       )
     )
-  }, [props.open, props.method, props.platforms, form])
+    // collectable follows props.options.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.open, props.method, props.platforms, props.options, form])
 
   const onSubmit = async (values: PaymentMethodFormValues) => {
     await saveMethod.mutateAsync({
@@ -148,7 +143,7 @@ export function PaymentMethodDialog(props: PaymentMethodDialogProps) {
     <Dialog
       open={props.open}
       onOpenChange={props.onOpenChange}
-      title={isEditing ? t('Edit payment method') : t('Add payment method')}
+      title={isEditing ? t('Edit payment channel') : t('Add payment channel')}
       contentClassName='max-h-[min(85dvh,var(--dialog-available-height))] overflow-y-auto sm:max-w-2xl'
       footer={
         <>
@@ -187,11 +182,8 @@ export function PaymentMethodDialog(props: PaymentMethodDialogProps) {
               <FormLabel>{t('Platform')}</FormLabel>
               <Input
                 value={
-                  isBalance
-                    ? t('Balance')
-                    : (props.platforms.find(
-                        (item) => item.platform === platform
-                      )?.name ?? platform)
+                  props.platforms.find((item) => item.platform === platform)
+                    ?.name ?? platform
                 }
                 disabled
                 readOnly
@@ -254,7 +246,7 @@ export function PaymentMethodDialog(props: PaymentMethodDialogProps) {
                   <Input {...field} />
                 </FormControl>
                 <FormDescription>
-                  {t('Shown to buyers when they choose how to pay')}
+                  {t('Only administrators see the channel name')}
                 </FormDescription>
                 <FormMessage />
               </FormItem>
@@ -263,59 +255,38 @@ export function PaymentMethodDialog(props: PaymentMethodDialogProps) {
 
           <FormField
             control={form.control}
-            name='icon'
+            name='option_id'
             render={({ field }) => (
               <FormItem>
-                <FormLabel>{t('Icon')}</FormLabel>
-                <FormControl>
-                  <Combobox
-                    ref={field.ref}
-                    options={iconOptions}
-                    value={field.value}
-                    onValueChange={(value) => field.onChange(value ?? '')}
-                    onBlur={field.onBlur}
-                    showSelectedIcon
-                    searchPlaceholder={t('Search icons')}
-                    emptyText={t('No matching icons')}
-                    className='w-full'
-                  />
-                </FormControl>
+                <FormLabel>{t('Payment Method')}</FormLabel>
+                <Select
+                  items={collectable.map((option) => ({
+                    value: String(option.id),
+                    label: option.name,
+                  }))}
+                  value={field.value}
+                  onValueChange={(value) => field.onChange(String(value ?? ''))}
+                >
+                  <FormControl>
+                    <SelectTrigger className='w-full'>
+                      <SelectValue placeholder={t('Choose a payment method')} />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {collectable.map((option) => (
+                        <SelectItem key={option.id} value={String(option.id)}>
+                          {option.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
                 <FormDescription>
                   {t(
-                    'Shown to buyers next to the method name. An icon that is not in the list shows the platform icon.'
+                    'Buyers choose the payment method; its channels collect it without their knowing which.'
                   )}
                 </FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            control={form.control}
-            name='sort'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('Sort')}</FormLabel>
-                <FormControl>
-                  <Input type='number' step={1} {...field} />
-                </FormControl>
-                <FormDescription>
-                  {t('Methods with a higher value are listed first')}
-                </FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            control={form.control}
-            name='description'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('Description')}</FormLabel>
-                <FormControl>
-                  <Textarea rows={2} {...field} />
-                </FormControl>
                 <FormMessage />
               </FormItem>
             )}
@@ -329,7 +300,9 @@ export function PaymentMethodDialog(props: PaymentMethodDialogProps) {
                 <SettingsSwitchContent>
                   <FormLabel>{t('Enabled')}</FormLabel>
                   <FormDescription>
-                    {t('Offer this payment method to buyers')}
+                    {t(
+                      'Take orders of its payment method through this channel'
+                    )}
                   </FormDescription>
                 </SettingsSwitchContent>
                 <FormControl>
@@ -342,239 +315,235 @@ export function PaymentMethodDialog(props: PaymentMethodDialogProps) {
             )}
           />
 
-          {!isBalance && (
-            <>
-              {platform === 'epay' && (
-                <Alert>
-                  <ShieldAlert aria-hidden='true' />
-                  <AlertTitle>{t('Epay safety reminder')}</AlertTitle>
-                  <AlertDescription>
+          <div className='grid gap-4 sm:grid-cols-2'>
+            <FormField
+              control={form.control}
+              name='min_amount'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    {t('Lowest amount ({{currency}})', {
+                      currency: props.currency,
+                    })}
+                  </FormLabel>
+                  <FormControl>
+                    <Input
+                      inputMode='decimal'
+                      placeholder={t('No limit')}
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name='max_amount'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    {t('Highest amount ({{currency}})', {
+                      currency: props.currency,
+                    })}
+                  </FormLabel>
+                  <FormControl>
+                    <Input
+                      inputMode='decimal'
+                      placeholder={t('No limit')}
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+          <p className='text-muted-foreground -mt-2 text-sm'>
+            {t(
+              'The channel takes orders whose price, before discounts and fees, is within this range; both ends are included.'
+            )}
+          </p>
+
+          <div className='grid gap-4 sm:grid-cols-2'>
+            <FormField
+              control={form.control}
+              name='priority'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Priority')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={0}
+                      max={1000}
+                      step={1}
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormDescription>
                     {t(
-                      'Epay is a payment protocol, not a specific official website. Verify the provider yourself and do not trust random third-party Epay deployments.'
+                      'The lowest priority is tried first; higher ones step in when it cannot take the order.'
                     )}
-                  </AlertDescription>
-                </Alert>
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
               )}
-
-              {fields.map((platformField) => (
-                <FormField
-                  key={`${platform}-${platformField.key}`}
-                  control={form.control}
-                  name={`config.${platformField.key}`}
-                  render={({ field }) => {
-                    let input = <Input {...field} value={field.value ?? ''} />
-                    if (platformField.secret) {
-                      input = (
-                        <PasswordInput
-                          {...field}
-                          value={field.value ?? ''}
-                          autoComplete='new-password'
-                          placeholder={
-                            secretsSet[platformField.key]
-                              ? t('Enter new key to update')
-                              : undefined
-                          }
-                        />
-                      )
-                    } else if (platformField.type === 'textarea') {
-                      input = (
-                        <Textarea
-                          {...field}
-                          value={field.value ?? ''}
-                          rows={4}
-                          className='font-mono text-xs break-all'
-                        />
-                      )
-                    }
-                    return (
-                      <FormItem>
-                        <FormLabel className='flex items-center gap-2'>
-                          {t(platformField.label)}
-                          {platformField.secret &&
-                            secretsSet[platformField.key] && (
-                              <StatusBadge
-                                label={t('Configured')}
-                                variant='success'
-                                copyable={false}
-                              />
-                            )}
-                        </FormLabel>
-                        {platformField.type === 'select' ? (
-                          <Select
-                            items={(platformField.options ?? []).map(
-                              (option) => ({
-                                value: option.value,
-                                label: t(option.label),
-                              })
-                            )}
-                            value={field.value ?? ''}
-                            onValueChange={(value) =>
-                              field.onChange(String(value ?? ''))
-                            }
-                          >
-                            <FormControl>
-                              <SelectTrigger className='w-full'>
-                                <SelectValue />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent alignItemWithTrigger={false}>
-                              <SelectGroup>
-                                {(platformField.options ?? []).map((option) => (
-                                  <SelectItem
-                                    key={option.value}
-                                    value={option.value}
-                                  >
-                                    {t(option.label)}
-                                  </SelectItem>
-                                ))}
-                              </SelectGroup>
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <FormControl>{input}</FormControl>
-                        )}
-                        {platformField.description && (
-                          <FormDescription>
-                            {t(platformField.description)}
-                          </FormDescription>
-                        )}
-                        {platformField.secret &&
-                          secretsSet[platformField.key] && (
-                            <FormDescription>
-                              {t('Leave blank to keep the existing key')}
-                            </FormDescription>
-                          )}
-                        <FormMessage />
-                      </FormItem>
-                    )
-                  }}
-                />
-              ))}
-
-              {platform === 'stripe' && (
-                <p className='text-muted-foreground text-sm'>
-                  {t(
-                    'Saving registers the Stripe webhook for the callback URL automatically.'
-                  )}
-                </p>
+            />
+            <FormField
+              control={form.control}
+              name='weight'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Weight')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={1}
+                      max={1000}
+                      step={1}
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t('Channels of one priority share its orders by weight.')}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
               )}
+            />
+          </div>
 
-              <FormField
-                control={form.control}
-                name='domain'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Callback domain')}</FormLabel>
-                    <FormControl>
-                      <Input placeholder='https://pay.example.com' {...field} />
-                    </FormControl>
-                    <FormDescription>
-                      {t(
-                        'Gateways send payment callbacks to this public address. Leave blank to use the server address.'
-                      )}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
+          {platform === 'epay' && (
+            <Alert>
+              <ShieldAlert aria-hidden='true' />
+              <AlertTitle>{t('Epay safety reminder')}</AlertTitle>
+              <AlertDescription>
+                {t(
+                  'Epay is a payment protocol, not a specific official website. Verify the provider yourself and do not trust random third-party Epay deployments.'
                 )}
-              />
-
-              <FormField
-                control={form.control}
-                name='fee_mode'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Payment fee')}</FormLabel>
-                    <Select
-                      items={PAYMENT_FEE_MODE_OPTIONS.map((option) => ({
-                        value: String(option.value),
-                        label: t(option.labelKey),
-                      }))}
-                      value={field.value}
-                      onValueChange={(value) =>
-                        field.onChange(String(value ?? ''))
-                      }
-                    >
-                      <FormControl>
-                        <SelectTrigger className='w-full'>
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent alignItemWithTrigger={false}>
-                        <SelectGroup>
-                          {PAYMENT_FEE_MODE_OPTIONS.map((option) => (
-                            <SelectItem
-                              key={option.value}
-                              value={String(option.value)}
-                            >
-                              {t(option.labelKey)}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                    <FormDescription>
-                      {t(
-                        'Charged to the buyer on top of the price; it does not change the credited quota.'
-                      )}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              {usesFeeRate(Number(feeMode)) && (
-                <FormField
-                  control={form.control}
-                  name='fee_rate'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>{t('Fee rate (%)')}</FormLabel>
-                      <FormControl>
-                        <Input
-                          type='number'
-                          inputMode='decimal'
-                          min={0}
-                          max={100}
-                          step={0.01}
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        {t('For example, 2.9 charges 2.9% of the price')}
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
-
-              {usesFixedFee(Number(feeMode)) && (
-                <FormField
-                  control={form.control}
-                  name='fee_fixed'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        {t('Fixed fee ({{currency}})', {
-                          currency: props.currency,
-                        })}
-                      </FormLabel>
-                      <FormControl>
-                        <Input
-                          type='number'
-                          inputMode='decimal'
-                          min={0}
-                          step={0.01}
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
-            </>
+              </AlertDescription>
+            </Alert>
           )}
+
+          {fields.map((platformField) => (
+            <FormField
+              key={`${platform}-${platformField.key}`}
+              control={form.control}
+              name={`config.${platformField.key}`}
+              render={({ field }) => {
+                let input = <Input {...field} value={field.value ?? ''} />
+                if (platformField.secret) {
+                  input = (
+                    <PasswordInput
+                      {...field}
+                      value={field.value ?? ''}
+                      autoComplete='new-password'
+                      placeholder={
+                        secretsSet[platformField.key]
+                          ? t('Enter new key to update')
+                          : undefined
+                      }
+                    />
+                  )
+                } else if (platformField.type === 'textarea') {
+                  input = (
+                    <Textarea
+                      {...field}
+                      value={field.value ?? ''}
+                      rows={4}
+                      className='font-mono text-xs break-all'
+                    />
+                  )
+                }
+                return (
+                  <FormItem>
+                    <FormLabel className='flex items-center gap-2'>
+                      {t(platformField.label)}
+                      {platformField.secret &&
+                        secretsSet[platformField.key] && (
+                          <StatusBadge
+                            label={t('Configured')}
+                            variant='success'
+                            copyable={false}
+                          />
+                        )}
+                    </FormLabel>
+                    {platformField.type === 'select' ? (
+                      <Select
+                        items={(platformField.options ?? []).map((option) => ({
+                          value: option.value,
+                          label: t(option.label),
+                        }))}
+                        value={field.value ?? ''}
+                        onValueChange={(value) =>
+                          field.onChange(String(value ?? ''))
+                        }
+                      >
+                        <FormControl>
+                          <SelectTrigger className='w-full'>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent alignItemWithTrigger={false}>
+                          <SelectGroup>
+                            {(platformField.options ?? []).map((option) => (
+                              <SelectItem
+                                key={option.value}
+                                value={option.value}
+                              >
+                                {t(option.label)}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <FormControl>{input}</FormControl>
+                    )}
+                    {platformField.description && (
+                      <FormDescription>
+                        {t(platformField.description)}
+                      </FormDescription>
+                    )}
+                    {platformField.secret && secretsSet[platformField.key] && (
+                      <FormDescription>
+                        {t('Leave blank to keep the existing key')}
+                      </FormDescription>
+                    )}
+                    <FormMessage />
+                  </FormItem>
+                )
+              }}
+            />
+          ))}
+
+          {platform === 'stripe' && (
+            <p className='text-muted-foreground text-sm'>
+              {t(
+                'Saving registers the Stripe webhook for the callback URL automatically.'
+              )}
+            </p>
+          )}
+
+          <FormField
+            control={form.control}
+            name='domain'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Callback domain')}</FormLabel>
+                <FormControl>
+                  <Input placeholder='https://pay.example.com' {...field} />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'Gateways send payment callbacks to this public address. Leave blank to use the server address.'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
         </SettingsForm>
       </Form>
     </Dialog>

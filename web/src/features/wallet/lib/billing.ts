@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { StatusBadgeProps } from '@/components/status-badge'
 
-import { PAYMENT_PLATFORM_LABELS } from '../constants'
 import { PAYMENT_ORDER_STATUS, type PaymentOrder } from '../types'
 
 // ============================================================================
@@ -54,14 +53,7 @@ export function getOrderStatusConfig(status: number): StatusConfig {
 export function isOrderPayable(order: PaymentOrder, nowSeconds: number) {
   return (
     order.status === PAYMENT_ORDER_STATUS.PENDING &&
-    order.platform !== 'balance' &&
+    !order.balance &&
     order.expires_at > nowSeconds
   )
-}
-
-/**
- * Platform name (i18n key) of an order
- */
-export function getPlatformLabel(platform: string): string {
-  return PAYMENT_PLATFORM_LABELS[platform] ?? platform
 }

@@ -31,6 +31,10 @@ import {
   usePaymentMethods,
   usePaymentQuote,
 } from '@/features/wallet/hooks/use-payment-queries'
+import {
+  describeAmountRanges,
+  takesAmount,
+} from '@/features/wallet/lib/payment'
 import type {
   PaymentMethodOption,
   PurchaseRequest,
@@ -69,10 +73,22 @@ export function SubscriptionPurchaseDialog(props: Props) {
     props.open && !!plan && !free
   )
   const allowBalancePay = plan?.allow_balance_pay !== false
-  const balanceBlocked = (method: PaymentMethodOption) =>
-    method.platform === 'balance' && !allowBalancePay
-      ? t('This plan does not allow balance redemption')
-      : undefined
+  const balanceBlocked = (method: PaymentMethodOption) => {
+    if (method.balance && !allowBalancePay) {
+      return t('This plan does not allow balance redemption')
+    }
+    if (!takesAmount(method, price)) {
+      return t('Takes {{amounts}}', {
+        amounts: describeAmountRanges(
+          method.amount_ranges,
+          props.currency,
+          locale,
+          t
+        ),
+      })
+    }
+    return undefined
+  }
   const choosable = (methods.data ?? []).filter(
     (method) => method.available && !balanceBlocked(method)
   )
@@ -87,20 +103,20 @@ export function SubscriptionPurchaseDialog(props: Props) {
   const request = useMemo<PurchaseRequest | null>(() => {
     if (!props.open || !planId || limitReached) return null
     if (free) {
-      return { purpose: 'subscription', plan_id: planId, payment_method_id: 0 }
+      return { purpose: 'subscription', plan_id: planId, payment_option_id: 0 }
     }
     if (selectedMethodId === undefined) return null
     return {
       purpose: 'subscription',
       plan_id: planId,
-      payment_method_id: selectedMethodId,
+      payment_option_id: selectedMethodId,
     }
   }, [free, limitReached, planId, props.open, selectedMethodId])
   const quote = usePaymentQuote(request)
 
   if (!plan) return null
 
-  const payWithBalance = selectedMethod?.platform === 'balance'
+  const payWithBalance = selectedMethod?.balance === true
   const userQuota = Math.max(0, Number(props.userQuota || 0))
   const insufficientBalance =
     payWithBalance && !!quote.data && quote.data.quota_amount > userQuota

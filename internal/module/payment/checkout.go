@@ -7,12 +7,10 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/internal/module/currency"
 	"github.com/QuantumNous/new-api/internal/module/payment/entity"
 	"github.com/QuantumNous/new-api/internal/module/payment/internal/gateway"
 	"github.com/QuantumNous/new-api/internal/module/payment/internal/store"
 	"github.com/QuantumNous/new-api/logger"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
 
 // CheckoutTypePaid answers a checkout that completed without a gateway: a
@@ -63,6 +61,7 @@ func CreateOrder(ctx context.Context, userId int, req PurchaseRequest, clientIp 
 		Adjustment:      quote.Adjustment,
 		FeeAmount:       quote.FeeAmount,
 		Amount:          quote.Amount,
+		PaymentOptionId: quote.option.Id,
 		PaymentMethodId: quote.method.Id,
 		Platform:        quote.method.Platform,
 		ClientIp:        clientIp,
@@ -197,82 +196,4 @@ func UserOrder(userId int, orderNo string) (*entity.PaymentOrder, error) {
 		return nil, store.ErrOrderNotFound
 	}
 	return order, nil
-}
-
-// MethodOption is a payment method as a buyer sees it. Unavailable is set
-// when the method cannot take an order now, such as when its exchange rate
-// is missing.
-type MethodOption struct {
-	Id             int    `json:"id"`
-	Name           string `json:"name"`
-	Platform       string `json:"platform"`
-	Icon           string `json:"icon"`
-	Description    string `json:"description"`
-	FeeMode        int    `json:"fee_mode"`
-	FeeRateBp      int64  `json:"fee_rate_bp"`
-	FeeFixed       int64  `json:"fee_fixed"`
-	ChargeCurrency string `json:"charge_currency"`
-	// PaymentMethodType is the Stripe payment method type a Stripe method
-	// collects; empty for other platforms.
-	PaymentMethodType string `json:"payment_method_type,omitempty"`
-	Available         bool   `json:"available"`
-	// Unavailable says why the method cannot take an order now.
-	Unavailable *common.Message `json:"unavailable,omitempty"`
-}
-
-// BuyerMethods lists the enabled methods a purpose can be paid with. The
-// balance pays subscriptions only. A method whose exchange rate is missing
-// is listed as unavailable rather than hidden.
-func BuyerMethods(ctx context.Context, purpose string) ([]MethodOption, error) {
-	if purpose != entity.PaymentPurposeTopup && purpose != entity.PaymentPurposeSubscription {
-		return nil, errInvalidPurchase
-	}
-	methods, err := store.ListMethods()
-	if err != nil {
-		return nil, err
-	}
-	site := operation_setting.PaymentCurrency()
-	// Top-ups and balance purchases convert the site currency to USD for
-	// the quota.
-	_, quotaRateErr := currency.ResolveRate(ctx, site, "USD")
-	options := make([]MethodOption, 0, len(methods))
-	for _, method := range methods {
-		if !method.Enabled || (method.Platform == entity.PaymentPlatformBalance && purpose != entity.PaymentPurposeSubscription) {
-			continue
-		}
-		option := MethodOption{
-			Id: method.Id, Name: method.Name, Platform: method.Platform, Icon: method.Icon, Description: method.Description,
-			FeeMode: method.FeeMode, FeeRateBp: method.FeeRateBp, FeeFixed: method.FeeFixed, ChargeCurrency: site, Available: true,
-		}
-		if method.Platform == gateway.PlatformStripe {
-			var config gateway.StripeConfig
-			_ = common.UnmarshalJsonStr(method.Config, &config)
-			option.PaymentMethodType = config.PaymentMethodType
-		}
-		var unavailable error
-		if method.Platform == entity.PaymentPlatformBalance {
-			option.FeeMode, option.FeeRateBp, option.FeeFixed = entity.PaymentFeeNone, 0, 0
-			unavailable = quotaRateErr
-		} else if gw, err := openGateway(method); err != nil {
-			unavailable = errMethodUnavailable
-		} else {
-			if currency := gw.ChargeCurrency(); currency != "" {
-				option.ChargeCurrency = currency
-			}
-			if _, err := chargeRate(ctx, gw, site); err != nil {
-				unavailable = err
-			} else if purpose == entity.PaymentPurposeTopup {
-				unavailable = quotaRateErr
-			}
-		}
-		if unavailable != nil {
-			option.Available, option.Unavailable = false, common.NewMessage("This payment method is unavailable")
-			var message *common.Message
-			if errors.As(unavailable, &message) {
-				option.Unavailable = message
-			}
-		}
-		options = append(options, option)
-	}
-	return options, nil
 }

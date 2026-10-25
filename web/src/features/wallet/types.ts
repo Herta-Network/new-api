@@ -106,20 +106,28 @@ export interface PaymentInfo {
   payment_compliance_terms_version: string
 }
 
-/** A payment method as a buyer sees it (GET /api/payment/methods). */
+/** Prices a payment method takes, in hundredths; a max of 0 is open-ended. */
+export interface AmountRange {
+  min: number
+  max: number
+}
+
+/**
+ * A payment method as a buyer sees it (GET /api/payment/methods): never the
+ * channels that collect it.
+ */
 export interface PaymentMethodOption {
   id: number
   name: string
-  platform: PaymentPlatform
   icon: string
   description: string
   fee_mode: number
   fee_rate_bp: number
   fee_fixed: number
-  /** Currency the gateway collects */
-  charge_currency: string
-  /** What a Stripe method collects; absent for other platforms */
-  payment_method_type?: StripePaymentMethodType
+  /** The wallet balance */
+  balance: boolean
+  /** The prices it takes; empty takes any */
+  amount_ranges: AmountRange[]
   available: boolean
   /** Why the method cannot take an order now */
   unavailable?: ServerMessage
@@ -128,7 +136,7 @@ export interface PaymentMethodOption {
 /** What a buyer asks to buy (POST /api/payment/quote and /orders). */
 export interface PurchaseRequest {
   purpose: PaymentPurpose
-  payment_method_id: number
+  payment_option_id: number
   /** Top-up amount in the site currency, at most two decimal places */
   amount?: number
   plan_id?: number
@@ -184,31 +192,32 @@ export const PAYMENT_ORDER_STATUS = {
 export type PaymentOrderStatus =
   (typeof PAYMENT_ORDER_STATUS)[keyof typeof PAYMENT_ORDER_STATUS]
 
-/** A payment order; amounts count hundredths of their currency. */
+/**
+ * A payment order as its buyer sees it; amounts count hundredths of their
+ * currency. It names the payment method, never the channel that collected
+ * it.
+ */
 export interface PaymentOrder {
-  id: number
   order_no: string
-  user_id: number
   purpose: PaymentPurpose
   plan_id: number
   subject: string
   topup_amount: number
   quota_amount: number
-  quota_rate: string
   currency: string
   price: number
   adjustment: number
   fee_amount: number
   amount: number
-  payment_method_id: number
-  platform: PaymentPlatform
+  /** The payment method's name */
+  payment_option: string
+  /** Paid with the wallet balance */
+  balance: boolean
+  /** What the buyer is charged once a checkout started */
   payment_amount: number
   payment_currency: string
-  exchange_rate: string
-  trade_no: string
   status: PaymentOrderStatus
   fulfil_error: string
-  user_subscription_id: number
   close_reason: string
   created_at: number
   expires_at: number

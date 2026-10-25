@@ -26,6 +26,7 @@ import { api } from '@/lib/api'
 
 import type {
   PaymentMethod,
+  PaymentOption,
   PaymentPlatformsInfo,
 } from '../payment-methods-api'
 import { PaymentMethodsSection } from '../payment-methods-section'
@@ -157,19 +158,36 @@ const platforms: PaymentPlatformsInfo = {
   ],
 }
 
-function method(overrides: Partial<PaymentMethod>): PaymentMethod {
+function option(overrides: Partial<PaymentOption>): PaymentOption {
   return {
-    id: 1,
+    id: 10,
     name: 'Alipay',
-    platform: 'epay',
     icon: '',
     description: '',
     sort: 0,
     enabled: true,
-    domain: '',
     fee_mode: 0,
     fee_rate_bp: 0,
     fee_fixed: 0,
+    created_at: 0,
+    updated_at: 0,
+    methods: 1,
+    ...overrides,
+  }
+}
+
+function method(overrides: Partial<PaymentMethod>): PaymentMethod {
+  return {
+    id: 1,
+    name: 'EPay merchant A',
+    platform: 'epay',
+    option_id: 10,
+    enabled: true,
+    min_amount: 0,
+    max_amount: 0,
+    priority: 0,
+    weight: 1,
+    domain: '',
     created_at: 0,
     updated_at: 0,
     config: {},
@@ -180,10 +198,17 @@ function method(overrides: Partial<PaymentMethod>): PaymentMethod {
   }
 }
 
-const balance = method({ id: -1, name: 'Balance', platform: 'balance' })
+const balanceOption = option({ id: -1, name: 'Balance', icon: 'FaWallet' })
+const alipayOption = option({ id: 10, name: 'Alipay' })
+const cardOption = option({ id: 11, name: 'Card', methods: 0 })
+const balance = method({
+  id: -1,
+  name: 'Balance',
+  platform: 'balance',
+  option_id: -1,
+})
 const epay = method({
   id: 2,
-  name: 'Alipay',
   config: {
     url: 'https://pay.example.com',
     pid: '1001',
@@ -194,11 +219,15 @@ const epay = method({
   },
   secrets_set: { key: true },
   notify_url: 'https://api.example.com/api/payment/notify/epay/token-2',
+  max_amount: 5000,
+  priority: 1,
+  weight: 3,
 })
 const stripe = method({
   id: 3,
-  name: 'Card',
+  name: 'Stripe account',
   platform: 'stripe',
+  option_id: 11,
   config: {
     public_key: 'pk_test_1',
     secret_key: '',
@@ -210,10 +239,16 @@ const stripe = method({
   webhook_stale: true,
 })
 
-function mockApi(methods: PaymentMethod[]) {
+function mockApi(
+  methods: PaymentMethod[],
+  options: PaymentOption[] = [balanceOption, alipayOption, cardOption]
+) {
   vi.spyOn(api, 'get').mockImplementation(async (url: string) => {
     if (url === '/api/payment/settings/platforms') {
       return { data: { success: true, data: platforms } }
+    }
+    if (url === '/api/payment/settings/options') {
+      return { data: { success: true, data: options } }
     }
     return { data: { success: true, data: methods } }
   })
@@ -239,8 +274,32 @@ function renderSection() {
 
 afterEach(() => vi.restoreAllMocks())
 
+async function openNewChannel(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    await screen.findByRole('button', { name: 'Add payment channel' })
+  )
+  const dialog = await screen.findByRole('dialog')
+  await user.type(
+    within(dialog).getByRole('textbox', { name: 'Name' }),
+    'EPay merchant B'
+  )
+  await user.click(
+    within(dialog).getByRole('combobox', { name: 'Payment Method' })
+  )
+  await user.click(await screen.findByRole('option', { name: 'Alipay' }))
+  await user.type(
+    within(dialog).getByRole('textbox', { name: 'Gateway URL' }),
+    'https://pay.example.com'
+  )
+  await user.type(
+    within(dialog).getByRole('textbox', { name: 'Merchant ID' }),
+    '1001'
+  )
+  return dialog
+}
+
 describe('payment methods', () => {
-  it('creates a method with the fee percentage in basis points and the fixed fee in hundredths', async () => {
+  it('creates a payment method with the fee percentage in basis points and the fixed fee in hundredths', async () => {
     const request = mockApi([balance])
     const user = renderSection()
     await user.click(
@@ -249,27 +308,7 @@ describe('payment methods', () => {
     const dialog = await screen.findByRole('dialog')
     await user.type(
       within(dialog).getByRole('textbox', { name: 'Name' }),
-      'Alipay'
-    )
-    await user.type(
-      within(dialog).getByRole('textbox', { name: 'Gateway URL' }),
-      'https://pay.example.com'
-    )
-    await user.type(
-      within(dialog).getByRole('textbox', { name: 'Merchant ID' }),
-      '1001'
-    )
-    await user.type(
-      within(dialog).getByLabelText('Merchant private key'),
-      'MIIEv-private'
-    )
-    await user.type(
-      within(dialog).getByRole('textbox', { name: 'Platform public key' }),
-      'MIIBI-public'
-    )
-    await user.type(
-      within(dialog).getByRole('textbox', { name: 'Payment type' }),
-      'alipay'
+      'WeChat Pay'
     )
     await user.click(
       within(dialog).getByRole('combobox', { name: 'Payment fee' })
@@ -288,45 +327,194 @@ describe('payment methods', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(request.post).toHaveBeenCalledTimes(1))
-    expect(request.post).toHaveBeenCalledWith(
-      '/api/payment/settings/methods',
-      expect.objectContaining({
-        name: 'Alipay',
-        platform: 'epay',
-        config: {
-          url: 'https://pay.example.com',
-          pid: '1001',
-          version: 'v2',
-          checkout: 'api',
-          private_key: 'MIIEv-private',
-          platform_public_key: 'MIIBI-public',
-          type: 'alipay',
-        },
-        fee_mode: 3,
-        fee_rate_bp: 290,
-        fee_fixed: 30,
-      })
+    expect(request.post).toHaveBeenCalledWith('/api/payment/settings/options', {
+      name: 'WeChat Pay',
+      icon: '',
+      description: '',
+      sort: 0,
+      enabled: true,
+      fee_mode: 3,
+      fee_rate_bp: 290,
+      fee_fixed: 30,
+    })
+  })
+
+  it('lets the balance payment method be disabled but never deleted, and lists no balance channel', async () => {
+    const request = mockApi([balance, epay])
+    const user = renderSection()
+    const row = within(await screen.findByRole('row', { name: /Balance/ }))
+    expect(
+      screen.getAllByRole('row', { name: /Balance/ }),
+      'only the payment method, not its channel'
+    ).toHaveLength(1)
+    await user.click(row.getByRole('button', { name: 'Open menu' }))
+    expect(
+      screen.queryByRole('menuitem', { name: 'Delete' })
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole('menuitem', { name: 'Disable' }))
+
+    await waitFor(() => expect(request.put).toHaveBeenCalledTimes(1))
+    expect(request.put).toHaveBeenCalledWith(
+      '/api/payment/settings/options/-1',
+      expect.objectContaining({ name: 'Balance', enabled: false })
     )
   })
 
-  it('requires a secret that is not stored yet before creating a method', async () => {
-    const request = mockApi([balance])
+  it('warns about a payment method that no channel collects', async () => {
+    mockApi([balance, epay])
+    renderSection()
+    const card = within(await screen.findByRole('row', { name: /^Card/ }))
+    expect(card.getByText('No channels')).toBeVisible()
+  })
+
+  it('lists the curated payment icons with their icons and saves the name of the chosen one', async () => {
+    const request = mockApi([balance, epay])
     const user = renderSection()
     await user.click(
-      await screen.findByRole('button', { name: 'Add payment method' })
+      within(await screen.findByRole('row', { name: /^Alipay/ })).getByRole(
+        'button',
+        { name: 'Edit' }
+      )
     )
     const dialog = await screen.findByRole('dialog')
+    const picker = within(dialog).getByRole('combobox', { name: 'Icon' })
+    expect(picker).toHaveValue('Default icon')
+    await user.click(picker)
+
+    const options = await screen.findAllByRole('option')
+    expect(options.map((item) => item.textContent)).toEqual([
+      'Default icon',
+      ...PAYMENT_ICONS.map((icon) => icon.labelKey),
+    ])
+    for (const item of options.slice(1)) {
+      expect(item.querySelector('svg')).toBeInTheDocument()
+    }
+    await user.click(screen.getByRole('option', { name: 'Tether (USDT)' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(request.put).toHaveBeenCalledTimes(1))
+    expect(request.put).toHaveBeenCalledWith(
+      '/api/payment/settings/options/10',
+      expect.objectContaining({ icon: 'SiTether' })
+    )
+  })
+
+  it('shows a stored curated icon in its picker and clears it to the default icon', async () => {
+    const request = mockApi(
+      [balance, epay],
+      [balanceOption, { ...alipayOption, icon: 'SiAlipay' }]
+    )
+    const user = renderSection()
+    const row = within(await screen.findByRole('row', { name: /^Alipay/ }))
+    expect(
+      row.getByRole('cell', { name: 'Alipay' }).querySelector('svg')
+    ).toBeInTheDocument()
+    await user.click(row.getByRole('button', { name: 'Edit' }))
+    const dialog = await screen.findByRole('dialog')
+    const picker = within(dialog).getByRole('combobox', { name: 'Icon' })
+    expect(picker).toHaveValue('Alipay')
+    await user.click(picker)
+    await user.click(
+      await screen.findByRole('option', { name: 'Default icon' })
+    )
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(request.put).toHaveBeenCalledTimes(1))
+    expect(request.put).toHaveBeenCalledWith(
+      '/api/payment/settings/options/10',
+      expect.objectContaining({ icon: '' })
+    )
+  })
+
+  it('keeps a stored icon name outside the curated list when the picker is left alone', async () => {
+    const request = mockApi(
+      [balance, epay],
+      [balanceOption, { ...alipayOption, icon: 'GiTwoCoins' }]
+    )
+    const user = renderSection()
+    const row = within(await screen.findByRole('row', { name: /^Alipay/ }))
+    await user.click(row.getByRole('button', { name: 'Edit' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByRole('combobox', { name: 'Icon' })).toHaveValue(
+      'GiTwoCoins'
+    )
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(request.put).toHaveBeenCalledTimes(1))
+    expect(request.put).toHaveBeenCalledWith(
+      '/api/payment/settings/options/10',
+      expect.objectContaining({ icon: 'GiTwoCoins' })
+    )
+  })
+
+  it('creates a channel of a payment method with its amount range in hundredths, priority and weight', async () => {
+    const request = mockApi([balance, epay])
+    const user = renderSection()
+    const dialog = await openNewChannel(user)
     await user.type(
-      within(dialog).getByRole('textbox', { name: 'Name' }),
-      'Alipay'
+      within(dialog).getByLabelText('Merchant private key'),
+      'MIIEv-private'
     )
     await user.type(
-      within(dialog).getByRole('textbox', { name: 'Gateway URL' }),
-      'https://pay.example.com'
+      within(dialog).getByRole('textbox', { name: 'Platform public key' }),
+      'MIIBI-public'
     )
     await user.type(
-      within(dialog).getByRole('textbox', { name: 'Merchant ID' }),
-      '1001'
+      within(dialog).getByRole('textbox', { name: 'Payment type' }),
+      'alipay'
+    )
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Lowest amount (USD)' }),
+      '0.5'
+    )
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Highest amount (USD)' }),
+      '50'
+    )
+    const priority = within(dialog).getByRole('spinbutton', {
+      name: 'Priority',
+    })
+    await user.clear(priority)
+    await user.type(priority, '2')
+    const weight = within(dialog).getByRole('spinbutton', { name: 'Weight' })
+    await user.clear(weight)
+    await user.type(weight, '3')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(request.post).toHaveBeenCalledTimes(1))
+    expect(request.post).toHaveBeenCalledWith('/api/payment/settings/methods', {
+      name: 'EPay merchant B',
+      platform: 'epay',
+      option_id: 10,
+      enabled: true,
+      min_amount: 50,
+      max_amount: 5000,
+      priority: 2,
+      weight: 3,
+      domain: '',
+      config: {
+        url: 'https://pay.example.com',
+        pid: '1001',
+        version: 'v2',
+        checkout: 'api',
+        private_key: 'MIIEv-private',
+        platform_public_key: 'MIIBI-public',
+        type: 'alipay',
+      },
+    })
+  })
+
+  it('requires the stored-nowhere secrets and an amount range that is not upside down before creating a channel', async () => {
+    const request = mockApi([balance])
+    const user = renderSection()
+    const dialog = await openNewChannel(user)
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Lowest amount (USD)' }),
+      '100'
+    )
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Highest amount (USD)' }),
+      '50'
     )
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
@@ -337,35 +525,54 @@ describe('payment methods', () => {
       within(dialog).getByLabelText('Merchant private key')
     ).toHaveAttribute('aria-invalid', 'true')
     expect(
-      within(dialog).getByRole('textbox', { name: 'Platform public key' })
-    ).toHaveAttribute('aria-invalid', 'true')
+      within(dialog).getByText(
+        'The highest amount must not be below the lowest'
+      )
+    ).toBeVisible()
     expect(request.post).not.toHaveBeenCalled()
+  })
+
+  it('lists each channel with its payment method, amount range, priority and weight', async () => {
+    mockApi([balance, epay])
+    renderSection()
+    const row = within(
+      await screen.findByRole('row', { name: /EPay merchant A/ })
+    )
+    expect(row.getByText('Alipay')).toBeVisible()
+    expect(row.getByText('Up to 50 USD')).toBeVisible()
+    expect(row.getByText('Priority 1 · weight 3')).toBeVisible()
   })
 
   it('keeps a stored secret when its field is left blank on edit', async () => {
     const request = mockApi([balance, epay])
     const user = renderSection()
     await user.click(
-      within(await screen.findByRole('row', { name: /Alipay/ })).getByRole(
-        'button',
-        { name: 'Edit' }
-      )
+      within(
+        await screen.findByRole('row', { name: /EPay merchant A/ })
+      ).getByRole('button', { name: 'Edit' })
     )
     const dialog = await screen.findByRole('dialog')
     const secret = within(dialog).getByLabelText(/Merchant key/)
     expect(secret).toHaveValue('')
     expect(secret).toHaveAttribute('type', 'password')
     expect(within(dialog).getByText('Configured')).toBeVisible()
+    expect(
+      within(dialog).getByRole('textbox', { name: 'Highest amount (USD)' })
+    ).toHaveValue('50')
     const name = within(dialog).getByRole('textbox', { name: 'Name' })
     await user.clear(name)
-    await user.type(name, 'Alipay CN')
+    await user.type(name, 'EPay merchant A2')
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(request.put).toHaveBeenCalledTimes(1))
     expect(request.put).toHaveBeenCalledWith(
       '/api/payment/settings/methods/2',
       expect.objectContaining({
-        name: 'Alipay CN',
+        name: 'EPay merchant A2',
+        option_id: 10,
+        max_amount: 5000,
+        priority: 1,
+        weight: 3,
         config: {
           url: 'https://pay.example.com',
           pid: '1001',
@@ -378,13 +585,10 @@ describe('payment methods', () => {
     )
   })
 
-  it('starts a new EPay method on V2 API orders and asks for the merchant key instead of the RSA keys once V1 is chosen', async () => {
+  it('starts a new EPay channel on V2 API orders and asks for the merchant key instead of the RSA keys once V1 is chosen', async () => {
     const request = mockApi([balance])
     const user = renderSection()
-    await user.click(
-      await screen.findByRole('button', { name: 'Add payment method' })
-    )
-    const dialog = await screen.findByRole('dialog')
+    const dialog = await openNewChannel(user)
     expect(
       within(dialog).getByRole('combobox', { name: 'Protocol version' })
     ).toHaveTextContent('EPay V2 (RSA keys)')
@@ -397,28 +601,8 @@ describe('payment methods', () => {
       )
     ).toBeVisible()
     expect(
-      within(dialog).getByLabelText('Merchant private key')
-    ).toHaveAttribute('type', 'password')
-    expect(
       within(dialog).queryByLabelText('Merchant key')
     ).not.toBeInTheDocument()
-
-    await user.type(
-      within(dialog).getByRole('textbox', { name: 'Name' }),
-      'Alipay'
-    )
-    await user.type(
-      within(dialog).getByRole('textbox', { name: 'Gateway URL' }),
-      'https://pay.example.com'
-    )
-    await user.type(
-      within(dialog).getByRole('textbox', { name: 'Merchant ID' }),
-      '1001'
-    )
-    await user.type(
-      within(dialog).getByLabelText('Merchant private key'),
-      'MIIEv-private'
-    )
     await user.click(
       within(dialog).getByRole('combobox', { name: 'Protocol version' })
     )
@@ -455,31 +639,12 @@ describe('payment methods', () => {
     )
   })
 
-  it('lets the balance method be disabled but never deleted', async () => {
-    const request = mockApi([balance, epay])
-    const user = renderSection()
-    await user.click(
-      within(await screen.findByRole('row', { name: /Balance/ })).getByRole(
-        'button',
-        { name: 'Open menu' }
-      )
-    )
-    expect(
-      screen.queryByRole('menuitem', { name: 'Delete' })
-    ).not.toBeInTheDocument()
-    await user.click(screen.getByRole('menuitem', { name: 'Disable' }))
-
-    await waitFor(() => expect(request.put).toHaveBeenCalledTimes(1))
-    expect(request.put).toHaveBeenCalledWith(
-      '/api/payment/settings/methods/-1',
-      expect.objectContaining({ name: 'Balance', enabled: false })
-    )
-  })
-
-  it('shows the payment method type of a Stripe method and saves another one chosen from the platform options', async () => {
+  it('shows the payment method type of a Stripe channel and saves another one chosen from the platform options', async () => {
     const request = mockApi([balance, stripe])
     const user = renderSection()
-    const row = within(await screen.findByRole('row', { name: /Card/ }))
+    const row = within(
+      await screen.findByRole('row', { name: /Stripe account/ })
+    )
     expect(row.getByText('WeChat Pay')).toBeVisible()
     await user.click(row.getByRole('button', { name: 'Edit' }))
     const dialog = await screen.findByRole('dialog')
@@ -504,11 +669,11 @@ describe('payment methods', () => {
     )
   })
 
-  it('starts a new Stripe method on the first payment method type', async () => {
+  it('starts a new Stripe channel on the first payment method type', async () => {
     mockApi([balance])
     const user = renderSection()
     await user.click(
-      await screen.findByRole('button', { name: 'Add payment method' })
+      await screen.findByRole('button', { name: 'Add payment channel' })
     )
     const dialog = await screen.findByRole('dialog')
     await user.click(within(dialog).getByRole('combobox', { name: 'Platform' }))
@@ -519,87 +684,12 @@ describe('payment methods', () => {
     ).toHaveTextContent('Card')
   })
 
-  it('lists the curated payment icons with their icons and saves the name of the chosen one', async () => {
-    const request = mockApi([balance, epay])
-    const user = renderSection()
-    await user.click(
-      within(await screen.findByRole('row', { name: /Alipay/ })).getByRole(
-        'button',
-        { name: 'Edit' }
-      )
-    )
-    const dialog = await screen.findByRole('dialog')
-    const picker = within(dialog).getByRole('combobox', { name: 'Icon' })
-    expect(picker).toHaveValue('Platform icon')
-    await user.click(picker)
-
-    const options = await screen.findAllByRole('option')
-    expect(options.map((option) => option.textContent)).toEqual([
-      'Platform icon',
-      ...PAYMENT_ICONS.map((icon) => icon.labelKey),
-    ])
-    for (const option of options.slice(1)) {
-      expect(option.querySelector('svg')).toBeInTheDocument()
-    }
-    await user.click(screen.getByRole('option', { name: 'Tether (USDT)' }))
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
-
-    await waitFor(() => expect(request.put).toHaveBeenCalledTimes(1))
-    expect(request.put).toHaveBeenCalledWith(
-      '/api/payment/settings/methods/2',
-      expect.objectContaining({ icon: 'SiTether' })
-    )
-  })
-
-  it('shows a stored curated icon in its row and picker and clears it to the platform icon', async () => {
-    const request = mockApi([balance, { ...epay, icon: 'SiAlipay' }])
-    const user = renderSection()
-    const row = within(await screen.findByRole('row', { name: /Alipay/ }))
-    expect(
-      row.getByRole('cell', { name: 'Alipay' }).querySelector('svg')
-    ).toBeInTheDocument()
-    await user.click(row.getByRole('button', { name: 'Edit' }))
-    const dialog = await screen.findByRole('dialog')
-    const picker = within(dialog).getByRole('combobox', { name: 'Icon' })
-    expect(picker).toHaveValue('Alipay')
-    await user.click(picker)
-    await user.click(
-      await screen.findByRole('option', { name: 'Platform icon' })
-    )
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
-
-    await waitFor(() => expect(request.put).toHaveBeenCalledTimes(1))
-    expect(request.put).toHaveBeenCalledWith(
-      '/api/payment/settings/methods/2',
-      expect.objectContaining({ icon: '' })
-    )
-  })
-
-  it('keeps a stored icon name outside the curated list when the picker is left alone', async () => {
-    const request = mockApi([balance, { ...epay, icon: 'GiTwoCoins' }])
-    const user = renderSection()
-    const row = within(await screen.findByRole('row', { name: /Alipay/ }))
-    expect(
-      row.getByRole('cell', { name: 'Alipay' }).querySelector('svg')
-    ).toBeNull()
-    await user.click(row.getByRole('button', { name: 'Edit' }))
-    const dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getByRole('combobox', { name: 'Icon' })).toHaveValue(
-      'GiTwoCoins'
-    )
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
-
-    await waitFor(() => expect(request.put).toHaveBeenCalledTimes(1))
-    expect(request.put).toHaveBeenCalledWith(
-      '/api/payment/settings/methods/2',
-      expect.objectContaining({ icon: 'GiTwoCoins' })
-    )
-  })
-
   it('shows the callback URL and lets a stale Stripe webhook be synced', async () => {
     const request = mockApi([balance, stripe])
     const user = renderSection()
-    const row = within(await screen.findByRole('row', { name: /Card/ }))
+    const row = within(
+      await screen.findByRole('row', { name: /Stripe account/ })
+    )
     expect(row.getByText(stripe.notify_url)).toBeVisible()
     expect(row.getByRole('button', { name: 'Copy callback URL' })).toBeVisible()
     expect(row.getByText('Webhook outdated')).toBeVisible()

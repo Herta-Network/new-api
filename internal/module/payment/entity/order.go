@@ -46,6 +46,8 @@ type PaymentOrder struct {
 	FeeAmount  int64  `json:"fee_amount" gorm:"not null;default:0"`
 	Amount     int64  `json:"amount" gorm:"not null;default:0"`
 
+	// PaymentOptionId is the payment option the buyer chose.
+	PaymentOptionId int `json:"payment_option_id" gorm:"not null;default:0"`
 	// The payment method, the payment expectation and the trade show the
 	// order's latest invoice, and once the order is paid the invoice that
 	// paid it (a manual completion's trade is ManualTradeNo). They are a copy

@@ -18,32 +18,30 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import * as z from 'zod'
 
-import {
-  BALANCE_PAYMENT_PLATFORM,
-  PAYMENT_FEE_MODE,
-  type PaymentMethod,
-  type PaymentMethodInput,
-  type PaymentPlatformField,
+import type {
+  PaymentMethod,
+  PaymentMethodInput,
+  PaymentPlatformField,
 } from './payment-methods-api'
-
-// A non-negative decimal with at most two decimal places: fee percentages
-// become basis points and fixed fees hundredths of the site currency.
-const HUNDREDTHS_PATTERN = /^\d+(\.\d{1,2})?$/
+import {
+  decimalToHundredths,
+  HUNDREDTHS_PATTERN,
+  hundredthsToDecimal,
+} from './payment-option-form'
 
 export type PaymentMethodFormValues = {
   platform: string
   name: string
-  icon: string
-  description: string
-  sort: string
+  /** The payment method the channel collects, as a string id. */
+  option_id: string
   enabled: boolean
+  /** Site currency amounts, e.g. "50.00"; empty leaves that end open. */
+  min_amount: string
+  max_amount: string
+  priority: string
+  weight: string
   domain: string
   config: Record<string, string>
-  fee_mode: string
-  /** Percent of the price, e.g. "2.9". */
-  fee_rate: string
-  /** Site currency amount, e.g. "0.30". */
-  fee_fixed: string
 }
 
 export function editablePaymentFields(fields: PaymentPlatformField[]) {
@@ -66,29 +64,10 @@ export function applicablePaymentFields(
   )
 }
 
-export function usesFeeRate(mode: number) {
-  return (
-    mode === PAYMENT_FEE_MODE.RATE || mode === PAYMENT_FEE_MODE.RATE_AND_FIXED
-  )
-}
-
-export function usesFixedFee(mode: number) {
-  return (
-    mode === PAYMENT_FEE_MODE.FIXED || mode === PAYMENT_FEE_MODE.RATE_AND_FIXED
-  )
-}
-
-/** Hundredths written as a decimal: 290 → "2.9", 30 → "0.3". */
-function hundredthsToDecimal(value: number) {
-  return String(value / 100)
-}
-
-function decimalToHundredths(value: string) {
-  return Math.round(Number(value.trim()) * 100)
-}
+const WHOLE_NUMBER = /^\d+$/
 
 /**
- * Validates the method form. A required secret that is already stored may
+ * Validates the channel form. A required secret that is already stored may
  * stay blank, since a blank secret keeps the stored value.
  */
 export function createPaymentMethodSchema(
@@ -103,18 +82,14 @@ export function createPaymentMethodSchema(
         .trim()
         .min(1, 'Name is required')
         .max(100, 'Use at most 100 characters'),
-      icon: z.string().trim().max(255, 'Use at most 255 characters'),
-      description: z.string(),
-      sort: z
-        .string()
-        .trim()
-        .regex(/^-?\d+$/, 'Enter a whole number'),
+      option_id: z.string().min(1, 'Choose the payment method it collects'),
       enabled: z.boolean(),
+      min_amount: z.string(),
+      max_amount: z.string(),
+      priority: z.string(),
+      weight: z.string(),
       domain: z.string().trim().max(255, 'Use at most 255 characters'),
       config: z.record(z.string(), z.string()),
-      fee_mode: z.string(),
-      fee_rate: z.string(),
-      fee_fixed: z.string(),
     })
     .superRefine((values, ctx) => {
       for (const field of applicablePaymentFields(fields, values.config)) {
@@ -128,91 +103,113 @@ export function createPaymentMethodSchema(
           })
         }
       }
-      const mode = Number(values.fee_mode)
-      const rate = values.fee_rate.trim()
-      if (
-        usesFeeRate(mode) &&
-        (!HUNDREDTHS_PATTERN.test(rate) || Number(rate) > 100)
-      ) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['fee_rate'],
-          message:
-            'Enter a percentage from 0 to 100 with at most two decimal places',
-        })
+      const min = values.min_amount.trim()
+      const max = values.max_amount.trim()
+      for (const [path, value] of [
+        ['min_amount', min],
+        ['max_amount', max],
+      ] as const) {
+        if (value !== '' && !HUNDREDTHS_PATTERN.test(value)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [path],
+            message: 'Enter an amount with at most two decimal places',
+          })
+        }
       }
       if (
-        usesFixedFee(mode) &&
-        !HUNDREDTHS_PATTERN.test(values.fee_fixed.trim())
+        min !== '' &&
+        max !== '' &&
+        HUNDREDTHS_PATTERN.test(min) &&
+        HUNDREDTHS_PATTERN.test(max) &&
+        Number(max) < Number(min)
       ) {
         ctx.addIssue({
           code: 'custom',
-          path: ['fee_fixed'],
-          message: 'Enter an amount with at most two decimal places',
+          path: ['max_amount'],
+          message: 'The highest amount must not be below the lowest',
+        })
+      }
+      const priority = values.priority.trim()
+      if (!WHOLE_NUMBER.test(priority) || Number(priority) > 1000) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['priority'],
+          message: 'Enter a whole number from 0 to 1000',
+        })
+      }
+      const weight = values.weight.trim()
+      if (
+        !WHOLE_NUMBER.test(weight) ||
+        Number(weight) < 1 ||
+        Number(weight) > 1000
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['weight'],
+          message: 'Enter a whole number from 1 to 1000',
         })
       }
     })
 }
 
+/** An amount in hundredths as the form shows it; 0 is an open end. */
+function amountText(value: number | undefined) {
+  return value ? hundredthsToDecimal(value) : ''
+}
+
 export function paymentMethodFormDefaults(
   fields: PaymentPlatformField[],
   method: PaymentMethod | null,
-  platform: string
+  platform: string,
+  optionId?: number
 ): PaymentMethodFormValues {
   const config: Record<string, string> = {}
   for (const field of editablePaymentFields(fields)) {
     const value = method?.config[field.key]
-    // A new method starts on the first choice of a select field.
+    // A new channel starts on the first choice of a select field.
     const initial = method ? '' : (field.options?.[0]?.value ?? '')
     config[field.key] = typeof value === 'string' ? value : initial
   }
+  const option = method?.option_id ?? optionId
   return {
     platform: method?.platform ?? platform,
     name: method?.name ?? '',
-    icon: method?.icon ?? '',
-    description: method?.description ?? '',
-    sort: String(method?.sort ?? 0),
+    option_id: option === undefined ? '' : String(option),
     enabled: method?.enabled ?? true,
+    min_amount: amountText(method?.min_amount),
+    max_amount: amountText(method?.max_amount),
+    priority: String(method?.priority ?? 0),
+    weight: String(method?.weight ?? 1),
     domain: method?.domain ?? '',
     config,
-    fee_mode: String(method?.fee_mode ?? PAYMENT_FEE_MODE.NONE),
-    fee_rate: method ? hundredthsToDecimal(method.fee_rate_bp) : '0',
-    fee_fixed: method ? hundredthsToDecimal(method.fee_fixed) : '0',
   }
 }
 
 /**
- * The request body for the form: the configuration fields that apply, the
- * fee percentage in basis points, the fixed fee in hundredths, and fee
- * parts the mode does not use as zero.
+ * The request body for the form: the configuration fields that apply, and
+ * the amount range in hundredths, an empty end as 0.
  */
 export function toPaymentMethodRequest(
   values: PaymentMethodFormValues,
   fields: PaymentPlatformField[]
 ): PaymentMethodInput {
-  const mode = Number(values.fee_mode)
   const config: Record<string, string> = {}
   for (const field of applicablePaymentFields(fields, values.config)) {
     config[field.key] = values.config[field.key]?.trim() ?? ''
   }
-  const isBalance = values.platform === BALANCE_PAYMENT_PLATFORM
+  const amount = (value: string) =>
+    value.trim() === '' ? 0 : decimalToHundredths(value)
   return {
     name: values.name.trim(),
     platform: values.platform,
-    icon: values.icon.trim(),
-    description: values.description.trim(),
-    sort: Number(values.sort.trim()),
+    option_id: Number(values.option_id),
     enabled: values.enabled,
-    domain: isBalance ? '' : values.domain.trim(),
-    config: isBalance ? {} : config,
-    fee_mode: isBalance ? PAYMENT_FEE_MODE.NONE : mode,
-    fee_rate_bp:
-      !isBalance && usesFeeRate(mode)
-        ? decimalToHundredths(values.fee_rate)
-        : 0,
-    fee_fixed:
-      !isBalance && usesFixedFee(mode)
-        ? decimalToHundredths(values.fee_fixed)
-        : 0,
+    min_amount: amount(values.min_amount),
+    max_amount: amount(values.max_amount),
+    priority: Number(values.priority.trim()),
+    weight: Number(values.weight.trim()),
+    domain: values.domain.trim(),
+    config,
   }
 }

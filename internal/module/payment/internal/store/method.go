@@ -11,9 +11,17 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// EnsureBalanceMethod seeds the wallet balance method. An existing
-// row keeps what the administrator set.
+// EnsureBalanceMethod seeds the wallet balance option and its channel, the
+// balance method. An existing row keeps what the administrator set.
 func EnsureBalanceMethod(db *gorm.DB) error {
+	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&entity.PaymentOption{
+		Id:      entity.BalancePaymentOptionID,
+		Name:    "Balance",
+		Icon:    "FaWallet",
+		Enabled: true,
+	}).Error; err != nil {
+		return err
+	}
 	token, err := common.GenerateRandomCharsKey(40)
 	if err != nil {
 		return err
@@ -22,6 +30,7 @@ func EnsureBalanceMethod(db *gorm.DB) error {
 		Id:       entity.BalancePaymentMethodID,
 		Name:     "Balance",
 		Platform: entity.PaymentPlatformBalance,
+		OptionId: entity.BalancePaymentOptionID,
 		Enabled:  true,
 		Token:    token,
 	}).Error
@@ -126,11 +135,19 @@ func GetMethodByToken(token string) (*entity.PaymentMethod, error) {
 	return &method, nil
 }
 
-// ListMethods returns the methods that are not deleted, in display
-// order.
+// ListMethods returns the methods that are not deleted, by option, then in
+// the order the option tries them.
 func ListMethods() ([]*entity.PaymentMethod, error) {
 	var methods []*entity.PaymentMethod
-	err := model.DB.Order("sort desc, id asc").Find(&methods).Error
+	err := model.DB.Order("option_id asc, priority asc, id asc").Find(&methods).Error
+	return methods, err
+}
+
+// ListOptionMethods returns the methods of an option that are not deleted,
+// in the order the option tries them.
+func ListOptionMethods(optionID int) ([]*entity.PaymentMethod, error) {
+	var methods []*entity.PaymentMethod
+	err := model.DB.Where("option_id = ?", optionID).Order("priority asc, id asc").Find(&methods).Error
 	return methods, err
 }
 
@@ -142,7 +159,7 @@ func CreateMethod(method *entity.PaymentMethod) error {
 // the token never change.
 func UpdateMethod(method *entity.PaymentMethod) error {
 	return model.DB.Model(method).
-		Select("name", "icon", "description", "sort", "enabled", "domain", "config", "fee_mode", "fee_rate_bp", "fee_fixed").
+		Select("name", "option_id", "enabled", "min_amount", "max_amount", "priority", "weight", "domain", "config").
 		Updates(method).Error
 }
 
