@@ -66,8 +66,6 @@ const info = {
   min_topup: '1',
   amount_options: [10, 50],
   amount_discount: {},
-  payment_compliance_confirmed: true,
-  payment_compliance_terms_version: 'v1',
 }
 
 function method(
