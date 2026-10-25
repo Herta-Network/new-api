@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/internal/module/payment/internal/gateway"
 	"github.com/QuantumNous/new-api/internal/module/payment/internal/store"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/bytedance/gopkg/util/gopool"
 )
 
 // CheckoutTypePaid answers a checkout that completed without a gateway: a
@@ -101,6 +102,9 @@ func CreateOrder(ctx context.Context, userId int, req PurchaseRequest, clientIp 
 // does not wait for every failing gateway.
 const maxCheckoutChannels = 3
 
+// runInBackground runs work off the buyer's request; tests run it in step.
+var runInBackground = gopool.Go
+
 // checkoutFailure is a channel that could not start a payment; the order
 // may try another.
 type checkoutFailure struct{ err error }
@@ -113,10 +117,12 @@ func (f *checkoutFailure) Unwrap() error { return f.err }
 // given, is the order's invoice through channels[0]. When a channel fails,
 // the next channel whose checkout reaches its provider is tried: a channel
 // that only redirects is never switched to, because its failures cannot be
-// seen. The failed invoice is closed without asking its gateway when its
+// seen. The failed invoice is closed without waiting for its gateway when its
 // checkout started in this call, since the buyer never got it and a payment
-// that arrives anyway still settles; one whose checkout the buyer got before
-// stays pending, so the order's close still asks its gateway about it. A
+// that arrives anyway still settles; unless the provider refused it, the
+// gateway is then asked in the background to close what it may have created
+// (see closeFailedCheckout). One whose checkout the buyer got before stays
+// pending, so the order's close still asks its gateway about it. A
 // failure counts towards the channel's breaker unless the provider refused
 // the request or worded it for the buyer, or it is the renewal of a checkout
 // that started before (countFirst false), which a gateway may refuse without
@@ -164,10 +170,46 @@ func checkoutThrough(ctx context.Context, order *entity.PaymentOrder, invoice *e
 			if _, err := store.CloseInvoice(invoice, false, closeReasonFailed); err != nil {
 				return nil, err
 			}
+			if candidate.gw.ServerCheckout() && !errors.Is(failed.err, gateway.ErrRefused) {
+				snapshot, invoiceID, gw := *order, invoice.Id, candidate.gw
+				runInBackground(func() { closeFailedCheckout(context.WithoutCancel(ctx), &snapshot, invoiceID, gw) })
+			}
 		}
 		invoice = nil
 	}
 	return nil, failure
+}
+
+// failedCheckoutCloseTimeout bounds how long the gateway of a failed
+// checkout is asked to close it.
+const failedCheckoutCloseTimeout = time.Minute
+
+// closeFailedCheckout asks the gateway of an invoice whose checkout failed
+// to close the payment its provider may have created anyway, as a person
+// giving it up would: an EPay gateway whose answer could not be read had
+// created one. The buyer never got that payment, so this is best effort and
+// only logged; a payment the gateway proves settles the order.
+func closeFailedCheckout(ctx context.Context, order *entity.PaymentOrder, invoiceID int, gw gateway.Gateway) {
+	ctx, cancel := context.WithTimeout(ctx, failedCheckoutCloseTimeout)
+	defer cancel()
+	invoice, err := store.GetInvoice(invoiceID)
+	if err != nil {
+		logger.LogWarn(ctx, common.LogText("load payment invoice %d whose checkout failed: %v", invoiceID, err))
+		return
+	}
+	verdict, err := gw.Reconcile(ctx, gateway.CloseRequest{Order: invoiceView(order, invoice), Explicit: true})
+	switch {
+	case errors.Is(err, gateway.ErrUnconfirmed):
+		logger.LogDebug(ctx, "payment invoice %s whose checkout failed stays open at its gateway: %v", invoice.InvoiceNo, err)
+	case err != nil:
+		logger.LogWarn(ctx, common.LogText("payment invoice %s whose checkout failed could not be closed at its gateway: %v", invoice.InvoiceNo, err))
+	case verdict.TradeNo != "":
+		if _, err := settleConfirmed(order, invoice, verdict.TradeNo, ""); err != nil {
+			logger.LogError(ctx, common.LogText("settle payment invoice %s whose checkout failed: %v", invoice.InvoiceNo, err))
+		}
+	case verdict.Note != "":
+		logger.LogDebug(ctx, "payment invoice %s whose checkout failed: %s", invoice.InvoiceNo, verdict.Note)
+	}
 }
 
 // ResumeCheckout starts the payment of a user's pending order again, for a
