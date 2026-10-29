@@ -22676,10 +22676,11 @@
             "type": "object",
             "properties": {
                 "failures": {
-                    "description": "Failures counts the checkouts that failed in a row.",
+                    "description": "Failures counts the checkouts that failed in a row and count towards\nthe breaker; a refusal, for one, does not.",
                     "type": "integer"
                 },
                 "last_error": {
+                    "description": "LastError and LastFailedAt describe the latest failed checkout,\ncounted or not.",
                     "type": "string"
                 },
                 "last_failed_at": {
