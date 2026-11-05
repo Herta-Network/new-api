@@ -723,6 +723,12 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		if regionMap["default"] == nil {
 			return common.NewMessage("Deployment region must include a default field")
 		}
+
+		switch channel.GetOtherSettings().VertexAPIVersion {
+		case "", "v1", "v1beta1":
+		default:
+			return common.NewMessage("Vertex AI API version must be v1 or v1beta1")
+		}
 	}
 
 	// Codex OAuth key validation (optional, only when JSON object is provided)
@@ -804,17 +810,33 @@ type AddChannelRequest struct {
 	Channel                   *model.Channel        `json:"channel"`
 }
 
-func getVertexArrayKeys(keys string) ([]string, error) {
+// AddChannelResult maps an accepted input (a line or Vertex AI key array
+// element, counted from 0) to the channel created for it.
+type AddChannelResult struct {
+	InputIndex int `json:"input_index"`
+	ChannelID  int `json:"channel_id"`
+}
+
+// AddChannelResponse lists the channels AddChannel created. ID is set when
+// exactly one channel was created.
+type AddChannelResponse struct {
+	ID      *int               `json:"id,omitempty"`
+	IDs     []int              `json:"ids"`
+	Results []AddChannelResult `json:"results"`
+}
+
+func getVertexArrayKeys(keys string) ([]string, []int, error) {
 	if keys == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var keyArray []any
 	err := common.Unmarshal([]byte(keys), &keyArray)
 	if err != nil {
-		return nil, common.NewMessage("Batch-adding Vertex AI keys requires a JSON array, for example {{example}}. Check the input: {{error}}", map[string]any{"example": "[{key1}, {key2}...]", "error": err.Error()})
+		return nil, nil, common.NewMessage("Batch-adding Vertex AI keys requires a JSON array, for example {{example}}. Check the input: {{error}}", map[string]any{"example": "[{key1}, {key2}...]", "error": err.Error()})
 	}
 	cleanKeys := make([]string, 0, len(keyArray))
-	for _, key := range keyArray {
+	inputIndices := make([]int, 0, len(keyArray))
+	for i, key := range keyArray {
 		var keyStr string
 		switch v := key.(type) {
 		case string:
@@ -822,25 +844,26 @@ func getVertexArrayKeys(keys string) ([]string, error) {
 		default:
 			bytes, err := common.Marshal(v)
 			if err != nil {
-				return nil, common.NewMessage("Failed to encode Vertex AI key JSON: {{error}}", map[string]any{"error": err.Error()})
+				return nil, nil, common.NewMessage("Failed to encode Vertex AI key JSON: {{error}}", map[string]any{"error": err.Error()})
 			}
 			keyStr = string(bytes)
 		}
 		if keyStr != "" {
 			cleanKeys = append(cleanKeys, keyStr)
+			inputIndices = append(inputIndices, i)
 		}
 	}
 	if len(cleanKeys) == 0 {
-		return nil, common.NewMessage("Vertex AI keys for batch adding cannot be empty")
+		return nil, nil, common.NewMessage("Vertex AI keys for batch adding cannot be empty")
 	}
-	return cleanKeys, nil
+	return cleanKeys, inputIndices, nil
 }
 
 // @Summary		创建渠道
 // @Description	需要 channel.sensitive_write 权限；创建任务插件渠道或绑定任务插件还需要 task_plugin.bind 权限。mode 为 single（单个）、batch（每行一个密钥，各建一个渠道）或 multi_to_single（多个密钥合成一个多密钥渠道）。
 // @Tags			渠道
 // @Param			body	body		AddChannelRequest	true	"创建方式和渠道"
-// @Success		200		{object}	common.ApiResponse
+// @Success		200		{object}	common.ApiResponse{data=AddChannelResponse}
 // @Security		AdminAuth
 // @Router			/api/channel/ [post]
 func AddChannel(c *gin.Context) {
@@ -874,26 +897,29 @@ func AddChannel(c *gin.Context) {
 
 	addChannelRequest.Channel.CreatedTime = common.GetTimestamp()
 	keys := make([]string, 0)
+	inputIndices := make([]int, 0)
 	switch addChannelRequest.Mode {
 	case "multi_to_single":
 		addChannelRequest.Channel.ChannelInfo.IsMultiKey = true
 		addChannelRequest.Channel.ChannelInfo.MultiKeyMode = addChannelRequest.MultiKeyMode
 		if addChannelRequest.Channel.Type == constant.ChannelTypeVertexAi && addChannelRequest.Channel.GetOtherSettings().VertexKeyType != dto.VertexKeyTypeAPIKey {
-			array, err := getVertexArrayKeys(addChannelRequest.Channel.Key)
+			array, indices, err := getVertexArrayKeys(addChannelRequest.Channel.Key)
 			if err != nil {
 				common.ApiError(c, err)
 				return
 			}
 			addChannelRequest.Channel.ChannelInfo.MultiKeySize = len(array)
 			addChannelRequest.Channel.Key = strings.Join(array, "\n")
+			inputIndices = indices
 		} else {
 			cleanKeys := make([]string, 0)
-			for key := range strings.SplitSeq(addChannelRequest.Channel.Key, "\n") {
+			for i, key := range strings.Split(addChannelRequest.Channel.Key, "\n") {
 				if key == "" {
 					continue
 				}
 				key = strings.TrimSpace(key)
 				cleanKeys = append(cleanKeys, key)
+				inputIndices = append(inputIndices, i)
 			}
 			addChannelRequest.Channel.ChannelInfo.MultiKeySize = len(cleanKeys)
 			addChannelRequest.Channel.Key = strings.Join(cleanKeys, "\n")
@@ -902,23 +928,28 @@ func AddChannel(c *gin.Context) {
 	case "batch":
 		if addChannelRequest.Channel.Type == constant.ChannelTypeVertexAi && addChannelRequest.Channel.GetOtherSettings().VertexKeyType != dto.VertexKeyTypeAPIKey {
 			// multi json
-			keys, err = getVertexArrayKeys(addChannelRequest.Channel.Key)
+			keys, inputIndices, err = getVertexArrayKeys(addChannelRequest.Channel.Key)
 			if err != nil {
 				common.ApiError(c, err)
 				return
 			}
 		} else {
 			keys = strings.Split(addChannelRequest.Channel.Key, "\n")
+			for i := range keys {
+				inputIndices = append(inputIndices, i)
+			}
 		}
 	case "single":
 		keys = []string{addChannelRequest.Channel.Key}
+		inputIndices = []int{0}
 	default:
 		common.ApiErrorT(c, "Unsupported add mode")
 		return
 	}
 
 	channels := make([]model.Channel, 0, len(keys))
-	for _, key := range keys {
+	channelInputIndices := make([][]int, 0, len(keys))
+	for i, key := range keys {
 		if key == "" {
 			continue
 		}
@@ -932,6 +963,11 @@ func AddChannel(c *gin.Context) {
 			localChannel.Name = fmt.Sprintf("%s %s", localChannel.Name, keyPrefix)
 		}
 		channels = append(channels, *localChannel)
+		if addChannelRequest.Mode == "multi_to_single" {
+			channelInputIndices = append(channelInputIndices, inputIndices)
+		} else {
+			channelInputIndices = append(channelInputIndices, []int{inputIndices[i]})
+		}
 	}
 	err = model.BatchInsertChannels(channels)
 	if err != nil {
@@ -947,7 +983,20 @@ func AddChannel(c *gin.Context) {
 		createAudit["base_url_source"] = "plugin_default"
 	}
 	recordManageAudit(c, "channel.create", createAudit)
-	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
+	response := AddChannelResponse{
+		IDs:     make([]int, len(channels)),
+		Results: make([]AddChannelResult, 0, len(inputIndices)),
+	}
+	for i, channel := range channels {
+		response.IDs[i] = channel.Id
+		for _, inputIndex := range channelInputIndices[i] {
+			response.Results = append(response.Results, AddChannelResult{InputIndex: inputIndex, ChannelID: channel.Id})
+		}
+	}
+	if len(response.IDs) == 1 {
+		response.ID = &response.IDs[0]
+	}
+	common.ApiSuccess(c, response)
 	return
 }
 
@@ -1311,7 +1360,7 @@ func UpdateChannel(c *gin.Context) {
 				if channel.Type == constant.ChannelTypeVertexAi && channel.GetOtherSettings().VertexKeyType != dto.VertexKeyTypeAPIKey {
 					// 尝试解析新密钥为JSON数组
 					if strings.HasPrefix(strings.TrimSpace(channel.Key), "[") {
-						array, err := getVertexArrayKeys(channel.Key)
+						array, _, err := getVertexArrayKeys(channel.Key)
 						if err != nil {
 							common.ApiErrorT(c, "Failed to parse appended keys: {{error}}", map[string]any{"error": err.Error()})
 							return
