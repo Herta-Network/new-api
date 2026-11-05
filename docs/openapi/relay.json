@@ -1212,35 +1212,6 @@
             }
         },
         "/v1/files/{id}": {
-            "get": {
-                "security": [
-                    {
-                        "TokenAuth": []
-                    }
-                ],
-                "description": "固定返回 501，code 为 api_not_implemented。请求仍先经过渠道分发，请求体没有 model 时先返回 400。",
-                "tags": [
-                    "未实现"
-                ],
-                "summary": "未实现的 OpenAI 接口",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "文件或微调任务 ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "501": {
-                        "description": "Not Implemented",
-                        "schema": {
-                            "$ref": "#/definitions/controller.OpenAIErrorResponse"
-                        }
-                    }
-                }
-            },
             "delete": {
                 "security": [
                     {
@@ -4278,6 +4249,9 @@
                 "content": {
                     "$ref": "#/definitions/dto.GeminiChatContent"
                 },
+                "continuationToken": {
+                    "type": "object"
+                },
                 "finishReason": {
                     "type": "string"
                 },
@@ -4330,6 +4304,9 @@
                 },
                 "maxOutputTokens": {
                     "type": "integer"
+                },
+                "mediaProcessing": {
+                    "type": "object"
                 },
                 "mediaResolution": {
                     "type": "string"
@@ -4405,6 +4382,9 @@
                     "items": {
                         "$ref": "#/definitions/dto.GeminiChatContent"
                     }
+                },
+                "continuationToken": {
+                    "type": "object"
                 },
                 "generationConfig": {
                     "$ref": "#/definitions/dto.GeminiChatGenerationConfig"
@@ -4497,6 +4477,23 @@
             "properties": {
                 "embedding": {
                     "$ref": "#/definitions/dto.ContentEmbedding"
+                },
+                "usageMetadata": {
+                    "$ref": "#/definitions/dto.GeminiEmbeddingUsageMetadata"
+                }
+            }
+        },
+        "dto.GeminiEmbeddingUsageMetadata": {
+            "type": "object",
+            "properties": {
+                "promptTokenCount": {
+                    "type": "integer"
+                },
+                "promptTokenDetails": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.GeminiPromptTokensDetails"
+                    }
                 }
             }
         },
@@ -4628,6 +4625,9 @@
                 },
                 "inlineData": {
                     "$ref": "#/definitions/dto.GeminiInlineData"
+                },
+                "mediaProcessing": {
+                    "type": "object"
                 },
                 "mediaResolution": {
                     "description": "Optional. Media resolution for the input media.",

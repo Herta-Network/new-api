@@ -599,7 +599,19 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/common.ApiResponse"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.ApiResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/controller.AddChannelResponse"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -6464,6 +6476,43 @@
                 }
             }
         },
+        "/api/option/model_pricing/issues": {
+            "get": {
+                "security": [
+                    {
+                        "RootAuth": []
+                    }
+                ],
+                "description": "列出当前提供服务的任务插件无法按已保存价格计费的模型：未设置价格（unconfigured）、价格用到插件不再提供的用量（incompatible），或已保存的插件价格对应的插件未安装或不再声明该模型（stale）。已关闭插件保留的价格不在其中。",
+                "tags": [
+                    "系统设置"
+                ],
+                "summary": "获取无法计费的任务模型",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.ApiResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/model.ModelPricingIssue"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/option/model_pricing/preview": {
             "post": {
                 "security": [
@@ -8678,7 +8727,19 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/common.ApiResponse"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.ApiResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/controller.taskPluginPricingNotice"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -8883,7 +8944,7 @@
                         "RootAuth": []
                     }
                 ],
-                "description": "只能删除覆盖层版本。删除没有内置插件的激活版本时，若仍有渠道绑定或进行中的任务且未传 force=true，返回 success=false，data 含 channels 和 in_flight_count。",
+                "description": "只能删除覆盖层版本。删除没有内置插件的激活版本时，若仍有渠道绑定或进行中的任务且未传 force=true，返回 success=false，data 含 channels 和 in_flight_count。删除激活版本成功时，data 列出此后提供服务的插件无法计费的模型；删除其他版本时 data 为 null。",
                 "tags": [
                     "任务插件"
                 ],
@@ -8914,7 +8975,19 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/common.ApiResponse"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.ApiResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/controller.taskPluginPricingNotice"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -15284,6 +15357,37 @@
                 }
             }
         },
+        "controller.AddChannelResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                },
+                "ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/controller.AddChannelResult"
+                    }
+                }
+            }
+        },
+        "controller.AddChannelResult": {
+            "type": "object",
+            "properties": {
+                "channel_id": {
+                    "type": "integer"
+                },
+                "input_index": {
+                    "type": "integer"
+                }
+            }
+        },
         "controller.AdminBindSubscriptionRequest": {
             "type": "object",
             "properties": {
@@ -18657,6 +18761,19 @@
                 "plugin": {
                     "$ref": "#/definitions/model.TaskPlugin"
                 },
+                "pricing_issues": {
+                    "description": "PricingIssues is set by an upload that puts the version into service.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.ModelPricingIssue"
+                    }
+                },
+                "skipped_routes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "source": {
                     "type": "string"
                 }
@@ -18714,6 +18831,12 @@
                 },
                 "runtime_status": {
                     "type": "string"
+                },
+                "skipped_routes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "source": {
                     "type": "string"
@@ -18779,6 +18902,17 @@
                 },
                 "website": {
                     "type": "string"
+                }
+            }
+        },
+        "controller.taskPluginPricingNotice": {
+            "type": "object",
+            "properties": {
+                "pricing_issues": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.ModelPricingIssue"
+                    }
                 }
             }
         },
@@ -18851,6 +18985,13 @@
                 "plugin_enabled": {
                     "type": "boolean"
                 },
+                "pricing_issues": {
+                    "description": "PricingIssues is set when the plugin is switched on.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.ModelPricingIssue"
+                    }
+                },
                 "unbound_channels": {
                     "type": "integer"
                 }
@@ -18863,9 +19004,6 @@
             ],
             "properties": {
                 "enabled": {
-                    "type": "boolean"
-                },
-                "force": {
                     "type": "boolean"
                 },
                 "icon": {
@@ -21629,6 +21767,23 @@
                     }
                 },
                 "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "model.ModelPricingIssue": {
+            "type": "object",
+            "properties": {
+                "model_name": {
+                    "type": "string"
+                },
+                "plugin_key": {
+                    "type": "string"
+                },
+                "plugin_name": {
+                    "type": "string"
+                },
+                "reason": {
                     "type": "string"
                 }
             }

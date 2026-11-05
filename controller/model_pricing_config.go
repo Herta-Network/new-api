@@ -24,6 +24,21 @@ func GetModelPricingConfig(c *gin.Context) {
 	common.ApiSuccess(c, snapshot)
 }
 
+// @Summary		获取无法计费的任务模型
+// @Description	列出当前提供服务的任务插件无法按已保存价格计费的模型：未设置价格（unconfigured）、价格用到插件不再提供的用量（incompatible），或已保存的插件价格对应的插件未安装或不再声明该模型（stale）。已关闭插件保留的价格不在其中。
+// @Tags			系统设置
+// @Success		200	{object}	common.ApiResponse{data=[]model.ModelPricingIssue}
+// @Security		RootAuth
+// @Router			/api/option/model_pricing/issues [get]
+func GetModelPricingIssues(c *gin.Context) {
+	issues, err := model.GetModelPricingIssues("")
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, issues)
+}
+
 type modelPricingDraft struct {
 	ModelName string              `json:"model_name"`
 	Pricing   model.PricingValues `json:"pricing"`
