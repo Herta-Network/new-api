@@ -53,6 +53,16 @@ type pluginGenerationBuilder struct {
 
 type pluginRouteDispatcher struct {
 	registry *jsplugin.Registry
+	// paths is the route table serves last built, for the generation it names.
+	paths atomic.Pointer[pluginPathTable]
+}
+
+// pluginPathTable holds one generation's inner routes with empty handlers, so
+// a lookup in gin's own route tree tells whether a plugin route answers a path
+// without running it.
+type pluginPathTable struct {
+	generation *jsplugin.RoutingGeneration
+	routes     *gin.Engine
 }
 
 // defaultPluginDispatcher serves the default registry's plugin routes from the
@@ -470,6 +480,31 @@ func (d *pluginRouteDispatcher) dispatch(c *gin.Context) {
 		delete(c.Keys, middleware.RouteTagKey)
 	}
 	c.Next()
+}
+
+// serves reports whether a plugin route of the current generation answers the
+// request's path. Like the inner router, it counts a path a plugin serves only
+// for other methods, which the plugin answers with 405, so a preflight counts
+// too.
+func (d *pluginRouteDispatcher) serves(r *http.Request) bool {
+	generation := d.registry.Generation()
+	if generation == nil || generation.RuntimeHandler() == nil {
+		return false
+	}
+	table := d.paths.Load()
+	if table == nil || table.generation != generation {
+		routes := gin.New()
+		routes.RedirectTrailingSlash = false
+		routes.HandleMethodNotAllowed = true
+		for _, group := range generation.RouteGroups() {
+			routes.Handle(group.Method, group.GinPath, func(*gin.Context) {})
+		}
+		table = &pluginPathTable{generation: generation, routes: routes}
+		d.paths.Store(table)
+	}
+	var lookup routeLookup
+	table.routes.ServeHTTP(&lookup, r)
+	return lookup.status != http.StatusNotFound
 }
 
 // handOffNativeTaskQuery answers GET /v1/videos/:task_id in the task's own wire

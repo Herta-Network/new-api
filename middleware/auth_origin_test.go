@@ -68,7 +68,7 @@ func TestCORSAdmitsOnlyFrontendOriginsToTheConsoleAPI(t *testing.T) {
 	api.GET("/usage/token/", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"success": true}) })
 	router.POST("/v1/chat/completions", func(c *gin.Context) { c.Status(http.StatusOK) })
 	router.POST("/pg/chat/completions", func(c *gin.Context) { c.Status(http.StatusOK) })
-	handler := CORS(router)
+	handler := CORS(router, func(*http.Request) bool { return false })
 
 	serve := func(method, path, origin string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(method, "https://api.example.com"+path, nil)
@@ -183,7 +183,7 @@ func TestCORSAdmitsAnyOriginToSetupUntilTheSystemIsSetUp(t *testing.T) {
 	router.POST("/api/setup", ok)
 	router.GET("/api/status", ok)
 	router.GET("/api/user/self", ok)
-	handler := CORS(router)
+	handler := CORS(router, func(*http.Request) bool { return false })
 
 	serve := func(method, path, requestMethod string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(method, "https://api.example.com"+path, nil)

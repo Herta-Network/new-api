@@ -128,7 +128,7 @@ CORS 规则：
 
 - `/api` 和 `/pg`（控制台接口）只对「前端地址」和 `FRONTEND_ORIGINS` 的 Origin 返回 `Access-Control-Allow-Origin`（回显该 Origin，附 `Vary: Origin`），不返回 `Access-Control-Allow-Credentials`，预检只允许控制台用到的请求头（`Authorization`、`Content-Type`、`Cache-Control`、`X-Security-Proof`、`X-Auth-Session`、`X-OAuth-Nonce`）。不受信任的 Origin 不会得到任何 CORS 头，其预检返回 403。
 - 系统初始化完成前还不知道控制台的地址：此时 `GET /api/setup`、`POST /api/setup` 和 `GET /api/status` 对任意 Origin 返回 `Access-Control-Allow-Origin: *`，其它控制台接口照旧拒绝。这三个接口的响应不含敏感信息（ASVS 5.0 3.4.2）。初始化完成后这个例外关闭；多节点部署中，在初始化之前启动的其它节点要重启后才会关闭。已知的取舍：初始化前，网络上能访问到这个实例的人本来就能用 curl 完成初始化；放开 CORS 后，员工浏览器里打开的任意网页也能对内网中尚未初始化的实例发起初始化。部署后请立即完成初始化，或初始化之后再开放网络访问。
-- AI 接口（`/v1`、`/v1beta`、`/mj`、任务插件路由、`/dashboard/billing`）以及 `/api/usage/token`、`/api/log/token` 用 API Key 鉴权，继续允许任意 Origin，浏览器里直接用 `sk-` 密钥调用的场景不受影响。
+- AI 接口（`/v1`、`/v1beta`、`/mj`、任务插件路由、`/dashboard/billing`）以及 `/api/usage/token`、`/api/log/token` 用 API Key 鉴权，继续允许任意 Origin，浏览器里直接用 `sk-` 密钥调用的场景不受影响。内置任务插件在 `/api` 下提供的厂商路径（例如 `/api/v3/images/generations`、`/api/v1/services/aigc/...`）也属于任务插件路由，按当前生效的插件路由判断，同样允许任意 Origin。
 - 跨域策略包在整个路由外层（`middleware.CORS` 包住 Gin），所以每个响应都按上述规则带跨域头，包括 401、404、405、处理函数出错，以及 Gin 在中间件运行之前返回的末尾斜杠跳转。
 - `/api` 下的路径带不带末尾斜杠都直接匹配注册的路由（例如 `/api/channel` 和 `/api/channel/` 是同一个接口），不再跳转，鉴权、访问令牌的路由 scope 和审计都按注册的路由处理。其它路径（如 `/v1`）照旧由 Gin 跳转到注册的路径。
 

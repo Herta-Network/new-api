@@ -24,14 +24,16 @@ const consoleAllowedHeaders = "Authorization, Content-Type, Cache-Control, X-Sec
 // console frontend with a dashboard access token, so it admits only the
 // frontend origins: the origin of the frontend address setting and the
 // optional FRONTEND_ORIGINS. The token usage and log lookups under /api take
-// API keys and follow the AI API. Neither policy relies on cookies: the
-// browser sends no credential the server reads by itself.
+// API keys and follow the AI API, and so do the task plugin routes at
+// vendors' paths under /api (such as /api/v3/images/generations), which
+// pluginRoute reports. Neither policy relies on cookies: the browser sends no
+// credential the server reads by itself.
 //
 // Before the system is set up no frontend address is known yet, and the
 // setup wizard records the console's origin as it. Until then the setup
 // endpoints and the public site status answer any origin with "*"; their
 // answers carry nothing sensitive (ASVS 5.0 3.4.2).
-func CORS(next http.Handler) http.Handler {
+func CORS(next http.Handler, pluginRoute func(*http.Request) bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		if origin == "" || origin == "http://"+r.Host || origin == "https://"+r.Host {
@@ -42,7 +44,8 @@ func CORS(next http.Handler) http.Handler {
 		preflight := r.Method == http.MethodOptions
 		path := r.URL.Path
 		console := (path == "/api" || strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/pg/")) &&
-			!strings.HasPrefix(path, "/api/usage/token") && !strings.HasPrefix(path, "/api/log/token")
+			!strings.HasPrefix(path, "/api/usage/token") && !strings.HasPrefix(path, "/api/log/token") &&
+			!pluginRoute(r)
 		if !console {
 			header.Set("Access-Control-Allow-Origin", "*")
 			header.Set("Access-Control-Allow-Credentials", "true")

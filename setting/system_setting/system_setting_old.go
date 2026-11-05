@@ -25,12 +25,14 @@ func ConsoleAddress() string {
 }
 
 // ConsoleAddressOf is ConsoleAddress for the given frontend and server
-// addresses.
+// addresses, without a trailing slash: callers append paths such as
+// /oauth/oidc, and a Passkey origin has none.
 func ConsoleAddressOf(frontendAddress, serverAddress string) string {
-	if strings.TrimSpace(frontendAddress) != "" {
-		return frontendAddress
+	address := strings.TrimSpace(frontendAddress)
+	if address == "" {
+		address = strings.TrimSpace(serverAddress)
 	}
-	return serverAddress
+	return strings.TrimRight(address, "/")
 }
 
 func EnableWorker() bool {
