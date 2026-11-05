@@ -9,7 +9,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/pkg/pgtest"
+	"github.com/QuantumNous/new-api/plugins"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -50,7 +52,8 @@ func TestSetRouterServesAPIPathsWithOrWithoutTrailingSlash(t *testing.T) {
 	require.NoError(t, accessToken.SetScopes([]string{"channel:read", "log:read", "group:read"}))
 	require.NoError(t, model.CreateUserAccessToken(root.Id, accessToken, service.AccessTokenMaxPerUser))
 
-	handler := SetRouter(gin.New())
+	engine := gin.New()
+	handler := SetRouter(engine)
 	serve := func(method, path, origin, credential string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(method, path, nil)
 		request.Host = "api.example.com"
@@ -104,5 +107,40 @@ func TestSetRouterServesAPIPathsWithOrWithoutTrailingSlash(t *testing.T) {
 		assert.Equal(t, http.StatusTemporaryRedirect, response.Code)
 		assert.Equal(t, "/v1/chat/completions", response.Header().Get("Location"))
 		assert.Equal(t, "*", response.Header().Get("Access-Control-Allow-Origin"))
+	})
+	// Built-in plugins serve their vendors' paths, some under /api; those
+	// take API keys like the rest of the AI API.
+	t.Run("plugin routes under /api admit any origin", func(t *testing.T) {
+		source, err := plugins.Source("doubao")
+		require.NoError(t, err)
+		registry := jsplugin.NewRegistry()
+		_, err = registry.RegisterFactory(source, jsplugin.Options{Key: "doubao"})
+		require.NoError(t, err)
+		handlers := testPluginRouteHandlers(func(c *gin.Context, _ *jsplugin.RoutingGeneration, binding jsplugin.RouteBinding) {
+			c.String(http.StatusOK, binding.Plugin.Meta.Key)
+		})
+		require.NoError(t, registry.SetGenerationPreparer(newPluginGenerationBuilder(engine.Routes(), nil, handlers).prepare))
+		require.Empty(t, registry.RoutingErrors())
+		previousRegistry := defaultPluginDispatcher.registry
+		defaultPluginDispatcher.registry = registry
+		t.Cleanup(func() { defaultPluginDispatcher.registry = previousRegistry })
+
+		const stranger = "https://third-party.example.org"
+		preflight := serve(http.MethodOptions, "/api/v3/images/generations", stranger, "")
+		assert.Equal(t, http.StatusNoContent, preflight.Code)
+		assert.Equal(t, "*", preflight.Header().Get("Access-Control-Allow-Origin"))
+		submit := serve(http.MethodPost, "/api/v3/images/generations", stranger, "")
+		assert.Equal(t, "doubao", submit.Body.String())
+		assert.Equal(t, "*", submit.Header().Get("Access-Control-Allow-Origin"))
+		query := serve(http.MethodGet, "/api/v3/contents/generations/tasks/task-1", stranger, "")
+		assert.Equal(t, "*", query.Header().Get("Access-Control-Allow-Origin"))
+		wrongMethod := serve(http.MethodGet, "/api/v3/images/generations", stranger, "")
+		assert.Equal(t, http.StatusMethodNotAllowed, wrongMethod.Code)
+		assert.Equal(t, "*", wrongMethod.Header().Get("Access-Control-Allow-Origin"))
+
+		for _, path := range []string{"/api/channel/", "/api/missing"} {
+			assert.Empty(t, serve(http.MethodGet, path, stranger, token).Header().Get("Access-Control-Allow-Origin"), path)
+			assert.Equal(t, http.StatusForbidden, serve(http.MethodOptions, path, stranger, "").Code, path)
+		}
 	})
 }

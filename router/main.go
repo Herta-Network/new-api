@@ -11,7 +11,9 @@ import (
 
 // SetRouter registers every route on router and returns the handler to serve:
 // the router behind the CORS policy, so every answer carries it, and behind
-// the trailing-slash matching of the console API.
+// the trailing-slash matching of the console API. The task plugin routes under
+// /api take API keys, so the policy asks the plugin router which paths they
+// are.
 func SetRouter(router *gin.Engine) http.Handler {
 	SetApiRouter(router)
 	SetDashboardRouter(router)
@@ -21,7 +23,7 @@ func SetRouter(router *gin.Engine) http.Handler {
 	SetTaskRouter(router)
 	pluginDispatcher := SetPluginRouter(router)
 	SetWebRouter(router, pluginDispatcher)
-	return middleware.CORS(matchAPITrailingSlash(router))
+	return middleware.CORS(matchAPITrailingSlash(router), defaultPluginDispatcher.serves)
 }
 
 // matchAPITrailingSlash serves an /api path that misses its route only by a
