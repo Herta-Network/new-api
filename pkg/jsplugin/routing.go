@@ -461,6 +461,8 @@ var reservedRouteNamespaces = []string{
 	"/register",
 	"/reset",
 	"/privacy-policy",
+	"/privacy",
+	"/terms",
 	"/user-agreement",
 	"/about",
 	"/pricing",
@@ -489,6 +491,15 @@ var reservedRouteNamespaces = []string{
 	"/usage-logs",
 	"/users",
 	"/wallet",
+	// Locale prefixes of the console's pages (/en-US/pricing); zh-CN has none
+	// but redirects there
+	"/zh-CN",
+	"/zh-TW",
+	"/en-US",
+	"/fr-FR",
+	"/ja-JP",
+	"/ru-RU",
+	"/vi-VN",
 }
 
 func (g *RoutingGeneration) Get(key string) (*LoadedPlugin, bool) {
