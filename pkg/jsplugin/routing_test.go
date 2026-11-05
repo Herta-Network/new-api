@@ -821,6 +821,16 @@ func TestDeclarativeRouteValidationProtectsNamespacesAndCanonicalSyntax(t *testi
 			expectedError: "reserved namespace /wallet",
 		},
 		{
+			name:          "console legal page",
+			route:         Route{Method: "GET", Path: "/terms", Type: RouteTypeQuery, Render: "native"},
+			expectedError: "reserved namespace /terms",
+		},
+		{
+			name:          "console locale prefix",
+			route:         Route{Method: "POST", Path: "/en-US/jobs", Type: RouteTypeSubmit},
+			expectedError: "reserved namespace /en-US",
+		},
+		{
 			name:          "dynamic root can claim reserved subtree",
 			route:         Route{Method: "POST", Path: "/:root/jobs", Type: RouteTypeSubmit},
 			expectedError: "intersects reserved namespace",
