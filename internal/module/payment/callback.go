@@ -158,6 +158,7 @@ func settleNotice(ctx context.Context, gw gateway.Gateway, method *entity.Paymen
 			order.OrderNo, notice.TradeNo, notice.Amount, notice.Currency, result.Reason))
 	case store.SettleFinished:
 		logger.LogInfo(ctx, common.LogText("payment order %s settled with trade %s", order.OrderNo, notice.TradeNo))
+		sendTopupReceipt(result.Order)
 	}
 	return nil
 }

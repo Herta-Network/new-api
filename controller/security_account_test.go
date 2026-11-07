@@ -324,7 +324,7 @@ func (mailbox *securityMailbox) code(t *testing.T, receiver string) string {
 	mailbox.mutex.Lock()
 	defer mailbox.mutex.Unlock()
 	for index := len(mailbox.mail[receiver]) - 1; index >= 0; index-- {
-		match := regexp.MustCompile(`<strong>([0-9]{6})</strong>`).FindStringSubmatch(mailbox.mail[receiver][index])
+		match := regexp.MustCompile(`>([0-9]{6})</div>`).FindStringSubmatch(mailbox.mail[receiver][index])
 		if len(match) == 2 {
 			return match[1]
 		}
@@ -710,17 +710,17 @@ func TestSecurityAccountMailsFollowTheOwnersLanguage(t *testing.T) {
 	require.NoError(t, err)
 	response := securityEnrollmentRequest("POST", "/api/oauth/email/bind", string(request), "", identity, EmailBind)
 	require.Contains(t, response.Body.String(), `"success":true`)
-	assert.Contains(t, mails("new@example.com"), "请确认将此邮箱地址绑定到您的账户。")
-	assert.Contains(t, mails("new@example.com"), "您的账户安全设置有变动：邮箱地址已确认。")
-	assert.Contains(t, mails("previous@example.com"), "您的账户正在申请更换邮箱地址，请确认替换当前邮箱。")
-	assert.Contains(t, mails("previous@example.com"), "您的账户安全设置有变动：邮箱地址已更换。")
+	assert.Contains(t, mails("new@example.com"), ">确认绑定这个邮箱</h1>")
+	assert.Contains(t, mails("new@example.com"), "你的账户安全设置有变动：邮箱地址已确认")
+	assert.Contains(t, mails("previous@example.com"), ">有人申请更换你的账户邮箱</h1>")
+	assert.Contains(t, mails("previous@example.com"), "你的账户安全设置有变动：邮箱地址已更换")
 
 	for _, tc := range []struct {
 		name, saved, acceptLanguage, receiver, want string
 	}{
-		{"request language when none is saved", "", "zh-TW", "tw@example.com", "您的帳戶安全設定有變動：已綁定登入帳號 &lt;b&gt;Corp&lt;/b&gt;。"},
-		{"saved language over the request", "en", "zh-CN", "en@example.com", "Your account security settings have changed: Login account linked: &lt;b&gt;Corp&lt;/b&gt;."},
-		{"default language when neither states one", "", "", "default@example.com", "Your account security settings have changed: Login account linked: &lt;b&gt;Corp&lt;/b&gt;."},
+		{"request language when none is saved", "", "zh-TW", "tw@example.com", "你的帳戶安全設定有變動：已綁定登入帳號 &lt;b&gt;Corp&lt;/b&gt;"},
+		{"saved language over the request", "en", "zh-CN", "en@example.com", "Your account security settings changed: Login account linked: &lt;b&gt;Corp&lt;/b&gt;"},
+		{"default language when neither states one", "", "", "default@example.com", "Your account security settings changed: Login account linked: &lt;b&gt;Corp&lt;/b&gt;"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			saveLanguage(tc.saved)

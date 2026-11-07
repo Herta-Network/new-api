@@ -1,6 +1,8 @@
 package service
 
 import (
+	"time"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
@@ -40,13 +42,18 @@ func AccountMailLanguage(c *gin.Context, userId int) string {
 // NotifyAccountSecurityChange never includes credentials or tokens. The caller
 // records delivery failure independently from the already-committed change.
 // eventKey names the change; the notice is written in lang (see
-// AccountMailLanguage).
+// AccountMailLanguage), says when the change happened and links to the
+// account security settings.
 func NotifyAccountSecurityChange(lang, email, eventKey string, eventArgs ...map[string]any) error {
 	if email == "" {
 		return nil
 	}
 	return common.SendTemplateEmail(lang, email, common.TemplateEmail{
 		Kind: common.EmailKindSecurityNotice,
-		Vars: map[string]string{"Event": i18n.Translate(lang, eventKey, eventArgs...)},
+		Vars: map[string]string{
+			"Event": i18n.Translate(lang, eventKey, eventArgs...),
+			"Time":  i18n.FormatTime(lang, time.Now()),
+			"Link":  ConsoleURL(AccountSecurityPath),
+		},
 	})
 }

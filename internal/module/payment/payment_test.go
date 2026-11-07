@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/internal/module/currency"
 	"github.com/QuantumNous/new-api/internal/module/payment/entity"
 	"github.com/QuantumNous/new-api/internal/module/payment/internal/gateway"
@@ -893,6 +894,77 @@ func TestEPayCheckoutAndCallbackChain(t *testing.T) {
 	assert.Equal(t, order.OrderNo, invoices[0].InvoiceNo, "the gateway knows the first invoice by the order number")
 	assert.Equal(t, entity.PaymentInvoicePaid, invoices[0].Status)
 	assert.Equal(t, "T1", invoices[0].TradeNo)
+}
+
+// A credited top-up sends its buyer one receipt once the order is
+// finished: a redelivered callback sends no second one, and a receipt that
+// fails to send leaves the order credited. A site that turned receipts off,
+// a subscription and a buyer without an email address get none.
+func TestTopupReceiptIsSentOnceAfterCrediting(t *testing.T) {
+	f := setupPayment(t)
+	ctx := context.Background()
+	var receipts []common.TemplateEmail
+	common.RegisterEmailRenderer(func(_ string, email common.TemplateEmail) (string, string, error) {
+		credited, err := store.GetOrderByNo(email.Vars["OrderNo"])
+		require.NoError(t, err)
+		assert.Equal(t, entity.PaymentOrderFinished, credited.Status, "the receipt is sent after the crediting committed")
+		receipts = append(receipts, email)
+		return "", "", errors.New("the mail server is down")
+	})
+	t.Cleanup(func() {
+		common.RegisterEmailRenderer(func(string, common.TemplateEmail) (string, string, error) {
+			return "", "", errors.New("email templates are not available")
+		})
+	})
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", testUser).Update("email", "payer@example.com").Error)
+
+	order, _, err := CreateOrder(ctx, testUser, topup("100", testEPayMethod), Buyer{})
+	require.NoError(t, err)
+	f.epay.set(0, `{"code":1,"pid":"1001","trade_no":"T1","out_trade_no":"`+order.OrderNo+`","type":"alipay","money":"537.06","status":1}`)
+	callback := signEPayCallback(map[string]string{
+		"pid": "1001", "trade_no": "T1", "out_trade_no": order.OrderNo, "type": "alipay",
+		"name": order.Subject, "money": "537.06", "trade_status": "TRADE_SUCCESS",
+	})
+	for range 2 {
+		require.NoError(t, HandleNotify(ctx, gateway.PlatformEPay, "epay-token", gateway.Notification{HTTPMethod: http.MethodGet, Params: callback}, ""))
+	}
+	settled, err := store.GetOrderByNo(order.OrderNo)
+	require.NoError(t, err)
+	assert.Equal(t, entity.PaymentOrderFinished, settled.Status)
+	assert.Equal(t, 50_000_000, userQuota(t))
+	require.Len(t, receipts, 1)
+	assert.Equal(t, common.TemplateEmail{Kind: common.EmailKindTopupReceipt, Vars: map[string]string{
+		"OrderNo": order.OrderNo,
+		"Time":    i18n.FormatTime("", time.Unix(settled.FinishedAt, 0)),
+		"Method":  "Alipay",
+		"Amount":  "¥537.06",
+		"Credit":  "$100.00",
+		"Balance": "$100.00",
+		"Link":    "https://www.example.test/user/wallet/orders",
+	}}, receipts[0])
+
+	completeManually := func(request PurchaseRequest) {
+		t.Helper()
+		order, _, err := CreateOrder(ctx, testUser, request, Buyer{})
+		require.NoError(t, err)
+		completed, err := CompleteOrderManually(order.OrderNo, "")
+		require.NoError(t, err)
+		assert.Equal(t, entity.PaymentOrderFinished, completed.Status)
+	}
+	emailSetting := system_setting.GetEmailSetting()
+	emailSetting.TopupReceiptEnabled = false
+	t.Cleanup(func() { emailSetting.TopupReceiptEnabled = true })
+	completeManually(topup("10", testEPayMethod))
+	assert.Len(t, receipts, 1, "receipts are off")
+
+	emailSetting.TopupReceiptEnabled = true
+	completeManually(topup("10", testEPayMethod))
+	require.Len(t, receipts, 2, "an administrator's completion credits the top-up too")
+	assert.Equal(t, "$10.00", receipts[1].Vars["Credit"])
+	completeManually(subscription(testPlan, testEPayMethod))
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", testUser).Update("email", "").Error)
+	completeManually(topup("10", testEPayMethod))
+	assert.Len(t, receipts, 2, "neither a subscription nor a buyer without an email address gets a receipt")
 }
 
 // An API checkout asks the gateway for the payment while the buyer waits:

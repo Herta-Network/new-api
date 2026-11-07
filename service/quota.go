@@ -496,7 +496,7 @@ func checkAndSendQuotaNotify(relayInfo *relaycommon.RelayInfo, quota int, preCon
 		prompt := i18n.Translate(lang, i18n.MsgNotifyQuotaLowTitle)
 		remaining := logger.FormatQuota(balanceAfter)
 		content, values := quotaNotifyContent(lang, userSetting.NotifyType, prompt, remaining)
-		err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values), quotaLowEmail(prompt, remaining))
+		err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values), quotaLowEmail(prompt, balanceAfter))
 		if err != nil {
 			common.SysError(common.LogText("failed to send quota notify to user %d: %s", relayInfo.UserId, err.Error()))
 		}
@@ -524,7 +524,7 @@ func checkAndSendSubscriptionQuotaNotify(relayInfo *relaycommon.RelayInfo) {
 		prompt := i18n.Translate(lang, i18n.MsgNotifySubscriptionQuotaLowTitle)
 		remainingText := logger.FormatQuota(int(remaining))
 		content, values := quotaNotifyContent(lang, userSetting.NotifyType, prompt, remainingText)
-		if err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values), quotaLowEmail(prompt, remainingText)); err != nil {
+		if err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values), quotaLowEmail(prompt, int(remaining))); err != nil {
 			common.SysError(common.LogText("failed to send subscription quota notify to user %d: %s", relayInfo.UserId, err.Error()))
 		}
 	})
@@ -551,11 +551,11 @@ func quotaReminderDue(userSetting dto.UserSetting, before int64, after int64) bo
 }
 
 // quotaLowEmail is the low-balance reminder email: title names the wallet or
-// the subscription, remaining is the formatted balance left.
-func quotaLowEmail(title string, remaining string) common.TemplateEmail {
+// the subscription, remaining is the quota left, shown to the cent.
+func quotaLowEmail(title string, remaining int) common.TemplateEmail {
 	return common.TemplateEmail{
 		Kind: common.EmailKindQuotaLow,
-		Vars: map[string]string{"Title": title, "Quota": remaining, "Link": ConsoleURL("/user/wallet")},
+		Vars: map[string]string{"Title": title, "Quota": logger.FormatQuotaToCents(remaining), "Link": ConsoleURL("/user/wallet")},
 	}
 }
 
