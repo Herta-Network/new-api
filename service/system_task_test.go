@@ -7,6 +7,8 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -231,4 +233,134 @@ func TestEnqueueSystemTaskReportsCreatedAndExistingActive(t *testing.T) {
 	require.True(t, created)
 	require.NotNil(t, second)
 	assert.NotEqual(t, first.TaskID, second.TaskID)
+}
+
+// Log retention, set through the option API, schedules nothing at 0. Set to N
+// days, the daily log_cleanup run deletes the logs (here in a separate log
+// database) and the finished task records created more than N days ago, and
+// keeps the rest.
+func TestLogRetentionDeletesOldLogsAndFinishedTasks(t *testing.T) {
+	truncate(t)
+	logDB := pgtest.NewSchemaDB(t)
+	require.NoError(t, logDB.AutoMigrate(&model.Log{}))
+	previousLogDB := model.LOG_DB
+	model.LOG_DB = logDB
+	t.Cleanup(func() { model.LOG_DB = previousLogDB })
+	previousOptionMap := common.OptionMap
+	common.OptionMap = map[string]string{}
+	t.Cleanup(func() { common.OptionMap = previousOptionMap })
+	logSetting := operation_setting.GetLogSetting()
+	previousDays := logSetting.RetentionDays
+	t.Cleanup(func() { logSetting.RetentionDays = previousDays })
+	withSystemTaskRegistry(t, logCleanupHandler{})
+	require.NoError(t, logDB.Create(&model.Log{UserId: 1, CreatedAt: 1, Type: model.LogTypeConsume}).Error)
+
+	for _, invalid := range []string{"-1", "1.5", "36501", ""} {
+		assert.Error(t, model.UpdateOption(operation_setting.LogRetentionDaysOptionKey, invalid), invalid)
+	}
+	require.NoError(t, model.UpdateOption(operation_setting.LogRetentionDaysOptionKey, "0"))
+	runSystemTaskScheduler()
+	assert.Zero(t, countSystemTasks(t, model.SystemTaskTypeLogCleanup))
+
+	require.NoError(t, model.UpdateOption(operation_setting.LogRetentionDaysOptionKey, "30"))
+	require.Equal(t, 30, logSetting.RetentionDays)
+	before := common.GetTimestamp()
+	runSystemTaskScheduler()
+	after := common.GetTimestamp()
+	scheduled, err := model.GetActiveSystemTask(model.SystemTaskTypeLogCleanup)
+	require.NoError(t, err)
+	require.NotNil(t, scheduled)
+	var payload LogCleanupPayload
+	require.NoError(t, scheduled.DecodePayload(&payload))
+	const thirtyDays = 30 * 24 * 60 * 60
+	assert.True(t, payload.IncludeTasks)
+	assert.GreaterOrEqual(t, payload.TargetTimestamp, before-thirtyDays)
+	assert.LessOrEqual(t, payload.TargetTimestamp, after-thirtyDays)
+
+	target := payload.TargetTimestamp
+	require.NoError(t, logDB.Create(&[]model.Log{
+		{UserId: 1, CreatedAt: target - 1, Type: model.LogTypeConsume},
+		{UserId: 1, CreatedAt: target, Type: model.LogTypeConsume},
+	}).Error)
+	var tasks []model.Task
+	for _, status := range []model.TaskStatus{model.TaskStatusSuccess, model.TaskStatusFailure, model.TaskStatusNotStart,
+		model.TaskStatusSubmitted, model.TaskStatusQueued, model.TaskStatusInProgress, model.TaskStatusUnknown} {
+		tasks = append(tasks, model.Task{TaskID: "old-" + string(status), CreatedAt: target - 1, Status: status})
+	}
+	tasks = append(tasks, model.Task{TaskID: "boundary", CreatedAt: target, Status: model.TaskStatusSuccess})
+	require.NoError(t, model.DB.Create(&tasks).Error)
+	require.NoError(t, model.DB.Create(&[]model.Midjourney{
+		{MjId: "old-finished", SubmitTime: (target - 1) * 1000, Progress: "100%", Status: "SUCCESS"},
+		{MjId: "old-running", SubmitTime: (target - 1) * 1000, Progress: "50%", Status: "IN_PROGRESS"},
+		{MjId: "boundary", SubmitTime: target * 1000, Progress: "100%", Status: "FAILURE"},
+	}).Error)
+
+	claimed, ok, err := model.ClaimSystemTask(scheduled.ID, model.SystemTaskTypeLogCleanup, "runner-retention", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, ok)
+	logCleanupHandler{}.Run(context.Background(), claimed, "runner-retention")
+
+	finished, err := model.GetSystemTaskByTaskID(scheduled.TaskID)
+	require.NoError(t, err)
+	require.Equal(t, model.SystemTaskStatusSucceeded, finished.Status, finished.Error)
+	assert.JSONEq(t, `{"deleted_count":2,"task_deleted_count":3}`, finished.Result)
+	var keptLogs []int64
+	require.NoError(t, logDB.Model(&model.Log{}).Pluck("created_at", &keptLogs).Error)
+	assert.Equal(t, []int64{target}, keptLogs)
+	var keptTasks []string
+	require.NoError(t, model.DB.Model(&model.Task{}).Order("task_id").Pluck("task_id", &keptTasks).Error)
+	assert.Equal(t, []string{"boundary", "old-IN_PROGRESS", "old-NOT_START", "old-QUEUED", "old-SUBMITTED", "old-UNKNOWN"}, keptTasks)
+	var keptMidjourneys []string
+	require.NoError(t, model.DB.Model(&model.Midjourney{}).Order("mj_id").Pluck("mj_id", &keptMidjourneys).Error)
+	assert.Equal(t, []string{"boundary", "old-running"}, keptMidjourneys)
+}
+
+// Task records are deleted in batches like logs: one call removes at most its
+// limit of the oldest finished records, and repeated calls remove the rest.
+func TestFinishedTaskRecordsAreDeletedInBatches(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Create(&[]model.Task{
+		{TaskID: "c", CreatedAt: 102, Status: model.TaskStatusSuccess},
+		{TaskID: "a", CreatedAt: 100, Status: model.TaskStatusFailure},
+		{TaskID: "b", CreatedAt: 101, Status: model.TaskStatusSuccess},
+		{TaskID: "running", CreatedAt: 99, Status: model.TaskStatusInProgress},
+	}).Error)
+	require.NoError(t, model.DB.Create(&[]model.Midjourney{
+		{MjId: "c", SubmitTime: 102_000, Progress: "100%"},
+		{MjId: "a", SubmitTime: 100_000, Progress: "100%"},
+		{MjId: "b", SubmitTime: 101_000, Progress: "100%"},
+		{MjId: "running", SubmitTime: 99_000, Progress: "0%"},
+	}).Error)
+
+	for _, tc := range []struct {
+		name        string
+		deleteBatch func(context.Context, int64, int) (int64, error)
+		remaining   func() []string
+	}{
+		{"tasks", model.DeleteFinishedTaskBatch, func() []string {
+			var ids []string
+			require.NoError(t, model.DB.Model(&model.Task{}).Order("task_id").Pluck("task_id", &ids).Error)
+			return ids
+		}},
+		{"midjourney", model.DeleteFinishedMidjourneyBatch, func() []string {
+			var ids []string
+			require.NoError(t, model.DB.Model(&model.Midjourney{}).Order("mj_id").Pluck("mj_id", &ids).Error)
+			return ids
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deleted, err := tc.deleteBatch(context.Background(), 200, 2)
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, deleted)
+			assert.Equal(t, []string{"c", "running"}, tc.remaining())
+
+			deleted, err = tc.deleteBatch(context.Background(), 200, 2)
+			require.NoError(t, err)
+			assert.EqualValues(t, 1, deleted)
+			deleted, err = tc.deleteBatch(context.Background(), 200, 2)
+			require.NoError(t, err)
+			assert.Zero(t, deleted)
+			assert.Equal(t, []string{"running"}, tc.remaining())
+		})
+	}
 }

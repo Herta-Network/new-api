@@ -12,7 +12,7 @@ import (
 )
 
 // @Summary		创建日志清理任务
-// @Description	在后台删除 created_at 早于 target_timestamp 的使用日志；已有进行中的日志清理任务时返回该任务。
+// @Description	在后台删除 created_at 早于 target_timestamp 的使用日志；已有进行中的日志清理任务时返回该任务，包括设置 log_setting.retention_days 后每天自动创建的保留期清理任务。
 // @Tags			系统任务
 // @Param			target_timestamp	query		int	true	"Unix 秒时间戳"
 // @Success		200					{object}	common.ApiResponse{data=model.SystemTaskResponse}

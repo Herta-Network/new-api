@@ -403,6 +403,23 @@ func HasUnfinishedSyncTasks() bool {
 	return err == nil && id != 0
 }
 
+// DeleteFinishedTaskBatch deletes at most limit of the oldest async tasks
+// created before targetTimestamp (Unix seconds) that reached SUCCESS or
+// FAILURE. Tasks in any other status are kept, so a task still being polled or
+// settled is never removed. It reads created_at, which GORM sets on insert,
+// because polling may overwrite submit_time with the upstream's own value.
+func DeleteFinishedTaskBatch(ctx context.Context, targetTimestamp int64, limit int) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	oldest := DB.Model(&Task{}).Select("id").
+		Where("created_at < ? AND status IN ?", targetTimestamp, []string{TaskStatusSuccess, TaskStatusFailure}).
+		Order("created_at, id").
+		Limit(max(limit, 1))
+	result := DB.WithContext(ctx).Where("id IN (?)", oldest).Delete(&Task{})
+	return result.RowsAffected, result.Error
+}
+
 func GetByOnlyTaskId(taskId string) (*Task, bool, error) {
 	if taskId == "" {
 		return nil, false, nil
