@@ -226,6 +226,8 @@ docker compose logs -f new-api
 
 完整設定見[環境變數範例](./.env.example)、[環境變數文件](https://docs.newapi.ai/zh/docs/installation/config-maintenance/environment-variables)和[驗證與登入工作階段說明](./docs/authentication.md)。容器變數應透過 Compose 的 `environment` 或 `env_file` 注入；只複製 `.env.example` 不會自動將變數傳入容器。
 
+使用日誌和已結束的非同步任務紀錄（Midjourney 及其他任務的提示詞和結果連結）預設一直保留，直到管理員手動刪除。要自動刪除，將 `log_setting.retention_days` 設為保留天數：主節點會在上一次日誌清理（手動或自動）24 小時後執行一次日誌清理系統任務，分批刪除建立時間早於該天數的日誌（包括獨立日誌資料庫中的）和已結束的任務紀錄。進行中的任務不會刪除；預設值 `0` 表示不自動刪除。
+
 正式部署時使用 HTTPS，並設定反向代理支援串流回應與 WebSocket 升級。持久化並備份資料庫和掛載資料。多節點必須共用主資料庫和驗證金鑰；獨立 Redis 或記憶體限流器會按節點分別計數。不同拓撲下的工作階段傳播行為見驗證文件。
 
 從[發行頁](https://github.com/QuantumNous/new-api/releases)選擇明確的映像版本，閱讀升級說明並先備份再升級。`latest` 會隨發行建置變動；既有執行個體應依實際版本評估遷移與相容性。

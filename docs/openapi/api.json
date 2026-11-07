@@ -10740,7 +10740,7 @@
                         "RootAuth": []
                     }
                 ],
-                "description": "在后台删除 created_at 早于 target_timestamp 的使用日志；已有进行中的日志清理任务时返回该任务。",
+                "description": "在后台删除 created_at 早于 target_timestamp 的使用日志；已有进行中的日志清理任务时返回该任务，包括设置 log_setting.retention_days 后每天自动创建的保留期清理任务。",
                 "tags": [
                     "系统任务"
                 ],
