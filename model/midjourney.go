@@ -1,5 +1,7 @@
 package model
 
+import "context"
+
 type Midjourney struct {
 	Id          int    `json:"id"`
 	Code        int    `json:"code"`
@@ -115,6 +117,23 @@ func HasUnfinishedMidjourneyTasks() bool {
 		Limit(1).
 		Pluck("id", &id).Error
 	return err == nil && id != 0
+}
+
+// DeleteFinishedMidjourneyBatch deletes at most limit of the oldest finished
+// Midjourney tasks submitted before targetTimestamp (Unix seconds). A task is
+// finished once its progress is 100%, the same rule the poller uses to stop
+// polling it, so tasks still in progress are never removed. submit_time holds
+// milliseconds.
+func DeleteFinishedMidjourneyBatch(ctx context.Context, targetTimestamp int64, limit int) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	oldest := DB.Model(&Midjourney{}).Select("id").
+		Where("progress = ? AND submit_time < ?", "100%", targetTimestamp*1000).
+		Order("submit_time, id").
+		Limit(max(limit, 1))
+	result := DB.WithContext(ctx).Where("id IN (?)", oldest).Delete(&Midjourney{})
+	return result.RowsAffected, result.Error
 }
 
 func GetByOnlyMJId(mjId string) *Midjourney {

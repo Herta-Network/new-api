@@ -242,6 +242,8 @@ SQLite and MySQL are not supported, and there is no built-in migration from them
 
 See the [environment example](./.env.example), [environment reference](https://docs.newapi.ai/en/docs/installation/config-maintenance/environment-variables), and [authentication and session guide](./docs/authentication.md) for full configuration. Configure container variables in Compose's `environment` or `env_file`; copying `.env.example` alone does not inject variables into the container.
 
+Usage logs and finished asynchronous task records (the prompts and result links of Midjourney and other tasks) are kept until an administrator deletes them. To delete them automatically, set the `log_setting.retention_days` option to a number of days: the master node then runs a log cleanup system task 24 hours after the previous one, manual or automatic, which deletes in small batches the logs, including those in a separate log database, and the finished task records created more than that many days ago. Tasks still in progress are kept; `0`, the default, turns automatic deletion off.
+
 For production, put the backend behind HTTPS and configure your reverse proxy for streaming and WebSocket upgrades. Persist and back up the database and mounted data. Multi-node deployments must share the main database and authentication secrets; separate Redis instances or in-memory rate limiters count limits independently per node. The session guide describes propagation behavior for each topology.
 
 Pin an image version from [Releases](https://github.com/QuantumNous/new-api/releases), review its upgrade notes, and back up before upgrading. The `latest` tag follows published builds and can change; migrations and compatibility must be assessed for your existing installation.

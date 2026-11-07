@@ -242,6 +242,8 @@ docker compose logs -f new-api
 
 完整配置见[环境变量示例](./.env.example)、[环境变量文档](https://docs.newapi.ai/zh/docs/installation/config-maintenance/environment-variables)和[鉴权与登录会话说明](./docs/authentication.md)。容器变量应通过 Compose 的 `environment` 或 `env_file` 注入；只复制 `.env.example` 不会自动将变量传入容器。
 
+使用日志和已结束的异步任务记录（Midjourney 及其他任务的提示词和结果链接）默认一直保留，直到管理员手动删除。要自动删除，把 `log_setting.retention_days` 设为保留天数：主节点会在上一次日志清理（手动或自动）24 小时后运行一次日志清理系统任务，分批删除创建时间早于该天数的日志（包括独立日志库中的）和已结束的任务记录。进行中的任务不会删除；默认值 `0` 表示不自动删除。
+
 正式部署时使用 HTTPS，并配置反向代理支持流式响应与 WebSocket 升级。持久化并备份数据库和挂载数据。多节点必须共用主数据库和鉴权密钥；独立 Redis 或内存限流器会按节点分别计数。不同拓扑下的会话传播行为见鉴权文档。
 
 从[发布页](https://github.com/QuantumNous/new-api/releases)选择明确的镜像版本，阅读升级说明并先备份再升级。`latest` 会随发布构建变化；已有实例应按实际版本评估迁移与兼容性。

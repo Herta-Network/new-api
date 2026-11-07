@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
 )
@@ -20,6 +21,7 @@ const (
 	systemTaskRunnerIdleInterval = 15 * time.Second
 	systemTaskLockTTL            = 60 * time.Second
 	logCleanupBatchSize          = 100
+	logRetentionInterval         = 24 * time.Hour
 
 	// systemTaskSchedulerInterval throttles how often the scheduler/stale-lock
 	// pass runs, independent of how often the runner wakes to claim tasks.
@@ -73,14 +75,32 @@ func registeredSystemTaskHandlers() []SystemTaskHandler {
 	return handlers
 }
 
-// logCleanupHandler wraps the existing on-demand log cleanup task as a
-// registered (non-scheduled) handler. It is created via StartLogCleanupTask.
+// logCleanupHandler runs log cleanup tasks. An administrator creates one with
+// StartLogCleanupTask; while log retention is set, the scheduler also creates
+// one a day that deletes the logs and finished async task records older than
+// the retention. Both are the same task type, so the per-type lock never lets
+// them run at once, and either one resets the daily interval.
 type logCleanupHandler struct{}
 
 func (logCleanupHandler) Type() string { return model.SystemTaskTypeLogCleanup }
 
 func (logCleanupHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
 	runLogCleanupTask(ctx, task, runnerID)
+}
+
+func (logCleanupHandler) Enabled() bool {
+	return operation_setting.GetLogSetting().RetentionDays > 0
+}
+
+func (logCleanupHandler) Interval() time.Duration { return logRetentionInterval }
+
+func (logCleanupHandler) NewPayload() any {
+	days := int64(operation_setting.GetLogSetting().RetentionDays)
+	return LogCleanupPayload{
+		TargetTimestamp: common.GetTimestamp() - days*24*60*60,
+		BatchSize:       logCleanupBatchSize,
+		IncludeTasks:    true,
+	}
 }
 
 func init() {
@@ -90,17 +110,24 @@ func init() {
 type LogCleanupPayload struct {
 	TargetTimestamp int64 `json:"target_timestamp"`
 	BatchSize       int   `json:"batch_size"`
+	// IncludeTasks also deletes the finished Midjourney and async task records
+	// created before TargetTimestamp. The daily retention run sets it.
+	IncludeTasks bool `json:"include_tasks,omitempty"`
 }
 
+// LogCleanupState counts logs in Total, Processed, Progress and Remaining;
+// TasksDeleted counts the task records removed after the logs.
 type LogCleanupState struct {
-	Total     int64 `json:"total"`
-	Processed int64 `json:"processed"`
-	Progress  int   `json:"progress"`
-	Remaining int64 `json:"remaining"`
+	Total        int64 `json:"total"`
+	Processed    int64 `json:"processed"`
+	Progress     int   `json:"progress"`
+	Remaining    int64 `json:"remaining"`
+	TasksDeleted int64 `json:"tasks_deleted,omitempty"`
 }
 
 type LogCleanupResult struct {
-	DeletedCount int64 `json:"deleted_count"`
+	DeletedCount     int64 `json:"deleted_count"`
+	TaskDeletedCount int64 `json:"task_deleted_count,omitempty"`
 }
 
 var (
@@ -419,7 +446,30 @@ func runLogCleanupTask(ctx context.Context, task *model.SystemTask, runnerID str
 		return
 	}
 
-	result := LogCleanupResult{DeletedCount: state.Processed}
+	if payload.IncludeTasks {
+		for _, deleteBatch := range []func(context.Context, int64, int) (int64, error){
+			model.DeleteFinishedTaskBatch,
+			model.DeleteFinishedMidjourneyBatch,
+		} {
+			for {
+				deleted, err := deleteBatch(ctx, payload.TargetTimestamp, payload.BatchSize)
+				if err != nil {
+					failSystemTask(task, runnerID, err)
+					return
+				}
+				if deleted == 0 {
+					break
+				}
+				state.TasksDeleted += deleted
+				if err := model.UpdateSystemTaskState(task.TaskID, runnerID, state); err != nil {
+					logSystemTaskLockError(ctx, task, err)
+					return
+				}
+			}
+		}
+	}
+
+	result := LogCleanupResult{DeletedCount: state.Processed, TaskDeletedCount: state.TasksDeleted}
 	if err := model.FinishSystemTask(task.TaskID, runnerID, model.SystemTaskStatusSucceeded, result, ""); err != nil {
 		logSystemTaskLockError(ctx, task, err)
 	}
