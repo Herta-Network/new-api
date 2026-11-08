@@ -120,7 +120,11 @@ func ListOrders(filter OrderFilter, pageInfo *common.PageInfo) ([]*entity.Paymen
 // FulfilOrder retries the fulfilment of a paid order whose fulfilment
 // failed.
 func FulfilOrder(orderNo string, clientIp string) (*entity.PaymentOrder, error) {
-	return store.FulfilOrder(orderNo, clientIp)
+	order, err := store.FulfilOrder(orderNo, clientIp)
+	if err == nil {
+		sendTopupReceipt(order)
+	}
+	return order, err
 }
 
 // ListUnmatched lists the payments that could not settle their order;

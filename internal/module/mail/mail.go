@@ -25,6 +25,8 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 )
 
 // The options that hold the Cloudflare settings. GetOptions never returns
@@ -90,15 +92,14 @@ func renderEmail(lang string, email common.TemplateEmail) (string, string, error
 	for name, value := range email.Vars {
 		data[name] = value
 	}
-	if kind.Name == common.EmailKindNotice {
-		data["Content"] = render.PlainTextHTML(email.Vars["Content"])
-	}
 	return compose(kind, i18n.ResolveLang(lang), data, nil)
 }
 
-// compose renders kind in lang from data and places it in the layout. The
-// administrator's templates of lang apply, else the built-in ones; drafts
-// stand in for the templates of their kinds in a preview.
+// compose renders kind in lang from data and places it in the layout,
+// with the email's tag and preheader and what the site's settings show
+// around every email. The administrator's templates of lang apply, else the
+// built-in ones; drafts stand in for the templates of their kinds in a
+// preview.
 func compose(kind render.Kind, lang string, data map[string]any, drafts map[string]render.Template) (string, string, error) {
 	data["SystemName"] = common.SystemName
 	stored, err := store.Templates(model.DB, lang, kind.Name, render.KindLayout)
@@ -111,12 +112,52 @@ func compose(kind render.Kind, lang string, data map[string]any, drafts map[stri
 	if err != nil {
 		return "", "", err
 	}
-	layoutData := map[string]any{"SystemName": common.SystemName, "Subject": subject, "Content": htmltemplate.HTML(body)}
+	tag, preheader := render.Frame(kind, lang, data)
+	settings := system_setting.GetEmailSetting()
+	layoutData := map[string]any{
+		"SystemName":     common.SystemName,
+		"Subject":        subject,
+		"Content":        htmltemplate.HTML(body),
+		"Preheader":      preheader,
+		"Tag":            tag,
+		"Logo":           emailLogo(),
+		"SupportEmail":   strings.TrimSpace(settings.SupportEmail),
+		"CompanyName":    strings.TrimSpace(settings.CompanyName),
+		"CompanyAddress": strings.TrimSpace(settings.CompanyAddress),
+	}
+	// The console shows the terms and the privacy policy the legal settings
+	// hold at /terms and /privacy; an empty one has no page to link to.
+	legal := system_setting.GetLegalSettings()
+	if strings.TrimSpace(legal.UserAgreement) != "" {
+		layoutData["TermsLink"] = service.ConsoleURL("/terms")
+	}
+	if strings.TrimSpace(legal.PrivacyPolicy) != "" {
+		layoutData["PrivacyLink"] = service.ConsoleURL("/privacy")
+	}
 	_, html, err := execute(layoutKind, lang, stored, drafts, layoutData)
 	if err != nil {
 		return "", "", err
 	}
 	return subject, html, nil
+}
+
+// emailLogo is the site's logo as an email shows it: the Logo setting when
+// it is an http or https image other than SVG, which Gmail and other
+// clients do not display; a path on its own is on the console. Otherwise
+// the layout shows the site's name alone.
+func emailLogo() string {
+	logo := strings.TrimSpace(common.Logo)
+	if strings.HasPrefix(logo, "/") && !strings.HasPrefix(logo, "//") {
+		logo = service.ConsoleURL(logo)
+	}
+	parsed, err := url.Parse(logo)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
+		return ""
+	}
+	if strings.HasSuffix(strings.ToLower(parsed.Path), ".svg") {
+		return ""
+	}
+	return parsed.String()
 }
 
 // execute renders kind with its draft, else the administrator's template,
@@ -253,16 +294,28 @@ func sampleData(kind, lang string) map[string]any {
 		minutes = int(model.EmailBindingTTL / time.Minute)
 	}
 	link := service.ConsoleURL("/user/wallet")
-	if kind == common.EmailKindPasswordReset {
+	switch kind {
+	case common.EmailKindPasswordReset:
 		link = service.ConsoleURL("/user/reset?" + url.Values{"email": {"user@example.com"}, "token": {"sample-token"}}.Encode())
+	case common.EmailKindSecurityNotice:
+		link = service.ConsoleURL(service.AccountSecurityPath)
+	case common.EmailKindTopupReceipt:
+		link = service.ConsoleURL(service.WalletOrdersPath)
 	}
+	symbol := operation_setting.CurrencySymbol(operation_setting.PaymentCurrency())
 	return map[string]any{
 		"Code":    "123456",
 		"Minutes": strconv.Itoa(minutes),
 		"Link":    link,
 		"Event":   i18n.Translate(lang, i18n.MsgSecurityEventPasswordUpdated),
+		"Time":    i18n.FormatTime(lang, time.Now()),
 		"Title":   i18n.Translate(lang, i18n.MsgNotifyQuotaLowTitle),
-		"Quota":   logger.FormatQuota(int(common.QuotaPerUnit)),
+		"Quota":   logger.FormatQuotaToCents(int(common.QuotaPerUnit)),
+		"OrderNo": "P20261107080200SAMPLE0001",
+		"Method":  "Stripe",
+		"Amount":  symbol + "50.00",
+		"Credit":  symbol + "50.00",
+		"Balance": symbol + "178.40",
 	}
 }
 

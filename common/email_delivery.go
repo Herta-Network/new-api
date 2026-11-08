@@ -268,9 +268,10 @@ const (
 	EmailKindPasswordReset  = "password_reset"  // Link, Minutes
 	EmailKindBindingNew     = "binding_new"     // Code, Minutes: to the address being linked
 	EmailKindBindingCurrent = "binding_current" // Code, Minutes: to the address being replaced
-	EmailKindSecurityNotice = "security_notice" // Event
+	EmailKindSecurityNotice = "security_notice" // Event; Time and Link when the sender knows them
 	EmailKindQuotaLow       = "quota_low"       // Title, Quota, Link
 	EmailKindNotice         = "notice"          // Title, Content: a plain-text notice
+	EmailKindTopupReceipt   = "topup_receipt"   // OrderNo, Time, Method, Amount, Credit, Balance, Link
 )
 
 // TemplateEmail is an email of Kind to render from Vars, whose values are

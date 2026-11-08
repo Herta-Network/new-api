@@ -3,6 +3,7 @@ package mail
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/internal/module/mail/internal/store"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/pgtest"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -139,14 +141,35 @@ func TestCloudflareSettingsMustBeCompleteToSend(t *testing.T) {
 	}
 }
 
+// Every built-in template, the fixed ones too, passes the checks an
+// administrator's template must pass, every text it uses is translated, and
+// every email has a tag; all but a notice also have a preheader.
 func TestBuiltinTemplatesPassTheTemplateChecks(t *testing.T) {
-	for _, kind := range render.Editable {
+	kinds := slices.Concat(render.Editable, []render.Kind{mustKind(t, common.EmailKindNotice), mustKind(t, render.KindTest)})
+	for _, kind := range kinds {
 		for _, lang := range i18n.SupportedLanguages() {
 			builtin := render.Builtin(kind.Name, lang)
 			require.NotEmpty(t, builtin.Body, "%s %s", kind.Name, lang)
 			assert.NoError(t, render.Check(kind, builtin), "%s %s", kind.Name, lang)
+			assert.NotRegexp(t, `email\.[a-z_]+`, builtin.Subject+builtin.Body, "%s %s: a text is missing from the locale", kind.Name, lang)
+			if kind.Name == render.KindLayout {
+				continue
+			}
+			tag, preheader := render.Frame(kind, lang, sampleData(kind.Name, lang))
+			assert.NotEmpty(t, tag, "%s %s", kind.Name, lang)
+			if kind.Name != common.EmailKindNotice {
+				assert.NotEmpty(t, preheader, "%s %s", kind.Name, lang)
+				assert.NotContains(t, preheader, "no value", "%s %s", kind.Name, lang)
+			}
 		}
 	}
+}
+
+func mustKind(t *testing.T, name string) render.Kind {
+	t.Helper()
+	kind, ok := render.Lookup(name)
+	require.True(t, ok, name)
+	return kind
 }
 
 func TestTemplateChecksAllowOnlyVariablesAndConditions(t *testing.T) {
@@ -183,27 +206,103 @@ func TestTemplateChecksAllowOnlyVariablesAndConditions(t *testing.T) {
 	}
 }
 
+// useSiteSettings sets what the layout shows around every email until the
+// test ends.
+func useSiteSettings(t *testing.T, name, logo string, email system_setting.EmailSetting, legal system_setting.LegalSettings) {
+	t.Helper()
+	savedName, savedLogo := common.SystemName, common.Logo
+	savedEmail, savedLegal := *system_setting.GetEmailSetting(), *system_setting.GetLegalSettings()
+	savedServer, savedFrontend := system_setting.ServerAddress, system_setting.FrontendAddress
+	common.SystemName, common.Logo = name, logo
+	*system_setting.GetEmailSetting(), *system_setting.GetLegalSettings() = email, legal
+	system_setting.ServerAddress, system_setting.FrontendAddress = "https://api.example.com", "https://www.example.com"
+	t.Cleanup(func() {
+		common.SystemName, common.Logo = savedName, savedLogo
+		*system_setting.GetEmailSetting(), *system_setting.GetLegalSettings() = savedEmail, savedLegal
+		system_setting.ServerAddress, system_setting.FrontendAddress = savedServer, savedFrontend
+	})
+}
+
+// No value a sender or the site's settings give can add markup to an
+// email, in any kind, in its preheader or in the layout around it; a link
+// takes no script URL and a subject stays on one line.
 func TestTemplateEmailsEscapeTheirValues(t *testing.T) {
 	pgtest.Reset(t, model.DB)
 	useEmailOptions(t, map[string]string{})
-	savedName := common.SystemName
-	common.SystemName = "Site"
-	t.Cleanup(func() { common.SystemName = savedName })
+	const hostile = `<i>"x"&'y'</i>`
+	useSiteSettings(t, "Site"+hostile, "javascript:alert(1)", system_setting.EmailSetting{
+		CompanyName: hostile, CompanyAddress: hostile, SupportEmail: hostile,
+	}, system_setting.LegalSettings{UserAgreement: "terms", PrivacyPolicy: "privacy"})
+
+	for _, name := range append(TestKinds()[1:], common.EmailKindNotice) {
+		kind := mustKind(t, name)
+		vars := map[string]string{}
+		for _, variable := range kind.Vars {
+			vars[variable] = hostile + "\nline"
+		}
+		for _, lang := range i18n.SupportedLanguages() {
+			subject, html, err := renderEmail(lang, common.TemplateEmail{Kind: name, Vars: vars})
+			require.NoError(t, err, "%s %s", name, lang)
+			assert.NotContains(t, html, "<i>", "%s %s", name, lang)
+			assert.Contains(t, html, "&lt;i&gt;", "%s %s", name, lang)
+			assert.NotContains(t, subject, "\n", "%s %s", name, lang)
+			assert.NotContains(t, html, "<img", "%s %s: a script URL is no logo", name, lang)
+		}
+	}
 
 	subject, html, err := renderEmail(i18n.LangEn, common.TemplateEmail{Kind: common.EmailKindPasswordReset, Vars: map[string]string{"Link": "javascript:alert(1)", "Minutes": "<10>"}})
 	require.NoError(t, err)
-	assert.Equal(t, "Site password reset", subject)
-	assert.Contains(t, html, `<a href='#ZgotmplZ'>`, "a link takes no script URL")
-	assert.Contains(t, html, "&lt;10&gt;")
+	assert.Equal(t, "Reset your Site"+hostile+" password", subject, "the subject is plain text")
+	assert.Contains(t, html, `<a href="#ZgotmplZ"`, "a link takes no script URL")
+	assert.Contains(t, html, "expires in &lt;10&gt; minutes")
 
 	subject, html, err = renderEmail(i18n.LangEn, common.TemplateEmail{Kind: common.EmailKindNotice, Vars: map[string]string{
 		"Title":   "Channel\r\nBcc: x@example.com",
-		"Content": "Reason: <img src=x onerror=alert(1)>\nsecond line",
+		"Content": "Reason: <img src=x onerror=alert(1)>\nsecond line\n\nnext paragraph",
 	}})
 	require.NoError(t, err)
 	assert.Equal(t, "Channel Bcc: x@example.com", subject, "a subject stays on one line")
-	assert.Contains(t, html, "Reason: &lt;img src=x onerror=alert(1)&gt;<br>\nsecond line")
-	assert.Contains(t, html, "Site", "the layout wraps the notice")
+	assert.Contains(t, html, "Reason: &lt;img src=x onerror=alert(1)&gt;<br>\nsecond line</p>")
+	assert.Contains(t, html, ">next paragraph</p>", "a blank line starts a paragraph")
+	assert.Contains(t, html, "Reason: &lt;img src=x onerror=alert(1)&gt; second line next paragraph</div>", "a notice previews its content")
+}
+
+// The footer shows the operator, the support address and the links to the
+// terms and the privacy policy only when they are set, and the header the
+// logo only when an email can show it.
+func TestLayoutShowsTheSiteSettingsThatAreSet(t *testing.T) {
+	pgtest.Reset(t, model.DB)
+	useEmailOptions(t, map[string]string{})
+	email := common.TemplateEmail{Kind: common.EmailKindVerification, Vars: map[string]string{"Code": "654321", "Minutes": "10"}}
+
+	useSiteSettings(t, "Mioriq AI", "", system_setting.EmailSetting{}, system_setting.LegalSettings{})
+	_, html, err := renderEmail(i18n.LangZhCN, email)
+	require.NoError(t, err)
+	assert.Contains(t, html, `<html lang="zh-CN">`)
+	assert.Contains(t, html, ">你的验证码是 654321，10 分钟内有效</div>", "the preheader leads the body")
+	assert.Contains(t, html, ">验证码</td>", "the tag")
+	assert.Contains(t, html, "此邮件由 Mioriq AI 自动发送，请勿直接回复。\n\n\n</td>", "nothing that is not set")
+	for _, absent := range []string{"<img", "mailto:", "/terms", "/privacy"} {
+		assert.NotContains(t, html, absent)
+	}
+
+	useSiteSettings(t, "Mioriq AI", "/logo.png", system_setting.EmailSetting{
+		CompanyName: "Herta Network LLC", CompanyAddress: "30 N Gould St Ste N, Sheridan, WY 82801, USA", SupportEmail: "support@example.com",
+	}, system_setting.LegalSettings{UserAgreement: "terms", PrivacyPolicy: "privacy"})
+	_, html, err = renderEmail(i18n.LangZhCN, email)
+	require.NoError(t, err)
+	assert.Contains(t, html, `<img src="https://www.example.com/logo.png"`, "a logo path is on the console")
+	assert.Contains(t, html, `请勿直接回复。需要帮助请写信到 <a href="mailto:support@example.com" style="color:#3F4C28;">support@example.com</a>`)
+	assert.Contains(t, html, "<br>Herta Network LLC · 30 N Gould St Ste N, Sheridan, WY 82801, USA")
+	assert.Contains(t, html, `<br><a href="https://www.example.com/terms" target="_blank" style="color:#6E6F66;">服务条款</a> · <a href="https://www.example.com/privacy" target="_blank" style="color:#6E6F66;">隐私政策</a>`)
+
+	useSiteSettings(t, "Mioriq AI", "https://cdn.example.com/logo.SVG?v=2", system_setting.EmailSetting{CompanyAddress: "Sheridan, WY"},
+		system_setting.LegalSettings{PrivacyPolicy: "privacy"})
+	_, html, err = renderEmail(i18n.LangEn, email)
+	require.NoError(t, err)
+	assert.NotContains(t, html, "<img", "mail clients do not show SVG")
+	assert.Contains(t, html, "Please do not reply.\n<br>Sheridan, WY\n<br><a href=\"https://www.example.com/privacy\"")
+	assert.NotContains(t, html, "/terms")
 }
 
 func TestAdministratorTemplatesApplyPerLanguage(t *testing.T) {
@@ -221,13 +320,25 @@ func TestAdministratorTemplatesApplyPerLanguage(t *testing.T) {
 
 	_, html, err = renderEmail(i18n.LangZhCN, email)
 	require.NoError(t, err)
-	assert.Contains(t, html, "您的验证码为: <strong>654321</strong>", "another language keeps its built-in template")
+	assert.Contains(t, html, ">验证你的邮箱</h1>", "another language keeps its built-in template")
+	assert.Contains(t, html, ">654321</div>")
 
 	// A saved template that no longer renders falls back to the built-in one.
 	require.NoError(t, store.SaveTemplate(model.DB, common.EmailKindVerification, i18n.LangEn, "Your code", `<a href="{{.Code}}`))
 	_, html, err = renderEmail(i18n.LangEn, email)
 	require.NoError(t, err)
-	assert.Contains(t, html, "Your verification code is: <strong>654321</strong>")
+	assert.Contains(t, html, ">Verify your email</h1>")
+	assert.Contains(t, html, ">654321</div>")
+
+	// A security notice saved before it had Time and Link still applies;
+	// the sender's new values are simply not shown.
+	require.NoError(t, SaveTemplate(common.EmailKindSecurityNotice, i18n.LangEn, Template{Subject: "Notice", Body: `<p>{{.Event}}</p>`}))
+	_, html, err = renderEmail(i18n.LangEn, common.TemplateEmail{Kind: common.EmailKindSecurityNotice, Vars: map[string]string{
+		"Event": "Password updated", "Time": "Nov 7, 2026, 17:20 (UTC+8)", "Link": "https://www.example.com/user/settings/security",
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, `<div class="layout"><p>Password updated</p></div>`, html)
+	require.NoError(t, ResetTemplate(common.EmailKindSecurityNotice, i18n.LangEn))
 
 	require.NoError(t, ResetTemplate(common.EmailKindVerification, i18n.LangEn))
 	require.NoError(t, ResetTemplate(render.KindLayout, i18n.LangEn))
@@ -250,7 +361,7 @@ func TestPreviewRendersADraftWithSampleValues(t *testing.T) {
 	preview, err := PreviewTemplate(render.KindLayout, i18n.LangEn, Template{Body: `<main>{{.Content}}</main>`})
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(preview.HTML, "<main>"))
-	assert.Contains(t, preview.HTML, "<strong>123456</strong>", "a layout previews around the sample verification email")
+	assert.Contains(t, preview.HTML, ">123456</div>", "a layout previews around the sample verification email")
 
 	_, err = PreviewTemplate(common.EmailKindVerification, i18n.LangEn, Template{Subject: "Code", Body: `<p>no code</p>`})
 	require.Error(t, err)

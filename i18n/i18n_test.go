@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -110,6 +111,24 @@ func TestBackendMessageLanguage(t *testing.T) {
 			}
 			assert.Equal(t, tc.want, T(c, MsgQuotaUserInsufficient, quota))
 		})
+	}
+}
+
+// Emails show a time in the reader's language with the offset of the zone
+// it is in, so a reader elsewhere can tell when it was.
+func TestFormatTime(t *testing.T) {
+	for _, tc := range []struct {
+		lang   string
+		offset int
+		want   string
+	}{
+		{LangZhCN, 8 * 3600, "2026年11月7日 17:20（UTC+8）"},
+		{"zhTW", 0, "2026年11月7日 17:20（UTC）"},
+		{LangEn, 5*3600 + 30*60, "Nov 7, 2026, 17:20 (UTC+5:30)"},
+		{"fr", -3 * 3600, "Nov 7, 2026, 17:20 (UTC-3)"},
+	} {
+		local := time.Date(2026, time.November, 7, 17, 20, 0, 0, time.FixedZone("", tc.offset))
+		assert.Equal(t, tc.want, FormatTime(tc.lang, local), tc.lang)
 	}
 }
 
