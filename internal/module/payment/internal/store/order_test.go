@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -115,6 +116,19 @@ func paymentTestQuota(t *testing.T, userID int) int {
 	return quota
 }
 
+// paymentTestLedger lists the wallet ledger of userID, newest first, as
+// "type quota ref_id ref_name".
+func paymentTestLedger(t *testing.T, userID int) []string {
+	t.Helper()
+	entries, _, err := model.GetUserWalletLedger(userID, model.WalletLedgerFilter{}, 0, 100)
+	require.NoError(t, err)
+	lines := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		lines = append(lines, fmt.Sprintf("%s %d %s %s", entry.Type, entry.Quota, entry.RefId, entry.RefName))
+	}
+	return lines
+}
+
 func paymentTestUnmatched(t *testing.T, orderNo string) []entity.PaymentUnmatched {
 	t.Helper()
 	var records []entity.PaymentUnmatched
@@ -143,7 +157,9 @@ func TestSettlePaymentOrderCreditsOnceUnderConcurrency(t *testing.T) {
 	pgtest.Reset(t, model.DB)
 	useUserCacheMiniRedis(t)
 	insertPaymentTestUser(t, 1, 100)
-	order, invoice := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-concurrent", UserId: 1}, entity.PaymentInvoice{})
+	option := &entity.PaymentOption{Name: "支付宝", Enabled: true}
+	require.NoError(t, CreateOption(option))
+	order, invoice := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-concurrent", UserId: 1, PaymentOptionId: option.Id}, entity.PaymentInvoice{})
 	cached, err := model.GetUserQuota(1, false)
 	require.NoError(t, err)
 	require.Equal(t, 100, cached, "the cache holds the balance before the payment")
@@ -179,6 +195,7 @@ func TestSettlePaymentOrderCreditsOnceUnderConcurrency(t *testing.T) {
 	assert.Equal(t, entity.PaymentInvoicePaid, paid.Status)
 	assert.Equal(t, "pi_1", paid.TradeNo)
 	assert.Empty(t, paymentTestUnmatched(t, order.OrderNo))
+	assert.Equal(t, []string{"topup 500000 P-concurrent 支付宝"}, paymentTestLedger(t, 1), "one ledger entry, named by the payment option")
 }
 
 // A payment that cannot settle its order is recorded once for an operator
@@ -520,7 +537,10 @@ func TestCreatePaymentOrderEnforcesLimits(t *testing.T) {
 func TestCompletePaymentOrderManually(t *testing.T) {
 	pgtest.Reset(t, model.DB)
 	insertPaymentTestUser(t, 1, 0)
-	order, invoice := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-manual", UserId: 1}, entity.PaymentInvoice{PaymentMethodId: 4, Platform: "epay"})
+	option := &entity.PaymentOption{Name: "USDT", Enabled: true}
+	require.NoError(t, CreateOption(option))
+	order, invoice := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-manual", UserId: 1, PaymentOptionId: option.Id}, entity.PaymentInvoice{PaymentMethodId: 4, Platform: "epay"})
+	require.NoError(t, model.DB.Delete(option).Error)
 	result, err := CompleteOrderManually(order.OrderNo, "")
 	require.NoError(t, err)
 	assert.Equal(t, SettleFinished, result.Outcome)
@@ -530,6 +550,7 @@ func TestCompletePaymentOrderManually(t *testing.T) {
 	assert.Equal(t, 500000, paymentTestQuota(t, 1))
 	closed := reloadPaymentInvoice(t, invoice.InvoiceNo)
 	assert.Equal(t, entity.PaymentInvoiceClosed, closed.Status, "the invoice was not paid through its gateway")
+	assert.Equal(t, []string{"topup 500000 P-manual USDT"}, paymentTestLedger(t, 1), "the option deleted since still names the top-up")
 
 	claimed, _ := insertPaymentTestOrder(t, entity.PaymentOrder{OrderNo: "P-manual-claimed", UserId: 1}, entity.PaymentInvoice{TradeNo: "pi_1"})
 	_, err = CompleteOrderManually(claimed.OrderNo, "")

@@ -490,7 +490,15 @@ func fulfilOrderTx(tx *gorm.DB, order *entity.PaymentOrder) (done *fulfilment, b
 func fulfilPurchaseTx(tx *gorm.DB, order *entity.PaymentOrder) (*fulfilment, error) {
 	switch order.Purpose {
 	case entity.PaymentPurposeTopup:
-		if err := model.CreditWalletTx(tx, order.UserId, order.QuotaAmount); err != nil {
+		// The ledger names a top-up by the payment option the buyer chose,
+		// as their orders do, even one deleted since.
+		var option entity.PaymentOption
+		if err := tx.Unscoped().Select("name").Where("id = ?", order.PaymentOptionId).Limit(1).Find(&option).Error; err != nil {
+			return nil, err
+		}
+		if err := model.CreditWalletTx(tx, order.UserId, order.QuotaAmount, model.WalletChange{
+			Type: model.WalletLedgerTopUp, RefId: order.OrderNo, RefName: option.Name,
+		}); err != nil {
 			return nil, err
 		}
 		return &fulfilment{creditedQuota: order.QuotaAmount}, nil
@@ -587,7 +595,9 @@ func PayOrderWithBalance(orderNo string, userId int) (*entity.PaymentOrder, erro
 			if plan.AllowBalancePay != nil && !*plan.AllowBalancePay {
 				return common.NewMessage("This plan does not allow balance redemption")
 			}
-			if err := model.DebitWalletTx(tx, userId, order.QuotaAmount); err != nil {
+			if err := model.DebitWalletTx(tx, userId, order.QuotaAmount, model.WalletChange{
+				Type: model.WalletLedgerSubscriptionPurchase, RefId: order.OrderNo, RefName: plan.Title,
+			}); err != nil {
 				return err
 			}
 		}

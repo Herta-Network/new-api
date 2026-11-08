@@ -48,6 +48,16 @@ type ScheduledSystemTaskHandler interface {
 	NewPayload() any
 }
 
+// CalendarSystemTaskHandler is a ScheduledSystemTaskHandler whose runs follow
+// the calendar rather than an interval: the scheduler creates a task when Due
+// reports one, given the latest task of the type (nil before the first),
+// which is never pending or running, instead of comparing Interval with the
+// time since that task.
+type CalendarSystemTaskHandler interface {
+	ScheduledSystemTaskHandler
+	Due(latest *model.SystemTask, now time.Time) bool
+}
+
 var (
 	systemTaskHandlersMu sync.RWMutex
 	systemTaskHandlers   = map[string]SystemTaskHandler{}
@@ -307,13 +317,15 @@ func runSystemTaskScheduler() {
 	}
 	for _, scheduled := range scheduledHandlers {
 		latest := latestTasks[scheduled.Type()]
-		if latest != nil {
-			if latest.Status == model.SystemTaskStatusPending || latest.Status == model.SystemTaskStatusRunning {
-				continue // an active row already exists
+		if latest != nil && (latest.Status == model.SystemTaskStatusPending || latest.Status == model.SystemTaskStatusRunning) {
+			continue // an active row already exists
+		}
+		if calendar, ok := scheduled.(CalendarSystemTaskHandler); ok {
+			if !calendar.Due(latest, time.Unix(now, 0)) {
+				continue
 			}
-			if now-latest.UpdatedAt < int64(scheduled.Interval().Seconds()) {
-				continue // not due yet
-			}
+		} else if latest != nil && now-latest.UpdatedAt < int64(scheduled.Interval().Seconds()) {
+			continue // not due yet
 		}
 		if _, err := model.CreateSystemTask(scheduled.Type(), scheduled.NewPayload(), nil); err != nil {
 			activeTask, activeErr := model.GetActiveSystemTask(scheduled.Type())

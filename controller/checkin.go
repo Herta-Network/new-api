@@ -29,12 +29,13 @@ type checkinStatus struct {
 
 // GetCheckinStatus 获取用户签到状态和历史记录
 //
-//	@Summary	获取签到状态
-//	@Tags		签到
-//	@Param		month	query		string	false	"月份，格式 2006-01，默认当月"
-//	@Success	200		{object}	checkinStatusResponse
-//	@Security	UserAuth
-//	@Router		/api/user/checkin [get]
+//	@Summary		获取签到状态
+//	@Description	签到按北京时间（Asia/Shanghai）分天。
+//	@Tags			签到
+//	@Param			month	query		string	false	"月份，格式 2006-01，默认北京时间的当月"
+//	@Success		200		{object}	checkinStatusResponse
+//	@Security		UserAuth
+//	@Router			/api/user/checkin [get]
 func GetCheckinStatus(c *gin.Context) {
 	setting := operation_setting.GetCheckinSetting()
 	if !setting.Enabled {
@@ -43,7 +44,7 @@ func GetCheckinStatus(c *gin.Context) {
 	}
 	userId := c.GetInt("id")
 	// 获取月份参数，默认为当前月份
-	month := c.DefaultQuery("month", time.Now().Format("2006-01"))
+	month := c.DefaultQuery("month", time.Now().In(model.WalletDayZone).Format("2006-01"))
 
 	stats, err := model.GetUserCheckinStats(userId, month)
 	if err != nil {

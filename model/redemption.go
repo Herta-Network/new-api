@@ -171,7 +171,9 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if result.RowsAffected == 0 {
 			return errors.New("redemption code already used")
 		}
-		return creditTopUpQuota(tx, userId, redemption.Quota, nil)
+		return CreditWalletTx(tx, userId, redemption.Quota, WalletChange{
+			Type: WalletLedgerRedemption, RefId: strconv.Itoa(redemption.Id), RefName: redemption.Name,
+		})
 	})
 	if err != nil {
 		common.SysError(common.LogText("redemption failed: %s", err.Error()))

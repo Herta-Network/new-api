@@ -566,6 +566,21 @@ func inviteUser(inviterId int) error {
 	return nil
 }
 
+// creditInviteeBonus credits the bonus of a user who signed up with an
+// invitation code, with its wallet ledger entry, and logs it. A failure
+// leaves the account without the bonus.
+func creditInviteeBonus(userId int) {
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		return CreditWalletTx(tx, userId, common.QuotaForInvitee, WalletChange{Type: WalletLedgerInviteeBonus})
+	})
+	if err != nil {
+		common.SysError(common.LogText("failed to credit the invitation code bonus of user %d: %s", userId, err.Error()))
+		return
+	}
+	syncCreditUserQuotaCache(userId, common.QuotaForInvitee, common.LogText("invitation code bonus"))
+	RecordLog(userId, LogTypeSystem, common.NewMessage("Invitation code bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaForInvitee)}))
+}
+
 func (user *User) TransferAffQuotaToQuota(quota int) error {
 	// 检查quota是否小于最小额度
 	if float64(quota) < common.QuotaPerUnit {
@@ -596,6 +611,9 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 
 	// 保存用户状态
 	if err := tx.Save(user).Error; err != nil {
+		return err
+	}
+	if err := recordWalletChangeTx(tx, user.Id, int64(quota), WalletChange{Type: WalletLedgerAffTransfer}); err != nil {
 		return err
 	}
 
@@ -670,7 +688,10 @@ func (user *User) Insert(inviterId int) error {
 				user.SetSetting(defaultSetting)
 			}
 
-			return tx.Create(user).Error
+			if err := tx.Create(user).Error; err != nil {
+				return err
+			}
+			return recordWalletChangeTx(tx, user.Id, int64(user.Quota), WalletChange{Type: WalletLedgerSignupBonus})
 		})
 	}); err != nil {
 		return err
@@ -701,8 +722,7 @@ func (user *User) finishInsert(inviterId int) {
 	}
 	if inviterId != 0 {
 		if common.QuotaForInvitee > 0 {
-			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
-			RecordLog(user.Id, LogTypeSystem, common.NewMessage("Invitation code bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaForInvitee)}))
+			creditInviteeBonus(user.Id)
 		}
 		if common.QuotaForInviter > 0 {
 			//_ = IncreaseUserQuota(inviterId, common.QuotaForInviter)
@@ -733,7 +753,10 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 			user.SetSetting(defaultSetting)
 		}
 
-		return tx.Create(user).Error
+		if err := tx.Create(user).Error; err != nil {
+			return err
+		}
+		return recordWalletChangeTx(tx, user.Id, int64(user.Quota), WalletChange{Type: WalletLedgerSignupBonus})
 	})
 }
 
@@ -758,8 +781,7 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 	}
 	if inviterId != 0 {
 		if common.QuotaForInvitee > 0 {
-			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
-			RecordLog(user.Id, LogTypeSystem, common.NewMessage("Invitation code bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaForInvitee)}))
+			creditInviteeBonus(user.Id)
 		}
 		if common.QuotaForInviter > 0 {
 			RecordLog(inviterId, LogTypeSystem, common.NewMessage("Bonus for inviting a user {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaForInviter)}))

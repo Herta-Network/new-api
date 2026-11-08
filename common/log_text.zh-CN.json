@@ -710,5 +710,7 @@
   "websocket connection is nil": "WebSocket 连接为空",
   "zhipu_image_empty_b64": "智谱图片接口返回的 b64 为空",
   "zhipu_image_get_b64_failed: %s": "智谱图片转 b64 失败: %s",
-  "zhipu_image_missing_url": "智谱图片接口没有返回 URL"
+  "zhipu_image_missing_url": "智谱图片接口没有返回 URL",
+  "failed to credit the invitation code bonus of user %d: %s": "给用户 %d 发放邀请码奖励失败: %s",
+  "invitation code bonus": "邀请码奖励"
 }

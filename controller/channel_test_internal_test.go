@@ -13,10 +13,12 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -489,4 +491,46 @@ func TestTestAllChannelsRejectsExistingActiveTask(t *testing.T) {
 	require.Equal(t, http.StatusConflict, recorder.Code)
 	require.Contains(t, recorder.Body.String(), existing.TaskID)
 	require.Contains(t, recorder.Body.String(), "A channel test task is already running or queued")
+}
+
+// A channel test records its cost as a call of the testing administrator
+// but charges no wallet, so the statement does not count it as consumption.
+func TestChannelTestCostIsNotWalletConsumption(t *testing.T) {
+	pgtest.Reset(t, model.DB)
+	savedExport, savedConsume := common.DataExportEnabled, common.LogConsumeEnabled
+	common.DataExportEnabled, common.LogConsumeEnabled = true, true
+	model.CacheQuotaDataLock.Lock()
+	model.CacheQuotaData = make(map[string]*model.QuotaData)
+	model.CacheQuotaDataLock.Unlock()
+	t.Cleanup(func() { common.DataExportEnabled, common.LogConsumeEnabled = savedExport, savedConsume })
+	savedPrices := ratio_setting.ModelPrice2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"wallet-test-model":0.01}`))
+	t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices)) })
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-1","object":"chat.completion","created":1,"model":"wallet-test-model","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":1000,"total_tokens":2000}}`))
+	}))
+	t.Cleanup(upstream.Close)
+	admin := model.User{Username: "channel-tester", AffCode: "cht1", Role: common.RoleRootUser, Status: common.UserStatusEnabled, Quota: 1000, Group: "default"}
+	require.NoError(t, model.DB.Create(&admin).Error)
+	baseURL := upstream.URL
+	channel := model.Channel{Type: constant.ChannelTypeOpenAI, Name: "tested", Key: "sk-test", Status: common.ChannelStatusEnabled, BaseURL: &baseURL, Models: "wallet-test-model", Group: "default"}
+	require.NoError(t, model.DB.Create(&channel).Error)
+
+	result := testChannel(context.Background(), &channel, admin.Id, "wallet-test-model", "", false)
+	require.NoError(t, result.localErr)
+	model.SaveQuotaDataCache()
+
+	var totals struct {
+		Quota       int
+		WalletQuota int
+	}
+	require.NoError(t, model.DB.Model(&model.QuotaData{}).Where("user_id = ?", admin.Id).
+		Select("sum(quota) AS quota, sum(wallet_quota) AS wallet_quota").Scan(&totals).Error)
+	assert.Equal(t, 5000, totals.Quota, "the test's cost is a call of the administrator")
+	assert.Zero(t, totals.WalletQuota)
+	balance, err := model.GetUserQuota(admin.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, 1000, balance)
 }

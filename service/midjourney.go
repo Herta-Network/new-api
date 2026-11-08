@@ -127,6 +127,8 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		Quota:     quota,
 		TokenId:   task.TokenId,
 		Other:     other,
+		// Legacy Midjourney billing is wallet only.
+		WalletQuota: quota,
 	})
 
 	task.Quota = 0

@@ -254,6 +254,76 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 	}
 }
 
+// The statement's consumption is what the wallet paid: a call a
+// subscription paid and the refund of a subscription's task count as calls
+// but move neither the wallet nor the consumption, so a day's closing
+// balance is the day before's plus the entries less the consumption.
+func TestStatementConsumptionIsWhatTheWalletPaid(t *testing.T) {
+	truncate(t)
+	savedExport := common.DataExportEnabled
+	common.DataExportEnabled = true
+	model.CacheQuotaDataLock.Lock()
+	model.CacheQuotaData = make(map[string]*model.QuotaData)
+	model.CacheQuotaDataLock.Unlock()
+	t.Cleanup(func() { common.DataExportEnabled = savedExport })
+
+	const opening = 2_000_000
+	user := model.User{Username: "statement_payer", AffCode: "stp1", Quota: opening, Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(&user).Error)
+	token := model.Token{UserId: user.Id, Key: "statement-payer-token", Name: "statement", RemainQuota: opening, Status: common.TokenStatusEnabled}
+	require.NoError(t, model.DB.Create(&token).Error)
+	channel := model.Channel{Name: "statement", Key: "unused", Status: common.ChannelStatusEnabled}
+	require.NoError(t, model.DB.Create(&channel).Error)
+	plan := model.SubscriptionPlan{Title: "Pro"}
+	require.NoError(t, model.DB.Create(&plan).Error)
+	seedSubscription(t, 1, user.Id, 1_000_000, 0)
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", 1).Update("plan_id", plan.Id).Error)
+
+	now := time.Now()
+	_, recorded, err := model.RecordWalletBalanceSnapshots(model.WalletDay(now.In(model.WalletDayZone).AddDate(0, 0, -1)))
+	require.NoError(t, err)
+	require.True(t, recorded)
+
+	const flat = `tier("request", fixed(0.01))` // 5000 quota a request
+	for index, preference := range []string{"wallet_only", "subscription_only"} {
+		snapshot := &billingexpr.BillingSnapshot{BillingMode: "tiered_expr", ExprString: flat, ExprHash: billingexpr.ExprHashString(flat), QuotaPerUnit: common.QuotaPerUnit, GroupRatio: 1, EstimatedTier: "request", EstimatedBillingUnit: billingexpr.BillingUnitRequest, EstimatedFixedPrice: common.GetPointer(0.01), EstimatedQuotaAfterGroup: 5000}
+		info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, RequestId: fmt.Sprintf("statement-request-%d", index), ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id}, OriginModelName: "fixed-test", UsingGroup: "default", UserGroup: "default", UserSetting: dto.UserSetting{BillingPreference: preference}, ForcePreConsume: true, StartTime: now, RelayFormat: types.RelayFormatOpenAI, PriceData: hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}, TieredBillingSnapshot: snapshot, BillingRequestInput: &billingexpr.RequestInput{}}
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+		require.Nil(t, PreConsumeBilling(ctx, 5000, info))
+		PostTextConsumeQuota(ctx, info, &dto.Usage{PromptTokens: 10, CompletionTokens: 2, TotalTokens: 12}, nil)
+	}
+	require.Equal(t, int64(5000), getSubscriptionUsed(t, 1), "the second call was the subscription's")
+
+	ctx := t.Context()
+	require.True(t, RefundTaskQuota(ctx, makeTask(user.Id, channel.Id, 300, 0, BillingSourceWallet, 0), "failed"))
+	require.True(t, RefundTaskQuota(ctx, makeTask(user.Id, channel.Id, 400, 0, BillingSourceSubscription, 1), "failed"))
+	require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
+		return model.CreditWalletTx(tx, user.Id, 700, model.WalletChange{Type: model.WalletLedgerTopUp, RefId: "ORDER-7"})
+	}))
+	model.SaveQuotaDataCache()
+
+	statement, err := model.GetWalletStatement(user.Id, now, now)
+	require.NoError(t, err)
+	days := statement.Days
+	today := days[len(days)-1]
+	previous := statement.OpeningBalance
+	if len(days) > 1 {
+		previous = days[len(days)-2].Balance
+	}
+	require.NotNil(t, previous)
+	require.NotNil(t, today.Balance)
+	assert.Equal(t, int64(opening), *previous)
+	assert.Equal(t, int64(2), today.Requests)
+	assert.Equal(t, int64(24), today.Tokens)
+	assert.Equal(t, int64(5000+5000-300-400), today.UsageQuota, "every call, whoever paid it")
+	assert.Equal(t, int64(5000-300), today.ConsumedQuota, "only what the wallet paid")
+	require.Len(t, today.Entries, 1)
+	assert.Equal(t, int64(700-4700), today.NetQuota)
+	assert.Equal(t, *previous+today.NetQuota, *today.Balance, "the day reconciles")
+	assert.Equal(t, int64(opening-5000+300+700), *today.Balance)
+}
+
 func TestCalculateTextQuotaSummaryUnifiedForClaudeSemantic(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

@@ -21,6 +21,9 @@ const (
 	SystemTaskTypeModelUpdate    = "model_update"
 	SystemTaskTypeMidjourneyPoll = "midjourney_poll"
 	SystemTaskTypeAsyncTaskPoll  = "async_task_poll"
+	// SystemTaskTypeWalletBalanceSnapshot records the closing balances of
+	// the day that just ended.
+	SystemTaskTypeWalletBalanceSnapshot = "wallet_balance_snapshot"
 )
 
 var ErrSystemTaskLockLost = errors.New("system task lock lost")

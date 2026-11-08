@@ -26,7 +26,8 @@ var schemaModels = []any{
 	&Setup{}, &TwoFA{}, &TwoFABackupCode{}, &Checkin{}, &UserSubscription{},
 	&SubscriptionPreConsumeRecord{}, &CustomOAuthProvider{}, &UserOAuthBinding{}, &PerfMetric{},
 	&SystemInstance{}, &SystemTask{}, &SystemTaskLock{}, &CasbinRule{}, &AuthzRole{},
-	&UserAccessToken{}, &SubscriptionPlan{}, &entity.PaymentOption{}, &entity.PaymentMethod{}, &entity.PaymentOrder{}, &entity.PaymentInvoice{},
+	&UserAccessToken{}, &SubscriptionPlan{}, &WalletLedgerEntry{}, &WalletBalanceSnapshot{}, &WalletBalanceDay{},
+	&entity.PaymentOption{}, &entity.PaymentMethod{}, &entity.PaymentOrder{}, &entity.PaymentInvoice{},
 	&entity.PaymentUnmatched{}, &currencyentity.ExchangeRate{}, &mailentity.EmailTemplate{},
 	&Log{}, &AuditLog{},
 }

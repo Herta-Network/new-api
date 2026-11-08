@@ -87,6 +87,8 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 		TokenId:   info.TokenId,
 		Group:     info.UsingGroup,
 		Other:     other,
+		// The part a subscription paid is not the wallet's.
+		WalletQuota: walletQuota(info, info.PriceData.Quota),
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
@@ -110,6 +112,15 @@ func resolveTokenKey(ctx context.Context, tokenId int, taskID string) string {
 // taskIsSubscription 判断任务是否通过订阅计费。
 func taskIsSubscription(task *model.Task) bool {
 	return task.PrivateData.BillingSource == BillingSourceSubscription && task.PrivateData.SubscriptionId > 0
+}
+
+// taskWalletQuota is the part of quota a task moves in the wallet: none for
+// a task a subscription pays.
+func taskWalletQuota(task *model.Task, quota int) int {
+	if taskIsSubscription(task) {
+		return 0
+	}
+	return quota
 }
 
 // taskAdjustFunding 调整任务的资金来源（钱包或订阅），delta > 0 表示扣费，delta < 0 表示退还。
@@ -292,6 +303,8 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 		TokenId:   task.PrivateData.TokenId,
 		Group:     task.Group,
 		Other:     other,
+		// A subscription's refund goes back to the subscription.
+		WalletQuota: taskWalletQuota(task, quota),
 	})
 
 	// 5. 资金退款完成后再清除持久化标记。
@@ -373,6 +386,8 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		Group:     task.Group,
 		Other:     other,
 		NodeName:  task.PrivateData.NodeName,
+		// A subscription's difference is settled with the subscription.
+		WalletQuota: taskWalletQuota(task, logQuota),
 	})
 }
 

@@ -30,15 +30,20 @@ func LockUserTx(tx *gorm.DB, userId int) error {
 }
 
 // CreditWalletTx adds quota to the wallet of userId within the wallet
-// ceiling, in tx. Call SyncWalletCredit after tx commits.
-func CreditWalletTx(tx *gorm.DB, userId int, quota int) error {
-	return creditTopUpQuota(tx, userId, quota, nil)
+// ceiling and writes the wallet ledger entry change names, in tx. Call
+// SyncWalletCredit after tx commits.
+func CreditWalletTx(tx *gorm.DB, userId int, quota int, change WalletChange) error {
+	if err := creditTopUpQuota(tx, userId, quota, nil); err != nil {
+		return err
+	}
+	return recordWalletChangeTx(tx, userId, int64(quota), change)
 }
 
 // DebitWalletTx takes quota from the wallet of userId in tx, only if the
-// wallet holds it; otherwise it returns ErrInsufficientBalance. Call
-// SyncWalletDebit after tx commits.
-func DebitWalletTx(tx *gorm.DB, userId int, quota int) error {
+// wallet holds it, and writes the wallet ledger entry change names;
+// otherwise it returns ErrInsufficientBalance. Call SyncWalletDebit after tx
+// commits.
+func DebitWalletTx(tx *gorm.DB, userId int, quota int, change WalletChange) error {
 	if quota <= 0 {
 		return errors.New("invalid debit quota")
 	}
@@ -50,7 +55,7 @@ func DebitWalletTx(tx *gorm.DB, userId int, quota int) error {
 	if result.RowsAffected != 1 {
 		return ErrInsufficientBalance
 	}
-	return nil
+	return recordWalletChangeTx(tx, userId, -int64(quota), change)
 }
 
 // SyncWalletCredit adds a committed credit to the cached wallet balance;
