@@ -224,6 +224,9 @@ func validateOptionValue(key string, value string) error {
 	if key == operation_setting.LogRetentionDaysOptionKey {
 		return operation_setting.ValidateLogRetentionDays(value)
 	}
+	if key == system_setting.EmailSupportEmailOptionKey {
+		return system_setting.ValidateEmailSupportEmail(value)
+	}
 	if key == "MaxTokenAutoGroups" {
 		return setting.ValidateMaxTokenAutoGroups(value)
 	}

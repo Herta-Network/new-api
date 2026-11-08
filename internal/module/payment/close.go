@@ -163,8 +163,11 @@ func settleConfirmed(order *entity.PaymentOrder, invoice *entity.PaymentInvoice,
 	if err != nil {
 		return nil, err
 	}
-	if result.Outcome == store.SettleUnmatched || result.Outcome == store.SettleFulfilFailed {
+	switch result.Outcome {
+	case store.SettleUnmatched, store.SettleFulfilFailed:
 		common.SysError(common.LogText("unmatched payment recorded: order=%s trade=%s reason=%s", order.OrderNo, tradeNo, result.Reason))
+	case store.SettleFinished:
+		sendTopupReceipt(result.Order)
 	}
 	return store.GetOrderByNo(order.OrderNo)
 }
@@ -179,5 +182,6 @@ func CompleteOrderManually(orderNo string, clientIp string) (*entity.PaymentOrde
 	if result.Outcome != store.SettleFinished {
 		return nil, common.NewMessage("The order is paid but could not be fulfilled: {{reason}}", map[string]any{"reason": result.Reason})
 	}
+	sendTopupReceipt(result.Order)
 	return store.GetOrderByNo(orderNo)
 }

@@ -2,9 +2,11 @@ package i18n
 
 import (
 	"embed"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
@@ -212,6 +214,30 @@ func ResolveLang(lang string) string {
 		lang = common.DefaultLanguage
 	}
 	return normalizeLang(lang)
+}
+
+// FormatTime writes t, in its own time zone, the way readers of lang write a
+// date and a time of day, followed by the zone's offset from UTC; emails
+// show times this way.
+func FormatTime(lang string, t time.Time) string {
+	_, offset := t.Zone()
+	zone := "UTC"
+	if offset != 0 {
+		sign := "+"
+		if offset < 0 {
+			sign, offset = "-", -offset
+		}
+		zone += sign + fmt.Sprint(offset/3600)
+		if minutes := offset % 3600 / 60; minutes != 0 {
+			zone += fmt.Sprintf(":%02d", minutes)
+		}
+	}
+	switch ResolveLang(lang) {
+	case LangZhCN, LangZhTW:
+		return t.Format("2006年1月2日 15:04") + "（" + zone + "）"
+	default:
+		return t.Format("Jan 2, 2006, 15:04") + " (" + zone + ")"
+	}
 }
 
 // SupportedLanguages returns a list of supported language codes

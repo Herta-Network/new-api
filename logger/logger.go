@@ -141,6 +141,17 @@ func FormatQuota(quota int) string {
 	return operation_setting.CurrencySymbol(currency) + amount.StringFixed(6)
 }
 
+// FormatQuotaToCents formats a quota as emails show a balance or a credit:
+// like FormatQuota, but the amount is cut to the cent, so it never shows
+// more than there is.
+func FormatQuotaToCents(quota int) string {
+	if operation_setting.IsTokensDisplay() {
+		return fmt.Sprintf("%d", quota)
+	}
+	amount, currency := operation_setting.QuotaDisplayAmount(int64(quota))
+	return operation_setting.CurrencySymbol(currency) + amount.Truncate(2).StringFixed(2)
+}
+
 // LogJson 仅供测试使用 only for test
 func LogJson(ctx context.Context, msg string, obj any) {
 	if !common.DebugEnabled {
