@@ -223,11 +223,23 @@ func TestManageUserQuotaRecordsTopupAndAudit(t *testing.T) {
 			require.NoError(t, db.Create(&user).Error)
 			createQuotaTestOperator(t, db, common.RoleRootUser)
 
-			recorder := performManageUserRequest(t, fmt.Sprintf(`{"id":%d,"action":"add_quota","mode":%q,"value":%d}`, user.Id, tc.mode, tc.value))
+			recorder := performManageUserRequest(t, fmt.Sprintf(`{"id":%d,"action":"add_quota","mode":%q,"value":%d,"reason":"  Outage credit\n"}`, user.Id, tc.mode, tc.value))
 			assert.Equal(t, http.StatusOK, recorder.Code)
 			require.Contains(t, recorder.Body.String(), `"success":true`)
 			require.NoError(t, db.First(&user, user.Id).Error)
 			assert.Equal(t, tc.wantQuota, user.Quota)
+
+			// The reason reaches the ledger entry the user's statement shows.
+			entries, _, err := model.GetUserWalletLedger(user.Id, model.WalletLedgerFilter{}, 0, 10)
+			require.NoError(t, err)
+			if tc.wantQuota == 1000 {
+				assert.Empty(t, entries, "an unchanged balance has no entry")
+			} else {
+				require.Len(t, entries, 1)
+				assert.Equal(t, int64(tc.wantQuota-1000), entries[0].Quota)
+				assert.Equal(t, "Outage credit", entries[0].Note)
+				assert.Equal(t, 9999, entries[0].OperatorId)
+			}
 
 			logs, total, _, err := model.GetAllLogs(model.LogFilter{Type: model.LogTypeTopup}, 0, 20)
 			require.NoError(t, err)
@@ -252,7 +264,7 @@ func TestManageUserQuotaRecordsTopupAndAudit(t *testing.T) {
 			assert.Equal(t, tc.action, other.Op.Action)
 			params, err := common.Marshal(other.Op.Params)
 			require.NoError(t, err)
-			expectedParams := model.AuditFields{"target_user_id": user.Id, "target_username": user.Username, "mode": tc.mode, "requested_quota": tc.value, "from": 1000, "to": tc.wantQuota}
+			expectedParams := model.AuditFields{"target_user_id": user.Id, "target_username": user.Username, "mode": tc.mode, "requested_quota": tc.value, "from": 1000, "to": tc.wantQuota, "reason": "Outage credit"}
 			if tc.mode != "override" {
 				expectedParams["quota"] = tc.value
 			}
@@ -286,13 +298,15 @@ func TestManageUserQuotaFailuresDoNotRecordTopup(t *testing.T) {
 		name, mode string
 		value      int
 		failUpdate bool
+		reason     string
 	}{
-		{"zero_add", "add", 0, false},
-		{"negative_subtract", "subtract", -1, false},
-		{"invalid_mode", "invalid", 500, false},
-		{"add_update_error", "add", 500, true},
-		{"subtract_update_error", "subtract", 500, true},
-		{"override_update_error", "override", 500, true},
+		{"zero_add", "add", 0, false, ""},
+		{"negative_subtract", "subtract", -1, false, ""},
+		{"invalid_mode", "invalid", 500, false, ""},
+		{"reason_too_long", "add", 500, false, strings.Repeat("x", 201)},
+		{"add_update_error", "add", 500, true, ""},
+		{"subtract_update_error", "subtract", 500, true, ""},
+		{"override_update_error", "override", 500, true, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := setupManageUserTestDB(t)
@@ -307,8 +321,11 @@ func TestManageUserQuotaFailuresDoNotRecordTopup(t *testing.T) {
 				}))
 				t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove("test:fail_quota_update")) })
 			}
-			recorder := performManageUserRequest(t, fmt.Sprintf(`{"id":%d,"action":"add_quota","mode":%q,"value":%d}`, user.Id, tc.mode, tc.value))
+			recorder := performManageUserRequest(t, fmt.Sprintf(`{"id":%d,"action":"add_quota","mode":%q,"value":%d,"reason":%q}`, user.Id, tc.mode, tc.value, tc.reason))
 			assert.Contains(t, recorder.Body.String(), `"success":false`)
+			if tc.reason != "" {
+				assert.Contains(t, recorder.Body.String(), `"message_key":"The reason can be at most 200 characters"`)
+			}
 			require.NoError(t, db.First(&user, user.Id).Error)
 			assert.Equal(t, 1000, user.Quota)
 			var logCount, auditCount int64
@@ -510,7 +527,7 @@ func TestManageUserQuotaConcurrentSnapshots(t *testing.T) {
 	results := make(chan result, 2)
 	for _, value := range []int{10, 20} {
 		go func(value int) {
-			adjustment, err := model.AdjustUserQuota(user.Id, 1, common.RoleRootUser, "add", value)
+			adjustment, err := model.AdjustUserQuota(user.Id, 1, common.RoleRootUser, "add", value, "")
 			results <- result{adjustment, err, value}
 		}(value)
 	}

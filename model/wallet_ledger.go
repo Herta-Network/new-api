@@ -19,8 +19,9 @@ const (
 	// WalletLedgerRedemption is a redemption code; ref_id is its id and
 	// ref_name its name, never the code itself.
 	WalletLedgerRedemption = "redemption"
-	// WalletLedgerAdminAdjustment is an administrator's change; operator_id
-	// is the administrator, shown to administrators only.
+	// WalletLedgerAdminAdjustment is an administrator's change; note is the
+	// reason they gave, which the user reads too, and operator_id the
+	// administrator, shown to administrators only.
 	WalletLedgerAdminAdjustment = "admin_adjustment"
 	// WalletLedgerCheckin is a daily check-in reward; ref_id is the check-in
 	// date, a day in WalletDayZone.
@@ -40,6 +41,9 @@ const (
 
 // walletLedgerRefNameLength is the length of wallet_ledger.ref_name.
 const walletLedgerRefNameLength = 128
+
+// WalletLedgerNoteLength is the most characters a ledger note holds.
+const WalletLedgerNoteLength = 200
 
 // WalletDayZone divides the site's days: statements, balance snapshots and
 // day-based rewards follow Beijing time, whatever the server's or the
@@ -65,18 +69,23 @@ type WalletLedgerEntry struct {
 	RefName    string `json:"ref_name" gorm:"type:varchar(128);not null;default:''"`
 	OperatorId int    `json:"operator_id" gorm:"not null;default:0"`
 	CreatedAt  int64  `json:"created_at" gorm:"not null;index:idx_wallet_ledger_user_created,priority:2"`
+	// Note is what the operator wrote about the change, such as the reason
+	// for an administrator's adjustment; empty for most changes.
+	Note string `json:"note" gorm:"type:varchar(200);not null;default:''"`
 }
 
 func (WalletLedgerEntry) TableName() string {
 	return "wallet_ledger"
 }
 
-// WalletChange names a balance change in its ledger entry.
+// WalletChange names a balance change in its ledger entry. Note holds at
+// most WalletLedgerNoteLength characters; a longer one fails the change.
 type WalletChange struct {
 	Type       string
 	RefId      string
 	RefName    string
 	OperatorId int
+	Note       string
 }
 
 // recordWalletChangeTx writes the ledger entry of a signed change of quota to
@@ -97,6 +106,7 @@ func recordWalletChangeTx(tx *gorm.DB, userId int, quota int64, change WalletCha
 		RefId:      change.RefId,
 		RefName:    refName,
 		OperatorId: change.OperatorId,
+		Note:       change.Note,
 		CreatedAt:  common.GetTimestamp(),
 	}).Error
 }
@@ -226,13 +236,15 @@ type WalletStatementDay struct {
 	Balance *int64 `json:"balance" extensions:"x-nullable"`
 }
 
-// WalletStatementEntry is a ledger entry as its user reads it.
+// WalletStatementEntry is a ledger entry as its user reads it: with the
+// note, without the operator.
 type WalletStatementEntry struct {
 	Id        int64  `json:"id"`
 	Type      string `json:"type"`
 	Quota     int64  `json:"quota"`
 	RefId     string `json:"ref_id"`
 	RefName   string `json:"ref_name"`
+	Note      string `json:"note"`
 	CreatedAt int64  `json:"created_at"`
 }
 
@@ -290,7 +302,7 @@ func GetWalletStatement(userId int, month time.Time, now time.Time) (*WalletStat
 			continue
 		}
 		days[i].Entries = append(days[i].Entries, WalletStatementEntry{
-			Id: entry.Id, Type: entry.Type, Quota: entry.Quota, RefId: entry.RefId, RefName: entry.RefName, CreatedAt: entry.CreatedAt,
+			Id: entry.Id, Type: entry.Type, Quota: entry.Quota, RefId: entry.RefId, RefName: entry.RefName, Note: entry.Note, CreatedAt: entry.CreatedAt,
 		})
 		days[i].NetQuota += entry.Quota
 	}

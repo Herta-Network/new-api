@@ -2,6 +2,8 @@ package model
 
 import (
 	"errors"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/shopspring/decimal"
@@ -11,6 +13,8 @@ import (
 var (
 	ErrInvalidUserQuotaAdjustment = errors.New("invalid user quota adjustment")
 	ErrUserQuotaPermission        = errors.New("cannot adjust quota for this user role")
+	// ErrQuotaAdjustmentReasonTooLong reaches the web console.
+	ErrQuotaAdjustmentReasonTooLong error = common.NewMessage("The reason can be at most 200 characters")
 )
 
 // UserQuotaAdjustment is the immutable database snapshot of a committed manual
@@ -20,14 +24,21 @@ type UserQuotaAdjustment struct {
 	Username string
 	Before   int
 	After    int
+	// Reason is the reason as recorded, without surrounding spaces.
+	Reason string
 }
 
 // AdjustUserQuota applies an administrator's add, subtract or override of
 // the balance of userID and writes its wallet ledger entry, which names
-// operatorID.
-func AdjustUserQuota(userID, operatorID, operatorRole int, mode string, value int) (*UserQuotaAdjustment, error) {
+// operatorID and keeps reason, trimmed, as the note the user reads. A
+// reason longer than WalletLedgerNoteLength fails the adjustment.
+func AdjustUserQuota(userID, operatorID, operatorRole int, mode string, value int, reason string) (*UserQuotaAdjustment, error) {
 	if userID <= 0 || (mode != "add" && mode != "subtract" && mode != "override") {
 		return nil, ErrInvalidUserQuotaAdjustment
+	}
+	reason = strings.TrimSpace(reason)
+	if utf8.RuneCountInString(reason) > WalletLedgerNoteLength {
+		return nil, ErrQuotaAdjustmentReasonTooLong
 	}
 	if mode != "override" && value <= 0 {
 		return nil, ErrInvalidUserQuotaAdjustment
@@ -69,12 +80,12 @@ func AdjustUserQuota(userID, operatorID, operatorRole int, mode string, value in
 				return gorm.ErrRecordNotFound
 			}
 			if err := recordWalletChangeTx(tx, userID, int64(after)-int64(user.Quota), WalletChange{
-				Type: WalletLedgerAdminAdjustment, OperatorId: operatorID,
+				Type: WalletLedgerAdminAdjustment, OperatorId: operatorID, Note: reason,
 			}); err != nil {
 				return err
 			}
 		}
-		adjustment = UserQuotaAdjustment{UserID: user.Id, Username: user.Username, Before: user.Quota, After: after}
+		adjustment = UserQuotaAdjustment{UserID: user.Id, Username: user.Username, Before: user.Quota, After: after, Reason: reason}
 		return nil
 	})
 	if err != nil {

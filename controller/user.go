@@ -1215,13 +1215,17 @@ type ManageRequest struct {
 	Action string `json:"action"`
 	Value  int    `json:"value"`
 	Mode   string `json:"mode"`
+	// Reason is why add_quota changes the balance: optional, at most 200
+	// characters without the surrounding spaces. The user reads it on their
+	// statement.
+	Reason string `json:"reason"`
 }
 
 // ManageUser Only admin user can do this
 //
 //	@Summary		管理用户
 //	@Description	action 为 disable、enable、promote、demote、delete 或 add_quota；只能操作角色低于自己的用户（超级管理员不受此限），promote 仅限超级管理员。除 add_quota 外都需要 X-Security-Proof：delete 的 scope 为 admin.user.delete，其余为 admin.user.manage。
-//	@Description	add_quota 按 mode（add、subtract、override）和 value 调整额度。delete 和 add_quota 不返回 data，其余操作的 data 只有用户新的 role 和 status。
+//	@Description	add_quota 按 mode（add、subtract、override）和 value 调整额度；reason 是调整原因，可选，去掉首尾空白后最多 200 字，超长返回错误。原因记进这次调整的余额流水（用户在对账单里能看到）和操作日志。delete 和 add_quota 不返回 data，其余操作的 data 只有用户新的 role 和 status。
 //	@Tags			用户管理
 //	@Param			body	body		ManageRequest	true	"用户 ID 和操作"
 //	@Success		200		{object}	common.ApiResponse{data=model.User}

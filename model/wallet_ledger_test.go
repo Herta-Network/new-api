@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ type ledgerEntry struct {
 	RefId      string
 	RefName    string
 	OperatorId int
+	Note       string
 }
 
 // userLedger returns the ledger of userId, oldest first, and checks that it
@@ -33,7 +35,7 @@ func userLedger(t *testing.T, userId int) []ledgerEntry {
 	var sum int64
 	for i := len(rows) - 1; i >= 0; i-- {
 		row := rows[i]
-		entries = append(entries, ledgerEntry{row.Type, row.Quota, row.RefId, row.RefName, row.OperatorId})
+		entries = append(entries, ledgerEntry{row.Type, row.Quota, row.RefId, row.RefName, row.OperatorId, row.Note})
 		sum += row.Quota
 	}
 	balance, err := GetUserQuota(userId, true)
@@ -89,12 +91,16 @@ func TestEveryWalletChangeWritesItsLedgerEntry(t *testing.T) {
 		return DebitWalletTx(tx, invitee.Id, 600, WalletChange{Type: WalletLedgerSubscriptionPurchase, RefId: "ORDER-2", RefName: "Pro"})
 	}))
 
-	_, err = AdjustUserQuota(invitee.Id, 9, common.RoleRootUser, "subtract", 37)
+	// The reason is kept without its surrounding spaces, up to 200
+	// characters of any script.
+	adjustment, err := AdjustUserQuota(invitee.Id, 9, common.RoleRootUser, "subtract", 37, "  Outage credit taken back \n")
 	require.NoError(t, err)
-	_, err = AdjustUserQuota(invitee.Id, 9, common.RoleRootUser, "override", 5000)
+	assert.Equal(t, "Outage credit taken back", adjustment.Reason)
+	longest := strings.Repeat("补", WalletLedgerNoteLength)
+	_, err = AdjustUserQuota(invitee.Id, 9, common.RoleRootUser, "override", 5000, longest)
 	require.NoError(t, err)
 	// An override to the balance it already has changes nothing.
-	_, err = AdjustUserQuota(invitee.Id, 9, common.RoleRootUser, "override", 5000)
+	_, err = AdjustUserQuota(invitee.Id, 9, common.RoleRootUser, "override", 5000, "")
 	require.NoError(t, err)
 
 	assert.Equal(t, []ledgerEntry{
@@ -108,8 +114,8 @@ func TestEveryWalletChangeWritesItsLedgerEntry(t *testing.T) {
 		{Type: WalletLedgerCheckin, Quota: 7, RefId: WalletDay(time.Now())},
 		{Type: WalletLedgerTopUp, Quota: 2000, RefId: "ORDER-1"},
 		{Type: WalletLedgerSubscriptionPurchase, Quota: -600, RefId: "ORDER-2", RefName: "Pro"},
-		{Type: WalletLedgerAdminAdjustment, Quota: -37, OperatorId: 9},
-		{Type: WalletLedgerAdminAdjustment, Quota: 5000 - 2000, OperatorId: 9},
+		{Type: WalletLedgerAdminAdjustment, Quota: -37, OperatorId: 9, Note: "Outage credit taken back"},
+		{Type: WalletLedgerAdminAdjustment, Quota: 5000 - 2000, OperatorId: 9, Note: longest},
 	}, userLedger(t, invitee.Id))
 
 	root := &User{Username: "ledger-root", AffCode: "lro1", Role: common.RoleRootUser, Status: common.UserStatusEnabled, Quota: 100000000}
@@ -148,8 +154,10 @@ func TestFailedWalletChangesLeaveNoLedgerEntry(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ErrTopUpQuotaLimitExceeded)
 
-	_, err = AdjustUserQuota(admin.Id, 9, common.RoleAdminUser, "add", 10)
+	_, err = AdjustUserQuota(admin.Id, 9, common.RoleAdminUser, "add", 10, "")
 	require.ErrorIs(t, err, ErrUserQuotaPermission)
+	_, err = AdjustUserQuota(admin.Id, 9, common.RoleRootUser, "add", 10, strings.Repeat("补", WalletLedgerNoteLength+1))
+	require.ErrorIs(t, err, ErrQuotaAdjustmentReasonTooLong, "a longer reason fails rather than being cut")
 
 	_, err = UserCheckin(admin.Id)
 	require.NoError(t, err)
@@ -249,7 +257,7 @@ func TestWalletStatementDividesDaysInBeijingTime(t *testing.T) {
 	require.NoError(t, DB.Create(&usage).Error)
 	entries := []WalletLedgerEntry{
 		{UserId: user.Id, Type: WalletLedgerTopUp, Quota: 500, RefId: "ORDER-6", CreatedAt: beijing(1, 23, 59, 59)},
-		{UserId: user.Id, Type: WalletLedgerAdminAdjustment, Quota: -20, OperatorId: 9, CreatedAt: beijing(2, 0, 0, 0)},
+		{UserId: user.Id, Type: WalletLedgerAdminAdjustment, Quota: -20, OperatorId: 9, Note: "duplicate top-up", CreatedAt: beijing(2, 0, 0, 0)},
 		{UserId: other.Id, Type: WalletLedgerCheckin, Quota: 7, CreatedAt: beijing(2, 12, 0, 0)},
 	}
 	require.NoError(t, DB.Create(&entries).Error)
@@ -278,13 +286,13 @@ func TestWalletStatementDividesDaysInBeijingTime(t *testing.T) {
 	for _, d := range statement.Days {
 		var types []string
 		for _, entry := range d.Entries {
-			types = append(types, entry.Type+" "+strconv.FormatInt(entry.Quota, 10)+" "+entry.RefId)
+			types = append(types, entry.Type+" "+strconv.FormatInt(entry.Quota, 10)+" "+entry.RefId+" "+entry.Note)
 		}
 		got = append(got, day{d.Date, d.Requests, d.Tokens, d.UsageQuota, d.ConsumedQuota, d.NetQuota, types, d.Balance})
 	}
 	assert.Equal(t, []day{
-		{"2026-11-01", 3, 500, 35, 35, 500 - 35, []string{"topup 500 ORDER-6"}, new(int64(1465))},
-		{"2026-11-02", 4, 1000, 100, 30, -20 - 30, []string{"admin_adjustment -20 "}, nil},
+		{"2026-11-01", 3, 500, 35, 35, 500 - 35, []string{"topup 500 ORDER-6 "}, new(int64(1465))},
+		{"2026-11-02", 4, 1000, 100, 30, -20 - 30, []string{"admin_adjustment -20  duplicate top-up"}, nil},
 		{"2026-11-03", 0, 0, 0, 0, 0, nil, new(int64(1465))},
 		{"2026-11-04", 0, 0, 0, 0, 0, nil, new(int64(1234))},
 	}, got)
