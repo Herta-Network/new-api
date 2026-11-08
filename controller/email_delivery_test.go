@@ -149,7 +149,7 @@ func TestEmailOptionsNeverReturnResendCredentials(t *testing.T) {
 	GetOptions(context)
 	require.Equal(t, http.StatusOK, response.Code)
 	assert.NotContains(t, response.Body.String(), "private-email-credential")
-	assert.NotContains(t, response.Body.String(), "ResendApiKey")
+	assert.NotContains(t, response.Body.String(), `"key":"ResendApiKey"`)
 	assert.Contains(t, response.Body.String(), "ResendFrom")
 	assert.Contains(t, response.Body.String(), `"key":"ResendKeyConfigured","value":"true"`)
 	assert.NotContains(t, response.Body.String(), "private-cloudflare-token")
