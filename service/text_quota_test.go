@@ -254,6 +254,112 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 	}
 }
 
+// A realtime session holds its charge so far after every response and
+// settles its total once when it ends: the wallet, token, consume log and
+// quota_data all carry the session's usage exactly once.
+func TestRealtimeSessionChargesItsUsageOnce(t *testing.T) {
+	const modelName = "realtime-ratio-test"
+	const start = 1_000_000
+	// Unknown models have completion and audio ratios of 1, so with a model
+	// ratio of 2.5 a round costs 2.5 quota a token: 1000 tokens, then 600.
+	rounds := []dto.RealtimeUsage{
+		{TotalTokens: 1000, InputTokens: 500, OutputTokens: 500, InputTokenDetails: dto.InputTokenDetails{TextTokens: 400, AudioTokens: 100}, OutputTokenDetails: dto.OutputTokenDetails{TextTokens: 200, AudioTokens: 300}},
+		{TotalTokens: 600, InputTokens: 300, OutputTokens: 300, InputTokenDetails: dto.InputTokenDetails{TextTokens: 200, AudioTokens: 100}, OutputTokenDetails: dto.OutputTokenDetails{TextTokens: 100, AudioTokens: 200}},
+	}
+	for _, tc := range []struct {
+		name, preference string
+		price            float64
+		wallet, reserve  int
+		want             int
+		roundErr         bool
+	}{
+		{name: "ratio session charges its usage once", preference: "wallet_only", reserve: 3000, want: 4000},
+		{name: "ratio session refunds an unused reservation", preference: "wallet_only", reserve: 10000, want: 4000},
+		{name: "fixed price session charges its price once", preference: "wallet_only", price: 0.006, reserve: 3000, want: 3000},
+		{name: "subscription pays the session once", preference: "subscription_only", reserve: 3000, want: 4000},
+		{name: "a round the wallet cannot cover ends the session", preference: "wallet_only", wallet: 3500, reserve: 3000, want: 4000, roundErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			truncate(t)
+			savedExport := common.DataExportEnabled
+			common.DataExportEnabled = true
+			t.Cleanup(func() { common.DataExportEnabled = savedExport })
+			model.CacheQuotaDataLock.Lock()
+			model.CacheQuotaData = make(map[string]*model.QuotaData)
+			model.CacheQuotaDataLock.Unlock()
+
+			wallet := start
+			if tc.wallet > 0 {
+				wallet = tc.wallet
+			}
+			user := model.User{Username: "realtime_payer", Quota: wallet, Status: common.UserStatusEnabled}
+			require.NoError(t, model.DB.Create(&user).Error)
+			token := model.Token{UserId: user.Id, Key: "realtime-payer-token", Name: "realtime", RemainQuota: start, Status: common.TokenStatusEnabled}
+			require.NoError(t, model.DB.Create(&token).Error)
+			channel := model.Channel{Name: "realtime", Key: "unused", Status: common.ChannelStatusEnabled}
+			require.NoError(t, model.DB.Create(&channel).Error)
+			subscription := tc.preference == "subscription_only"
+			if subscription {
+				plan := model.SubscriptionPlan{Title: "Pro"}
+				require.NoError(t, model.DB.Create(&plan).Error)
+				seedSubscription(t, 1, user.Id, start, 0)
+				require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", 1).Update("plan_id", plan.Id).Error)
+			}
+
+			priceData := hosttypes.PriceData{ModelRatio: 2.5, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}
+			if tc.price > 0 {
+				priceData = hosttypes.PriceData{UsePrice: true, ModelPrice: tc.price, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}
+			}
+			info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, RequestId: "realtime-session", ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id, UpstreamModelName: modelName}, OriginModelName: modelName, UsingGroup: "default", UserGroup: "default", UserSetting: dto.UserSetting{BillingPreference: tc.preference}, StartTime: time.Now(), RelayFormat: types.RelayFormatOpenAIRealtime, PriceData: priceData}
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest("GET", "/v1/realtime", nil)
+			require.Nil(t, PreConsumeBilling(ctx, tc.reserve, info))
+
+			// The handler adds each response's usage to the session's and
+			// holds the session's charge so far.
+			session := &dto.RealtimeUsage{}
+			var roundErr error
+			for _, round := range rounds {
+				session.TotalTokens += round.TotalTokens
+				session.InputTokens += round.InputTokens
+				session.OutputTokens += round.OutputTokens
+				session.InputTokenDetails.TextTokens += round.InputTokenDetails.TextTokens
+				session.InputTokenDetails.AudioTokens += round.InputTokenDetails.AudioTokens
+				session.OutputTokenDetails.TextTokens += round.OutputTokenDetails.TextTokens
+				session.OutputTokenDetails.AudioTokens += round.OutputTokenDetails.AudioTokens
+				if roundErr = PreWssConsumeQuota(ctx, info, session); roundErr != nil {
+					break
+				}
+			}
+			if tc.roundErr {
+				require.Error(t, roundErr)
+			} else {
+				require.NoError(t, roundErr)
+			}
+			PostWssConsumeQuota(ctx, info, modelName, session, nil)
+			model.SaveQuotaDataCache()
+
+			walletPaid := tc.want
+			if subscription {
+				walletPaid = 0
+				assert.Equal(t, int64(tc.want), getSubscriptionUsed(t, 1))
+			}
+			require.NoError(t, model.DB.First(&user, user.Id).Error)
+			require.NoError(t, model.DB.First(&token, token.Id).Error)
+			assert.Equal(t, wallet-walletPaid, user.Quota)
+			assert.Equal(t, start-tc.want, token.RemainQuota)
+			assert.Equal(t, tc.want, user.UsedQuota)
+			var log model.Log
+			require.NoError(t, model.LOG_DB.Where("user_id = ?", user.Id).Take(&log).Error)
+			assert.Equal(t, tc.want, log.Quota)
+			var data model.QuotaData
+			require.NoError(t, model.DB.Where("user_id = ?", user.Id).Take(&data).Error)
+			assert.Equal(t, tc.want, data.Quota)
+			assert.Equal(t, walletPaid, data.WalletQuota)
+		})
+	}
+}
+
 // The statement's consumption is what the wallet paid: a call a
 // subscription paid and the refund of a subscription's task count as calls
 // but move neither the wallet nor the consumption, so a day's closing
