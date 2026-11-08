@@ -109,6 +109,55 @@ func TestSystemTaskSchedulerSkipsDisabled(t *testing.T) {
 	assert.Equal(t, int64(0), countSystemTasks(t, handler.taskType))
 }
 
+type stubCalendarHandler struct {
+	stubScheduledHandler
+	due bool
+}
+
+func (h *stubCalendarHandler) Due(*model.SystemTask, time.Time) bool { return h.due }
+
+// A calendar handler runs when Due says so, not when its interval elapsed.
+func TestSystemTaskSchedulerAsksCalendarHandlers(t *testing.T) {
+	truncate(t)
+	handler := &stubCalendarHandler{stubScheduledHandler: stubScheduledHandler{taskType: "test_calendar", enabled: true, interval: time.Nanosecond}}
+	withSystemTaskRegistry(t, handler)
+
+	runSystemTaskScheduler()
+	assert.Equal(t, int64(0), countSystemTasks(t, handler.taskType))
+	handler.due = true
+	runSystemTaskScheduler()
+	assert.Equal(t, int64(1), countSystemTasks(t, handler.taskType))
+}
+
+// The closing balances of a day are recorded once, in the hour after
+// midnight in Beijing time, with a retry a minute after a failed run.
+func TestWalletBalanceSnapshotIsDueOnceAfterMidnight(t *testing.T) {
+	midnight := time.Date(2026, time.November, 8, 0, 0, 0, 0, model.WalletDayZone)
+	at := func(d time.Duration) int64 { return midnight.Add(d).Unix() }
+	task := func(status model.SystemTaskStatus, created, updated time.Duration) *model.SystemTask {
+		return &model.SystemTask{Status: status, CreatedAt: at(created), UpdatedAt: at(updated)}
+	}
+	tests := []struct {
+		name   string
+		latest *model.SystemTask
+		now    time.Duration
+		due    bool
+	}{
+		{"first run after midnight", nil, 10 * time.Second, true},
+		{"the day before was recorded", task(model.SystemTaskStatusSucceeded, -24*time.Hour+5*time.Second, -24*time.Hour+6*time.Second), 10 * time.Second, true},
+		{"today's run recorded it", task(model.SystemTaskStatusSucceeded, 10*time.Second, 11*time.Second), 30 * time.Minute, false},
+		{"a failed run waits a minute", task(model.SystemTaskStatusFailed, 10*time.Second, 11*time.Second), 40 * time.Second, false},
+		{"a failed run is retried", task(model.SystemTaskStatusFailed, 10*time.Second, 11*time.Second), 2 * time.Minute, true},
+		{"past the window", nil, time.Hour, false},
+		{"before midnight", nil, -time.Second, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.due, walletBalanceSnapshotHandler{}.Due(tt.latest, midnight.Add(tt.now)))
+		})
+	}
+}
+
 func TestSystemTaskClaimPassDispatchesByType(t *testing.T) {
 	truncate(t)
 

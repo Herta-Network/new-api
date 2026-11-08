@@ -334,6 +334,10 @@ type RecordConsumeLogParams struct {
 	IsStream         bool              `json:"is_stream"`
 	Group            string            `json:"group"`
 	Other            *LogOther         `json:"other"`
+	// WalletQuota is the part of Quota the wallet paid: all of it for a
+	// wallet-funded call, none for one a subscription paid or a channel
+	// test.
+	WalletQuota int `json:"wallet_quota"`
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
@@ -398,6 +402,8 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			Username:            username,
 			ModelName:           params.ModelName,
 			Quota:               params.Quota,
+			WalletQuota:         params.WalletQuota,
+			Requests:            1,
 			CreatedAt:           createdAt,
 			TokenUsed:           params.PromptTokens + params.CompletionTokens,
 			CacheReadTokens:     int64(cacheReadTokens),
@@ -421,6 +427,9 @@ type RecordTaskBillingLogParams struct {
 	Group     string
 	Other     *LogOther
 	NodeName  string // 任务发起节点；为空时回退当前节点
+	// WalletQuota is the part of Quota that came from or went back to the
+	// wallet: none for a task a subscription paid.
+	WalletQuota int
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
@@ -454,21 +463,31 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	if err != nil {
 		common.SysLog(common.LogText("failed to record task billing log: %s", err.Error()))
 	}
-	if params.LogType == LogTypeConsume && common.DataExportEnabled {
+	// A settlement difference or a refund changes the cost of a request the
+	// dashboard data counted when it was submitted: it adds its quota, a
+	// refund as a negative amount, and no request, so the hourly costs, and
+	// the statement's daily ones, are what the wallet was charged.
+	if (params.LogType == LogTypeConsume || params.LogType == LogTypeRefund) && common.LogConsumeEnabled && common.DataExportEnabled {
 		nodeName := params.NodeName
 		if nodeName == "" {
 			nodeName = common.NodeName
+		}
+		quota, walletQuota := params.Quota, params.WalletQuota
+		if params.LogType == LogTypeRefund {
+			quota, walletQuota = -quota, -walletQuota
 		}
 		LogQuotaData(QuotaDataLogParams{
 			UserID:    params.UserId,
 			Username:  username,
 			ModelName: params.ModelName,
-			Quota:     params.Quota,
+			Quota:     quota,
 			CreatedAt: createdAt,
 			UseGroup:  params.Group,
 			TokenID:   params.TokenId,
 			ChannelID: params.ChannelId,
 			NodeName:  nodeName,
+			// The part that moved the wallet.
+			WalletQuota: walletQuota,
 		})
 	}
 }

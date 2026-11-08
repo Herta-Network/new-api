@@ -28,6 +28,10 @@ type QuotaData struct {
 	Quota               int    `json:"quota" gorm:"default:0"`
 	CacheReadTokens     int64  `json:"cache_read_tokens" gorm:"default:0"`
 	CacheCreationTokens int64  `json:"cache_creation_tokens" gorm:"default:0"`
+	// WalletQuota is the part of Quota the wallet paid: none of a call a
+	// subscription paid or of a channel test. The statement reads it; the
+	// dashboards keep showing Quota.
+	WalletQuota int `json:"-" gorm:"default:0"`
 }
 
 // quotaDataUpsert adds a flushed row's counters to the stored row with the
@@ -41,6 +45,7 @@ var quotaDataUpsert = clause.OnConflict{
 	DoUpdates: clause.Assignments(map[string]any{
 		"count":                 gorm.Expr("quota_data.count + excluded.count"),
 		"quota":                 gorm.Expr("quota_data.quota + excluded.quota"),
+		"wallet_quota":          gorm.Expr("quota_data.wallet_quota + excluded.wallet_quota"),
 		"token_used":            gorm.Expr("quota_data.token_used + excluded.token_used"),
 		"cache_read_tokens":     gorm.Expr("quota_data.cache_read_tokens + excluded.cache_read_tokens"),
 		"cache_creation_tokens": gorm.Expr("quota_data.cache_creation_tokens + excluded.cache_creation_tokens"),
@@ -50,10 +55,16 @@ var quotaDataUpsert = clause.OnConflict{
 const quotaDataFlushBatchSize = 1000
 
 type QuotaDataLogParams struct {
-	UserID              int
-	Username            string
-	ModelName           string
-	Quota               int
+	UserID    int
+	Username  string
+	ModelName string
+	// Quota is signed: a refund lowers the hour's cost.
+	Quota int
+	// WalletQuota is the signed part of Quota the wallet paid.
+	WalletQuota int
+	// Requests is the number of requests the row adds: 1 for a request, 0
+	// for a later settlement or refund of one.
+	Requests            int
 	CreatedAt           int64
 	TokenUsed           int
 	CacheReadTokens     int64
@@ -95,6 +106,7 @@ func logQuotaDataCache(quotaData *QuotaData) {
 	if ok {
 		cachedQuotaData.Count += count
 		cachedQuotaData.Quota += quota
+		cachedQuotaData.WalletQuota += quotaData.WalletQuota
 		cachedQuotaData.TokenUsed += tokenUsed
 		cachedQuotaData.CacheReadTokens += quotaData.CacheReadTokens
 		cachedQuotaData.CacheCreationTokens += quotaData.CacheCreationTokens
@@ -115,8 +127,9 @@ func LogQuotaData(params QuotaDataLogParams) {
 		TokenID:             params.TokenID,
 		ChannelID:           params.ChannelID,
 		NodeName:            params.NodeName,
-		Count:               1,
+		Count:               params.Requests,
 		Quota:               params.Quota,
+		WalletQuota:         params.WalletQuota,
 		TokenUsed:           params.TokenUsed,
 		CacheReadTokens:     max(0, params.CacheReadTokens),
 		CacheCreationTokens: max(0, params.CacheCreationTokens),

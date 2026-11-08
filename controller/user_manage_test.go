@@ -510,7 +510,7 @@ func TestManageUserQuotaConcurrentSnapshots(t *testing.T) {
 	results := make(chan result, 2)
 	for _, value := range []int{10, 20} {
 		go func(value int) {
-			adjustment, err := model.AdjustUserQuota(user.Id, common.RoleRootUser, "add", value)
+			adjustment, err := model.AdjustUserQuota(user.Id, 1, common.RoleRootUser, "add", value)
 			results <- result{adjustment, err, value}
 		}(value)
 	}

@@ -22,7 +22,10 @@ type UserQuotaAdjustment struct {
 	After    int
 }
 
-func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuotaAdjustment, error) {
+// AdjustUserQuota applies an administrator's add, subtract or override of
+// the balance of userID and writes its wallet ledger entry, which names
+// operatorID.
+func AdjustUserQuota(userID, operatorID, operatorRole int, mode string, value int) (*UserQuotaAdjustment, error) {
 	if userID <= 0 || (mode != "add" && mode != "subtract" && mode != "override") {
 		return nil, ErrInvalidUserQuotaAdjustment
 	}
@@ -64,6 +67,11 @@ func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuo
 			}
 			if result.RowsAffected != 1 {
 				return gorm.ErrRecordNotFound
+			}
+			if err := recordWalletChangeTx(tx, userID, int64(after)-int64(user.Quota), WalletChange{
+				Type: WalletLedgerAdminAdjustment, OperatorId: operatorID,
+			}); err != nil {
+				return err
 			}
 		}
 		adjustment = UserQuotaAdjustment{UserID: user.Id, Username: user.Username, Before: user.Quota, After: after}

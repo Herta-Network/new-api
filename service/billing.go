@@ -17,6 +17,15 @@ const (
 	BillingSourceSubscription = "subscription"
 )
 
+// walletQuota is the part of quota the wallet pays for a request: all of
+// it, unless a subscription funds the request.
+func walletQuota(relayInfo *relaycommon.RelayInfo, quota int) int {
+	if relayInfo != nil && relayInfo.BillingSource == BillingSourceSubscription {
+		return 0
+	}
+	return quota
+}
+
 // PreConsumeBilling 根据用户计费偏好创建 BillingSession 并执行预扣费。
 // 会话存储在 relayInfo.Billing 上，供后续 Settle / Refund 使用。
 // 会话已存在时（任务重试换到另一个渠道）把预扣补到 preConsumedQuota，

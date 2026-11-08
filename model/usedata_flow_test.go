@@ -149,6 +149,7 @@ func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 		TokenID:   11,
 		ChannelID: 1,
 		NodeName:  "node-a",
+		Requests:  1,
 		Quota:     100,
 		TokenUsed: 40,
 	})
@@ -161,6 +162,7 @@ func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 		TokenID:   11,
 		ChannelID: 1,
 		NodeName:  "node-a",
+		Requests:  1,
 		Quota:     50,
 		TokenUsed: 20,
 	})
@@ -173,6 +175,7 @@ func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 		TokenID:   11,
 		ChannelID: 1,
 		NodeName:  "node-a",
+		Requests:  1,
 		Quota:     25,
 		TokenUsed: 10,
 	})
@@ -204,6 +207,7 @@ func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 		TokenID:             11,
 		ChannelID:           1,
 		NodeName:            "node-a",
+		Requests:            1,
 		Quota:               30,
 		TokenUsed:           12,
 		CacheReadTokens:     5,
@@ -251,4 +255,40 @@ func TestSaveQuotaDataCacheSavesRowsBesideARejectedOne(t *testing.T) {
 	var models []string
 	require.NoError(t, DB.Model(&QuotaData{}).Order("model_name").Pluck("model_name", &models).Error)
 	assert.Equal(t, []string{"gpt-a", "gpt-b"}, models)
+}
+
+// An asynchronous task's later settlement adds its difference to the
+// dashboard data and a refund subtracts its amount, both without counting
+// another request; the wallet's share leaves out a subscription's task.
+func TestTaskSettlementsAndRefundsAdjustQuotaData(t *testing.T) {
+	truncateTables(t)
+	CacheQuotaDataLock.Lock()
+	CacheQuotaData = make(map[string]*QuotaData)
+	CacheQuotaDataLock.Unlock()
+	savedExport := common.DataExportEnabled
+	common.DataExportEnabled = true
+	t.Cleanup(func() { common.DataExportEnabled = savedExport })
+
+	// Three tasks reserve 100, 50 and 40, the second from a subscription;
+	// the first settles at 130, the second at 60 and the third at 20.
+	for _, reserved := range []struct{ quota, wallet int }{{100, 100}, {50, 0}, {40, 40}} {
+		LogQuotaData(QuotaDataLogParams{UserID: 1, Username: "alice", ModelName: "video-a", CreatedAt: common.GetTimestamp(), Requests: 1, Quota: reserved.quota, WalletQuota: reserved.wallet})
+	}
+	for _, settlement := range []struct {
+		logType       int
+		quota, wallet int
+	}{{LogTypeConsume, 30, 30}, {LogTypeConsume, 10, 0}, {LogTypeRefund, 20, 20}} {
+		RecordTaskBillingLog(RecordTaskBillingLogParams{UserId: 1, LogType: settlement.logType, ModelName: "video-a", Quota: settlement.quota, WalletQuota: settlement.wallet})
+	}
+	SaveQuotaDataCache()
+
+	var totals struct {
+		Count       int
+		Quota       int
+		WalletQuota int
+	}
+	require.NoError(t, DB.Model(&QuotaData{}).Where("user_id = ?", 1).Select("sum(count) AS count, sum(quota) AS quota, sum(wallet_quota) AS wallet_quota").Scan(&totals).Error)
+	assert.Equal(t, 3, totals.Count)
+	assert.Equal(t, 130+60+20, totals.Quota)
+	assert.Equal(t, 130+20, totals.WalletQuota, "the subscription's task is not the wallet's")
 }

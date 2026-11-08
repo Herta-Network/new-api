@@ -207,15 +207,16 @@ func TestTemplateChecksAllowOnlyVariablesAndConditions(t *testing.T) {
 }
 
 // useSiteSettings sets what the layout shows around every email until the
-// test ends.
-func useSiteSettings(t *testing.T, name, logo string, email system_setting.EmailSetting, legal system_setting.LegalSettings) {
+// test ends. The legal settings stay empty: the footer links to the
+// console's terms and privacy pages without them.
+func useSiteSettings(t *testing.T, name, logo string, email system_setting.EmailSetting, frontendAddress string) {
 	t.Helper()
 	savedName, savedLogo := common.SystemName, common.Logo
 	savedEmail, savedLegal := *system_setting.GetEmailSetting(), *system_setting.GetLegalSettings()
 	savedServer, savedFrontend := system_setting.ServerAddress, system_setting.FrontendAddress
 	common.SystemName, common.Logo = name, logo
-	*system_setting.GetEmailSetting(), *system_setting.GetLegalSettings() = email, legal
-	system_setting.ServerAddress, system_setting.FrontendAddress = "https://api.example.com", "https://www.example.com"
+	*system_setting.GetEmailSetting(), *system_setting.GetLegalSettings() = email, system_setting.LegalSettings{}
+	system_setting.ServerAddress, system_setting.FrontendAddress = "https://api.example.com", frontendAddress
 	t.Cleanup(func() {
 		common.SystemName, common.Logo = savedName, savedLogo
 		*system_setting.GetEmailSetting(), *system_setting.GetLegalSettings() = savedEmail, savedLegal
@@ -232,7 +233,7 @@ func TestTemplateEmailsEscapeTheirValues(t *testing.T) {
 	const hostile = `<i>"x"&'y'</i>`
 	useSiteSettings(t, "Site"+hostile, "javascript:alert(1)", system_setting.EmailSetting{
 		CompanyName: hostile, CompanyAddress: hostile, SupportEmail: hostile,
-	}, system_setting.LegalSettings{UserAgreement: "terms", PrivacyPolicy: "privacy"})
+	}, "https://www.example.com")
 
 	for _, name := range append(TestKinds()[1:], common.EmailKindNotice) {
 		kind := mustKind(t, name)
@@ -267,15 +268,18 @@ func TestTemplateEmailsEscapeTheirValues(t *testing.T) {
 	assert.Contains(t, html, "Reason: &lt;img src=x onerror=alert(1)&gt; second line next paragraph</div>", "a notice previews its content")
 }
 
-// The footer shows the operator, the support address and the links to the
-// terms and the privacy policy only when they are set, and the header the
-// logo only when an email can show it.
+// The footer shows the operator and the support address only when they are
+// set, the links to the console's terms and privacy policy whenever the
+// Frontend Address is set, and the header the logo only when an email can
+// show it.
 func TestLayoutShowsTheSiteSettingsThatAreSet(t *testing.T) {
 	pgtest.Reset(t, model.DB)
 	useEmailOptions(t, map[string]string{})
 	email := common.TemplateEmail{Kind: common.EmailKindVerification, Vars: map[string]string{"Code": "654321", "Minutes": "10"}}
 
-	useSiteSettings(t, "Mioriq AI", "", system_setting.EmailSetting{}, system_setting.LegalSettings{})
+	// Without a Frontend Address there is no console: the server address
+	// would answer /terms with a 404.
+	useSiteSettings(t, "Mioriq AI", "", system_setting.EmailSetting{}, "")
 	_, html, err := renderEmail(i18n.LangZhCN, email)
 	require.NoError(t, err)
 	assert.Contains(t, html, `<html lang="zh-CN">`)
@@ -288,7 +292,7 @@ func TestLayoutShowsTheSiteSettingsThatAreSet(t *testing.T) {
 
 	useSiteSettings(t, "Mioriq AI", "/logo.png", system_setting.EmailSetting{
 		CompanyName: "Herta Network LLC", CompanyAddress: "30 N Gould St Ste N, Sheridan, WY 82801, USA", SupportEmail: "support@example.com",
-	}, system_setting.LegalSettings{UserAgreement: "terms", PrivacyPolicy: "privacy"})
+	}, "https://www.example.com/")
 	_, html, err = renderEmail(i18n.LangZhCN, email)
 	require.NoError(t, err)
 	assert.Contains(t, html, `<img src="https://www.example.com/logo.png"`, "a logo path is on the console")
@@ -297,12 +301,11 @@ func TestLayoutShowsTheSiteSettingsThatAreSet(t *testing.T) {
 	assert.Contains(t, html, `<br><a href="https://www.example.com/terms" target="_blank" style="color:#6E6F66;">服务条款</a> · <a href="https://www.example.com/privacy" target="_blank" style="color:#6E6F66;">隐私政策</a>`)
 
 	useSiteSettings(t, "Mioriq AI", "https://cdn.example.com/logo.SVG?v=2", system_setting.EmailSetting{CompanyAddress: "Sheridan, WY"},
-		system_setting.LegalSettings{PrivacyPolicy: "privacy"})
+		"https://www.example.com")
 	_, html, err = renderEmail(i18n.LangEn, email)
 	require.NoError(t, err)
 	assert.NotContains(t, html, "<img", "mail clients do not show SVG")
-	assert.Contains(t, html, "Please do not reply.\n<br>Sheridan, WY\n<br><a href=\"https://www.example.com/privacy\"")
-	assert.NotContains(t, html, "/terms")
+	assert.Contains(t, html, "Please do not reply.\n<br>Sheridan, WY\n<br><a href=\"https://www.example.com/terms\" target=\"_blank\" style=\"color:#6E6F66;\">Terms of Service</a> · <a href=\"https://www.example.com/privacy\"")
 }
 
 func TestAdministratorTemplatesApplyPerLanguage(t *testing.T) {

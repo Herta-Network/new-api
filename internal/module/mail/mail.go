@@ -125,13 +125,12 @@ func compose(kind render.Kind, lang string, data map[string]any, drafts map[stri
 		"CompanyName":    strings.TrimSpace(settings.CompanyName),
 		"CompanyAddress": strings.TrimSpace(settings.CompanyAddress),
 	}
-	// The console shows the terms and the privacy policy the legal settings
-	// hold at /terms and /privacy; an empty one has no page to link to.
-	legal := system_setting.GetLegalSettings()
-	if strings.TrimSpace(legal.UserAgreement) != "" {
+	// The console has the terms at /terms and the privacy policy at
+	// /privacy, whether or not the legal settings hold a text: a console
+	// may ship its own. Without a Frontend Address there is no console to
+	// link to; the backend answers those paths with a 404.
+	if strings.TrimSpace(system_setting.FrontendAddress) != "" {
 		layoutData["TermsLink"] = service.ConsoleURL("/terms")
-	}
-	if strings.TrimSpace(legal.PrivacyPolicy) != "" {
 		layoutData["PrivacyLink"] = service.ConsoleURL("/privacy")
 	}
 	_, html, err := execute(layoutKind, lang, stored, drafts, layoutData)

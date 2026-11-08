@@ -293,6 +293,8 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 			TokenId:   midjourneyTask.TokenId,
 			Group:     info.UsingGroup,
 			Other:     other,
+			// Legacy Midjourney billing is wallet only.
+			WalletQuota: midjourneyTask.Quota,
 		})
 		model.UpdateUserUsedQuotaAndRequestCount(info.UserId, midjourneyTask.Quota)
 		model.UpdateChannelUsedQuota(billingChannelId, midjourneyTask.Quota)
@@ -672,6 +674,8 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			TokenId:   midjourneyTask.TokenId,
 			Group:     relayInfo.UsingGroup,
 			Other:     other,
+			// Legacy Midjourney billing is wallet only.
+			WalletQuota: midjourneyTask.Quota,
 		})
 		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, midjourneyTask.Quota)
 		model.UpdateChannelUsedQuota(billingChannelId, midjourneyTask.Quota)
