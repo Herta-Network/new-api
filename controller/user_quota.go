@@ -43,9 +43,12 @@ func manageUserQuota(c *gin.Context, req ManageRequest) {
 		markAuditLogged(c)
 	}()
 
-	adjustment, err := model.AdjustUserQuota(req.Id, c.GetInt("id"), c.GetInt("role"), req.Mode, req.Value)
+	adjustment, err := model.AdjustUserQuota(req.Id, c.GetInt("id"), c.GetInt("role"), req.Mode, req.Value, req.Reason)
 	if err != nil {
 		switch {
+		case errors.Is(err, model.ErrQuotaAdjustmentReasonTooLong):
+			params["failure_reason"] = "invalid_parameters"
+			common.ApiError(c, err)
 		case errors.Is(err, model.ErrInvalidUserQuotaAdjustment):
 			params["failure_reason"] = "invalid_parameters"
 			if (req.Mode == "add" || req.Mode == "subtract") && req.Value <= 0 {
@@ -74,6 +77,9 @@ func manageUserQuota(c *gin.Context, req ManageRequest) {
 	params["to"] = adjustment.After
 	if req.Mode != "override" {
 		params["quota"] = req.Value
+	}
+	if adjustment.Reason != "" {
+		params["reason"] = adjustment.Reason
 	}
 	success = true
 	operation := model.AuditOperation{Action: action, Params: params}
