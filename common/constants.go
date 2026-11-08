@@ -27,7 +27,8 @@ var DataExportInterval = 5         // unit: minute
 var DataExportDefaultTime = "hour" // unit: minute
 var DefaultCollapseSidebar = false // default value of collapse sidebar
 
-// Any options with "Secret", "Token" in its key won't be return by GetOptions
+// GetOptions never returns the options model.IsSecretOption names, such as
+// keys ending in "Secret" or "Token"; it reports "<key>.configured" instead.
 
 var SessionSecret = uuid.New().String()
 var CryptoSecret = uuid.New().String()

@@ -73,7 +73,7 @@ func buildCompletionRatioMetaValue(optionValues map[string]string) string {
 }
 
 // @Summary		列出系统设置
-// @Description	不返回键以 Token、Secret、Key、secret 或 api_key 结尾的敏感项，改为附带 ResendKeyConfigured 等是否已配置的派生项；计费表达式和计费模式返回含内置默认值的生效值。
+// @Description	不返回密钥（键以 Token、Secret、Key、secret 或 api_key 结尾的项；TurnstileSiteKey 是公开值，照常返回），改为对每个密钥附带只读派生项“<键名>.configured”，值为 "true"（去掉首尾空白后不为空）或 "false"，例如 GitHubClientSecret.configured。旧的派生项 ResendKeyConfigured、CloudflareEmailTokenConfigured、PaymentExchangeRateKeyConfigured 仍然返回。计费表达式和计费模式返回含内置默认值的生效值。
 // @Tags			系统设置
 // @Success		200	{object}	common.ApiResponse{data=[]model.Option}
 // @Security		RootAuth
@@ -83,16 +83,15 @@ func GetOptions(c *gin.Context) {
 	optionValues := make(map[string]string)
 	common.OptionMapRWMutex.Lock()
 	for k, v := range common.OptionMap {
-		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" || k == "CloudflareEmailTokenConfigured" {
+		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || model.IsSecretStatusOption(k) {
 			continue
 		}
 		value := common.Interface2String(v)
-		isSensitiveKey := strings.HasSuffix(k, "Token") ||
-			strings.HasSuffix(k, "Secret") ||
-			strings.HasSuffix(k, "Key") ||
-			strings.HasSuffix(k, "secret") ||
-			strings.HasSuffix(k, "api_key")
-		if isSensitiveKey {
+		if model.IsSecretOption(k) {
+			options = append(options, &model.Option{
+				Key:   k + model.SecretStatusSuffix,
+				Value: strconv.FormatBool(strings.TrimSpace(value) != ""),
+			})
 			continue
 		}
 		options = append(options, &model.Option{
@@ -194,7 +193,7 @@ func writePasskeyDomainSettingsError(c *gin.Context, err error) {
 }
 
 // @Summary		更新系统设置
-// @Description	一次更新一个设置项，value 可以是字符串、数字或布尔值，保存为字符串。Passkey 域名相关项（passkey.rp_id、passkey.legacy_rp_ids、passkey.origins、ServerAddress、FrontendAddress）成功时 data 是变更影响，移除的域名仍有 Passkey 时返回 409，需改用 PUT /api/option/passkey/domains 确认；其他项没有 data。
+// @Description	一次更新一个设置项，value 可以是字符串、数字或布尔值，保存为字符串。GET /api/option/ 派生的只读项（以 .configured 结尾的项，以及 ResendKeyConfigured、CloudflareEmailTokenConfigured、PaymentExchangeRateKeyConfigured）不能写入。Passkey 域名相关项（passkey.rp_id、passkey.legacy_rp_ids、passkey.origins、ServerAddress、FrontendAddress）成功时 data 是变更影响，移除的域名仍有 Passkey 时返回 409，需改用 PUT /api/option/passkey/domains 确认；其他项没有 data。
 // @Tags			系统设置
 // @Param			body	body		OptionUpdateRequest	true	"设置项"
 // @Success		200		{object}	common.ApiResponse{data=model.PasskeyDomainChange}

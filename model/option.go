@@ -96,6 +96,8 @@ func InitOptionMap() {
 	common.OptionMap["MaxTokenAutoGroups"] = strconv.Itoa(setting.GetMaxTokenAutoGroups())
 	common.OptionMap["GitHubClientId"] = ""
 	common.OptionMap["GitHubClientSecret"] = ""
+	common.OptionMap["LinuxDOClientId"] = ""
+	common.OptionMap["LinuxDOClientSecret"] = ""
 	common.OptionMap["TelegramBotToken"] = ""
 	common.OptionMap["TelegramBotName"] = ""
 	common.OptionMap["WeChatServerAddress"] = ""
@@ -191,6 +193,35 @@ func SyncOptions(frequency int) {
 	}
 }
 
+// SecretStatusSuffix ends the read-only option the settings list derives for
+// each secret it never returns: "<key>.configured" is "true" when the secret
+// holds more than white space and "false" otherwise.
+const SecretStatusSuffix = ".configured"
+
+// IsSecretOption reports whether an option holds a secret the settings list
+// never returns: a key ending in Token, Secret, Key, secret or api_key, except
+// the Turnstile site key, which every sign-in page shows.
+func IsSecretOption(key string) bool {
+	if key == "TurnstileSiteKey" {
+		return false
+	}
+	return strings.HasSuffix(key, "Token") ||
+		strings.HasSuffix(key, "Secret") ||
+		strings.HasSuffix(key, "Key") ||
+		strings.HasSuffix(key, "secret") ||
+		strings.HasSuffix(key, "api_key")
+}
+
+// IsSecretStatusOption reports whether key names a status the settings list
+// derives for a secret: "<key>.configured", or one of the three named before
+// it. They are never stored.
+func IsSecretStatusOption(key string) bool {
+	return strings.HasSuffix(key, SecretStatusSuffix) ||
+		key == "ResendKeyConfigured" ||
+		key == "CloudflareEmailTokenConfigured" ||
+		key == "PaymentExchangeRateKeyConfigured"
+}
+
 func validateOptionValue(key string, value string) error {
 	if key == legacyAccessTokenRetireAtKey {
 		return errLegacyRetireAtReadOnly
@@ -206,6 +237,9 @@ func validateOptionValue(key string, value string) error {
 	}
 	if key == "CloudflareEmailTokenConfigured" {
 		return common.NewMessage("Cloudflare token configuration status is read-only")
+	}
+	if IsSecretStatusOption(key) {
+		return common.NewMessage("Secret configuration status is read-only")
 	}
 	// An empty From Address sends from the SMTP account.
 	if key == "SMTPFrom" && value != "" {
