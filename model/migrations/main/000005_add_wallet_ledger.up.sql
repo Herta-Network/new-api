@@ -12,6 +12,11 @@
 -- differs from their previous snapshot. wallet_balance_days lists the days a
 -- snapshot run recorded: a day without a row has no known closing balance,
 -- and a day with one has the balance of each user's latest snapshot.
+--
+-- quota_data.wallet_quota is the part of a call's cost the wallet paid, the
+-- calls' share of a day's balance change; quota keeps the cost of every
+-- call, a subscription's and a channel test's included. Earlier rows cannot
+-- tell who paid and count as paid by the wallet.
 
 CREATE TABLE wallet_ledger (
     id bigserial NOT NULL,
@@ -42,3 +47,6 @@ CREATE TABLE wallet_balance_days (
     created_at bigint NOT NULL,
     CONSTRAINT wallet_balance_days_pkey PRIMARY KEY (day)
 );
+
+ALTER TABLE quota_data ADD COLUMN wallet_quota bigint DEFAULT 0;
+UPDATE quota_data SET wallet_quota = quota;

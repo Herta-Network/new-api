@@ -73,8 +73,14 @@ func TestEveryWalletChangeWritesItsLedgerEntry(t *testing.T) {
 	_, err := Redeem(redemption.Key, invitee.Id)
 	require.NoError(t, err)
 
-	_, err = UserCheckin(invitee.Id)
+	// Check-ins follow Beijing time, whatever the server's zone.
+	savedLocal := time.Local
+	time.Local = time.FixedZone("UTC-12", -12*60*60)
+	t.Cleanup(func() { time.Local = savedLocal })
+	checkin, err := UserCheckin(invitee.Id)
 	require.NoError(t, err)
+	assert.Equal(t, WalletDay(time.Now()), checkin.CheckinDate)
+	time.Local = savedLocal
 
 	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
 		return CreditWalletTx(tx, invitee.Id, 2000, WalletChange{Type: WalletLedgerTopUp, RefId: "ORDER-1"})
@@ -99,12 +105,16 @@ func TestEveryWalletChangeWritesItsLedgerEntry(t *testing.T) {
 		{Type: WalletLedgerSignupBonus, Quota: 100},
 		{Type: WalletLedgerInviteeBonus, Quota: 30},
 		{Type: WalletLedgerRedemption, Quota: 500, RefId: strconv.Itoa(redemption.Id), RefName: "launch week"},
-		{Type: WalletLedgerCheckin, Quota: 7, RefId: time.Now().Format(time.DateOnly)},
+		{Type: WalletLedgerCheckin, Quota: 7, RefId: WalletDay(time.Now())},
 		{Type: WalletLedgerTopUp, Quota: 2000, RefId: "ORDER-1"},
 		{Type: WalletLedgerSubscriptionPurchase, Quota: -600, RefId: "ORDER-2", RefName: "Pro"},
 		{Type: WalletLedgerAdminAdjustment, Quota: -37, OperatorId: 9},
 		{Type: WalletLedgerAdminAdjustment, Quota: 5000 - 2000, OperatorId: 9},
 	}, userLedger(t, invitee.Id))
+
+	root := &User{Username: "ledger-root", AffCode: "lro1", Role: common.RoleRootUser, Status: common.UserStatusEnabled, Quota: 100000000}
+	require.NoError(t, CreateRootUser(root))
+	assert.Equal(t, []ledgerEntry{{Type: WalletLedgerSignupBonus, Quota: 100000000}}, userLedger(t, root.Id))
 
 	entries, total, err := GetUserWalletLedger(invitee.Id, WalletLedgerFilter{Type: WalletLedgerAdminAdjustment}, 0, 1)
 	require.NoError(t, err)
@@ -149,7 +159,7 @@ func TestFailedWalletChangesLeaveNoLedgerEntry(t *testing.T) {
 	// The fixture's opening balance has no entry of its own.
 	require.NoError(t, recordWalletChangeTx(DB, admin.Id, 300, WalletChange{Type: WalletLedgerSignupBonus}))
 	assert.Equal(t, []ledgerEntry{
-		{Type: WalletLedgerCheckin, Quota: 7, RefId: time.Now().Format(time.DateOnly)},
+		{Type: WalletLedgerCheckin, Quota: 7, RefId: WalletDay(time.Now())},
 		{Type: WalletLedgerSignupBonus, Quota: 300},
 	}, userLedger(t, admin.Id))
 }
@@ -227,12 +237,14 @@ func TestWalletStatementDividesDaysInBeijingTime(t *testing.T) {
 		return time.Date(2026, time.November, day, hour, minute, second, 0, WalletDayZone).Unix()
 	}
 	usage := []QuotaData{
-		{UserID: user.Id, ModelName: "gpt-a", CreatedAt: beijing(0, 23, 0, 0), Count: 9, Quota: 900, TokenUsed: 9000}, // October 31
-		{UserID: user.Id, ModelName: "gpt-a", CreatedAt: beijing(1, 0, 0, 0), Count: 1, Quota: 10, TokenUsed: 100},
-		{UserID: user.Id, ModelName: "gpt-a", CreatedAt: beijing(1, 23, 0, 0), Count: 2, Quota: 40, TokenUsed: 400},
-		{UserID: user.Id, ModelName: "gpt-b", CreatedAt: beijing(1, 23, 0, 0), Count: 0, Quota: -15},
-		{UserID: user.Id, ModelName: "gpt-a", CreatedAt: beijing(2, 0, 0, 0), Count: 3, Quota: 30, TokenUsed: 300},
-		{UserID: other.Id, ModelName: "gpt-a", CreatedAt: beijing(2, 0, 0, 0), Count: 5, Quota: 50, TokenUsed: 500},
+		{UserID: user.Id, ModelName: "gpt-a", CreatedAt: beijing(0, 23, 0, 0), Count: 9, Quota: 900, WalletQuota: 900, TokenUsed: 9000}, // October 31
+		{UserID: user.Id, ModelName: "gpt-a", CreatedAt: beijing(1, 0, 0, 0), Count: 1, Quota: 10, WalletQuota: 10, TokenUsed: 100},
+		{UserID: user.Id, ModelName: "gpt-a", CreatedAt: beijing(1, 23, 0, 0), Count: 2, Quota: 40, WalletQuota: 40, TokenUsed: 400},
+		{UserID: user.Id, ModelName: "gpt-b", CreatedAt: beijing(1, 23, 0, 0), Count: 0, Quota: -15, WalletQuota: -15},
+		{UserID: user.Id, ModelName: "gpt-a", CreatedAt: beijing(2, 0, 0, 0), Count: 3, Quota: 30, WalletQuota: 30, TokenUsed: 300},
+		// A call a subscription paid.
+		{UserID: user.Id, ModelName: "gpt-c", CreatedAt: beijing(2, 1, 0, 0), Count: 1, Quota: 70, TokenUsed: 700},
+		{UserID: other.Id, ModelName: "gpt-a", CreatedAt: beijing(2, 0, 0, 0), Count: 5, Quota: 50, WalletQuota: 50, TokenUsed: 500},
 	}
 	require.NoError(t, DB.Create(&usage).Error)
 	entries := []WalletLedgerEntry{
@@ -257,10 +269,10 @@ func TestWalletStatementDividesDaysInBeijingTime(t *testing.T) {
 	assert.Equal(t, int64(1000), *statement.OpeningBalance)
 
 	type day struct {
-		Date                            string
-		Requests, Tokens, Consumed, Net int64
-		Entries                         []string
-		Balance                         *int64
+		Date                                   string
+		Requests, Tokens, Usage, Consumed, Net int64
+		Entries                                []string
+		Balance                                *int64
 	}
 	var got []day
 	for _, d := range statement.Days {
@@ -268,13 +280,13 @@ func TestWalletStatementDividesDaysInBeijingTime(t *testing.T) {
 		for _, entry := range d.Entries {
 			types = append(types, entry.Type+" "+strconv.FormatInt(entry.Quota, 10)+" "+entry.RefId)
 		}
-		got = append(got, day{d.Date, d.Requests, d.Tokens, d.ConsumedQuota, d.NetQuota, types, d.Balance})
+		got = append(got, day{d.Date, d.Requests, d.Tokens, d.UsageQuota, d.ConsumedQuota, d.NetQuota, types, d.Balance})
 	}
 	assert.Equal(t, []day{
-		{"2026-11-01", 3, 500, 35, 500 - 35, []string{"topup 500 ORDER-6"}, new(int64(1465))},
-		{"2026-11-02", 3, 300, 30, -20 - 30, []string{"admin_adjustment -20 "}, nil},
-		{"2026-11-03", 0, 0, 0, 0, nil, new(int64(1465))},
-		{"2026-11-04", 0, 0, 0, 0, nil, new(int64(1234))},
+		{"2026-11-01", 3, 500, 35, 35, 500 - 35, []string{"topup 500 ORDER-6"}, new(int64(1465))},
+		{"2026-11-02", 4, 1000, 100, 30, -20 - 30, []string{"admin_adjustment -20 "}, nil},
+		{"2026-11-03", 0, 0, 0, 0, 0, nil, new(int64(1465))},
+		{"2026-11-04", 0, 0, 0, 0, 0, nil, new(int64(1234))},
 	}, got)
 
 	october, err := GetWalletStatement(user.Id, time.Date(2026, time.October, 15, 0, 0, 0, 0, WalletDayZone), now)

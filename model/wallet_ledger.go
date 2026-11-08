@@ -23,9 +23,10 @@ const (
 	// is the administrator, shown to administrators only.
 	WalletLedgerAdminAdjustment = "admin_adjustment"
 	// WalletLedgerCheckin is a daily check-in reward; ref_id is the check-in
-	// date.
+	// date, a day in WalletDayZone.
 	WalletLedgerCheckin = "checkin"
-	// WalletLedgerSignupBonus is the quota a new account starts with.
+	// WalletLedgerSignupBonus is the quota a new account starts with, the
+	// root account's included.
 	WalletLedgerSignupBonus = "signup_bonus"
 	// WalletLedgerInviteeBonus is the bonus for signing up with an
 	// invitation code.
@@ -98,6 +99,17 @@ func recordWalletChangeTx(tx *gorm.DB, userId int, quota int64, change WalletCha
 		OperatorId: change.OperatorId,
 		CreatedAt:  common.GetTimestamp(),
 	}).Error
+}
+
+// CreateRootUser creates the root account of a new installation with the
+// quota it starts with, and that quota's ledger entry, in one transaction.
+func CreateRootUser(user *User) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(user).Error; err != nil {
+			return err
+		}
+		return recordWalletChangeTx(tx, user.Id, int64(user.Quota), WalletChange{Type: WalletLedgerSignupBonus})
+	})
 }
 
 // WalletLedgerFilter narrows the ledger an administrator reads; zero fields
@@ -199,10 +211,12 @@ type WalletStatement struct {
 type WalletStatementDay struct {
 	// Date is YYYY-MM-DD.
 	Date string `json:"date"`
-	// Requests, Tokens and ConsumedQuota add up the day's calls; a refunded
-	// asynchronous task lowers ConsumedQuota.
+	// Requests, Tokens and UsageQuota add up the day's calls, whoever paid
+	// them; ConsumedQuota is the part the wallet paid, without the calls a
+	// subscription paid. A refunded asynchronous task lowers both quotas.
 	Requests      int64                  `json:"requests"`
 	Tokens        int64                  `json:"tokens"`
+	UsageQuota    int64                  `json:"usage_quota"`
 	ConsumedQuota int64                  `json:"consumed_quota"`
 	Entries       []WalletStatementEntry `json:"entries"`
 	// NetQuota is the day's change: the entries less ConsumedQuota.
@@ -244,13 +258,14 @@ func GetWalletStatement(userId int, month time.Time, now time.Time) (*WalletStat
 	// midnight.
 	_, offset := start.Zone()
 	var usage []struct {
-		DayNumber int64
-		Requests  int64
-		Tokens    int64
-		Quota     int64
+		DayNumber   int64
+		Requests    int64
+		Tokens      int64
+		Quota       int64
+		WalletQuota int64
 	}
 	if err := DB.Table("quota_data").
-		Select("(created_at + ?) / 86400 AS day_number, sum(count) AS requests, sum(token_used) AS tokens, sum(quota) AS quota", offset).
+		Select("(created_at + ?) / 86400 AS day_number, sum(count) AS requests, sum(token_used) AS tokens, sum(quota) AS quota, sum(wallet_quota) AS wallet_quota", offset).
 		Where("user_id = ? AND created_at >= ? AND created_at < ?", userId, start.Unix(), end).
 		Group("day_number").Scan(&usage).Error; err != nil {
 		return nil, err
@@ -260,8 +275,8 @@ func GetWalletStatement(userId int, month time.Time, now time.Time) (*WalletStat
 		if !ok {
 			continue
 		}
-		days[i].Requests, days[i].Tokens, days[i].ConsumedQuota = row.Requests, row.Tokens, row.Quota
-		days[i].NetQuota -= row.Quota
+		days[i].Requests, days[i].Tokens, days[i].UsageQuota, days[i].ConsumedQuota = row.Requests, row.Tokens, row.Quota, row.WalletQuota
+		days[i].NetQuota -= row.WalletQuota
 	}
 
 	var entries []WalletLedgerEntry

@@ -40,7 +40,7 @@ func GetUserCheckinRecords(userId int, startDate, endDate string) ([]Checkin, er
 
 // HasCheckedInToday 检查用户今天是否已签到
 func HasCheckedInToday(userId int) (bool, error) {
-	today := time.Now().Format("2006-01-02")
+	today := WalletDay(time.Now())
 	var count int64
 	err := DB.Model(&Checkin{}).
 		Where("user_id = ? AND checkin_date = ?", userId, today).
@@ -70,7 +70,7 @@ func UserCheckin(userId int) (*Checkin, error) {
 		quotaAwarded = setting.MinQuota + rand.Intn(setting.MaxQuota-setting.MinQuota+1)
 	}
 
-	today := time.Now().Format("2006-01-02")
+	today := WalletDay(time.Now())
 	checkin := &Checkin{
 		UserId:       userId,
 		CheckinDate:  today,

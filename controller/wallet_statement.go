@@ -14,7 +14,7 @@ import (
 //	@Summary		获取我的对账单
 //	@Description	按北京时间（Asia/Shanghai）分天，列出所选月份 1 日到今天（过去的月份到月末）的每一天：调用的请求数、tokens 和消耗额度，当天的余额流水，当天净变动，以及日终余额。
 //	@Description
-//	@Description	调用消耗来自小时用量汇总（开启数据看板和消费日志时才有，最多晚一个汇总间隔），异步任务的退款计为负的消耗；流水是调用以外的每一次余额变动，额度带符号。日终余额来自每天零点后的快照，服务没有记录到的日子为 null；今天的余额是当前余额。额度单位与 quota 相同。
+//	@Description	调用来自小时用量汇总（开启数据看板和消费日志时才有，最多晚一个汇总间隔）：requests、tokens、usage_quota 是当天全部调用，consumed_quota 只算钱包实际扣掉的部分，不含订阅抵扣的调用；异步任务的退款计为负数。流水是调用以外的每一次余额变动，额度带符号；net_quota 是流水合计减去 consumed_quota，前一天的日终余额加上它就是当天的日终余额。日终余额来自每天零点后的快照，服务没有记录到的日子为 null；今天的余额是当前余额。额度单位与 quota 相同。
 //	@Tags			个人
 //	@Param			month	query		string	false	"月份，格式 2006-01，默认北京时间的当月"
 //	@Success		200		{object}	common.ApiResponse{data=model.WalletStatement}

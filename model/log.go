@@ -334,6 +334,10 @@ type RecordConsumeLogParams struct {
 	IsStream         bool              `json:"is_stream"`
 	Group            string            `json:"group"`
 	Other            *LogOther         `json:"other"`
+	// WalletQuota is the part of Quota the wallet paid: all of it for a
+	// wallet-funded call, none for one a subscription paid or a channel
+	// test.
+	WalletQuota int `json:"wallet_quota"`
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
@@ -398,6 +402,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			Username:            username,
 			ModelName:           params.ModelName,
 			Quota:               params.Quota,
+			WalletQuota:         params.WalletQuota,
 			Requests:            1,
 			CreatedAt:           createdAt,
 			TokenUsed:           params.PromptTokens + params.CompletionTokens,
@@ -422,6 +427,9 @@ type RecordTaskBillingLogParams struct {
 	Group     string
 	Other     *LogOther
 	NodeName  string // 任务发起节点；为空时回退当前节点
+	// WalletQuota is the part of Quota that came from or went back to the
+	// wallet: none for a task a subscription paid.
+	WalletQuota int
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
@@ -464,9 +472,9 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		if nodeName == "" {
 			nodeName = common.NodeName
 		}
-		quota := params.Quota
+		quota, walletQuota := params.Quota, params.WalletQuota
 		if params.LogType == LogTypeRefund {
-			quota = -quota
+			quota, walletQuota = -quota, -walletQuota
 		}
 		LogQuotaData(QuotaDataLogParams{
 			UserID:    params.UserId,
@@ -478,6 +486,8 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 			TokenID:   params.TokenId,
 			ChannelID: params.ChannelId,
 			NodeName:  nodeName,
+			// The part that moved the wallet.
+			WalletQuota: walletQuota,
 		})
 	}
 }

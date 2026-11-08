@@ -259,7 +259,7 @@ func TestSaveQuotaDataCacheSavesRowsBesideARejectedOne(t *testing.T) {
 
 // An asynchronous task's later settlement adds its difference to the
 // dashboard data and a refund subtracts its amount, both without counting
-// another request, so the hourly costs are what the wallet was charged.
+// another request; the wallet's share leaves out a subscription's task.
 func TestTaskSettlementsAndRefundsAdjustQuotaData(t *testing.T) {
 	truncateTables(t)
 	CacheQuotaDataLock.Lock()
@@ -269,24 +269,26 @@ func TestTaskSettlementsAndRefundsAdjustQuotaData(t *testing.T) {
 	common.DataExportEnabled = true
 	t.Cleanup(func() { common.DataExportEnabled = savedExport })
 
-	// Three tasks reserve 100, 50 and 40; the first settles at 130, the
-	// second fails and the third settles at 20.
-	for _, reserved := range []int{100, 50, 40} {
-		LogQuotaData(QuotaDataLogParams{UserID: 1, Username: "alice", ModelName: "video-a", CreatedAt: common.GetTimestamp(), Requests: 1, Quota: reserved})
+	// Three tasks reserve 100, 50 and 40, the second from a subscription;
+	// the first settles at 130, the second at 60 and the third at 20.
+	for _, reserved := range []struct{ quota, wallet int }{{100, 100}, {50, 0}, {40, 40}} {
+		LogQuotaData(QuotaDataLogParams{UserID: 1, Username: "alice", ModelName: "video-a", CreatedAt: common.GetTimestamp(), Requests: 1, Quota: reserved.quota, WalletQuota: reserved.wallet})
 	}
 	for _, settlement := range []struct {
-		logType int
-		quota   int
-	}{{LogTypeConsume, 30}, {LogTypeRefund, 50}, {LogTypeRefund, 20}} {
-		RecordTaskBillingLog(RecordTaskBillingLogParams{UserId: 1, LogType: settlement.logType, ModelName: "video-a", Quota: settlement.quota})
+		logType       int
+		quota, wallet int
+	}{{LogTypeConsume, 30, 30}, {LogTypeConsume, 10, 0}, {LogTypeRefund, 20, 20}} {
+		RecordTaskBillingLog(RecordTaskBillingLogParams{UserId: 1, LogType: settlement.logType, ModelName: "video-a", Quota: settlement.quota, WalletQuota: settlement.wallet})
 	}
 	SaveQuotaDataCache()
 
 	var totals struct {
-		Count int
-		Quota int
+		Count       int
+		Quota       int
+		WalletQuota int
 	}
-	require.NoError(t, DB.Model(&QuotaData{}).Where("user_id = ?", 1).Select("sum(count) AS count, sum(quota) AS quota").Scan(&totals).Error)
+	require.NoError(t, DB.Model(&QuotaData{}).Where("user_id = ?", 1).Select("sum(count) AS count, sum(quota) AS quota, sum(wallet_quota) AS wallet_quota").Scan(&totals).Error)
 	assert.Equal(t, 3, totals.Count)
-	assert.Equal(t, 130+0+20, totals.Quota)
+	assert.Equal(t, 130+60+20, totals.Quota)
+	assert.Equal(t, 130+20, totals.WalletQuota, "the subscription's task is not the wallet's")
 }
