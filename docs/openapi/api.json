@@ -13781,6 +13781,48 @@
                 }
             }
         },
+        "/api/user/statement": {
+            "get": {
+                "security": [
+                    {
+                        "UserAuth": []
+                    }
+                ],
+                "description": "按北京时间（Asia/Shanghai）分天，列出所选月份 1 日到今天（过去的月份到月末）的每一天：调用的请求数、tokens 和消耗额度，当天的余额流水，当天净变动，以及日终余额。\n\n调用消耗来自小时用量汇总（开启数据看板和消费日志时才有，最多晚一个汇总间隔），异步任务的退款计为负的消耗；流水是调用以外的每一次余额变动，额度带符号。日终余额来自每天零点后的快照，服务没有记录到的日子为 null；今天的余额是当前余额。额度单位与 quota 相同。",
+                "tags": [
+                    "个人"
+                ],
+                "summary": "获取我的对账单",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "月份，格式 2006-01，默认北京时间的当月",
+                        "name": "month",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.ApiResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/model.WalletStatement"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/user/topup": {
             "post": {
                 "security": [
@@ -14115,6 +14157,143 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/common.ApiResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/user/{id}/statement": {
+            "get": {
+                "security": [
+                    {
+                        "AdminAuth": []
+                    }
+                ],
+                "description": "与用户自己看到的对账单（GET /api/user/statement）相同，供客服对账。只能查看角色低于自己的用户，超级管理员不受此限。",
+                "tags": [
+                    "用户管理"
+                ],
+                "summary": "获取用户的对账单",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "用户 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "月份，格式 2006-01，默认北京时间的当月",
+                        "name": "month",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.ApiResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/model.WalletStatement"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/user/{id}/wallet_ledger": {
+            "get": {
+                "security": [
+                    {
+                        "AdminAuth": []
+                    }
+                ],
+                "description": "除调用扣费外的每一次余额变动，新的在前，额度带符号。operator_id 是管理员调整的操作者 ID，其他类型为 0；用户自己的对账单不返回它。只能查看角色低于自己的用户，超级管理员不受此限。",
+                "tags": [
+                    "用户管理"
+                ],
+                "summary": "列出用户的余额流水",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "用户 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "页码，从 1 开始",
+                        "name": "p",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页条数，最多 100",
+                        "name": "page_size",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "流水类型：topup、redemption、admin_adjustment、checkin、signup_bonus、invitee_bonus、aff_transfer、subscription_purchase",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "起始时间，Unix 秒",
+                        "name": "start_timestamp",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "结束时间，Unix 秒",
+                        "name": "end_timestamp",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.ApiResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "allOf": [
+                                                {
+                                                    "$ref": "#/definitions/common.PageInfo"
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "items": {
+                                                            "type": "array",
+                                                            "items": {
+                                                                "$ref": "#/definitions/model.WalletLedgerEntry"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -22683,6 +22862,117 @@
                     "items": {
                         "type": "integer"
                     }
+                }
+            }
+        },
+        "model.WalletLedgerEntry": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "operator_id": {
+                    "type": "integer"
+                },
+                "quota": {
+                    "description": "Quota is the signed change of the balance.",
+                    "type": "integer"
+                },
+                "ref_id": {
+                    "type": "string"
+                },
+                "ref_name": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "model.WalletStatement": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.WalletStatementDay"
+                    }
+                },
+                "month": {
+                    "description": "Month is YYYY-MM.",
+                    "type": "string"
+                },
+                "opening_balance": {
+                    "description": "OpeningBalance is the closing balance of the previous month's last\nday; null when it was not recorded.",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "time_zone": {
+                    "description": "TimeZone is the zone the days follow, Asia/Shanghai.",
+                    "type": "string"
+                }
+            }
+        },
+        "model.WalletStatementDay": {
+            "type": "object",
+            "properties": {
+                "balance": {
+                    "description": "Balance is the balance at the end of the day, the current balance for\ntoday; null for a day whose closing balances were not recorded.",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "consumed_quota": {
+                    "type": "integer"
+                },
+                "date": {
+                    "description": "Date is YYYY-MM-DD.",
+                    "type": "string"
+                },
+                "entries": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.WalletStatementEntry"
+                    }
+                },
+                "net_quota": {
+                    "description": "NetQuota is the day's change: the entries less ConsumedQuota.",
+                    "type": "integer"
+                },
+                "requests": {
+                    "description": "Requests, Tokens and ConsumedQuota add up the day's calls; a refunded\nasynchronous task lowers ConsumedQuota.",
+                    "type": "integer"
+                },
+                "tokens": {
+                    "type": "integer"
+                }
+            }
+        },
+        "model.WalletStatementEntry": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "quota": {
+                    "type": "integer"
+                },
+                "ref_id": {
+                    "type": "string"
+                },
+                "ref_name": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
                 }
             }
         },

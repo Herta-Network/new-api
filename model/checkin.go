@@ -91,7 +91,7 @@ func UserCheckin(userId int) (*Checkin, error) {
 			return common.NewMessage("Check-in failed: quota update error")
 		}
 
-		return nil
+		return recordWalletChangeTx(tx, userId, int64(quotaAwarded), WalletChange{Type: WalletLedgerCheckin, RefId: today})
 	})
 	if err != nil {
 		return nil, err

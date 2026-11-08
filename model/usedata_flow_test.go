@@ -149,6 +149,7 @@ func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 		TokenID:   11,
 		ChannelID: 1,
 		NodeName:  "node-a",
+		Requests:  1,
 		Quota:     100,
 		TokenUsed: 40,
 	})
@@ -161,6 +162,7 @@ func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 		TokenID:   11,
 		ChannelID: 1,
 		NodeName:  "node-a",
+		Requests:  1,
 		Quota:     50,
 		TokenUsed: 20,
 	})
@@ -173,6 +175,7 @@ func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 		TokenID:   11,
 		ChannelID: 1,
 		NodeName:  "node-a",
+		Requests:  1,
 		Quota:     25,
 		TokenUsed: 10,
 	})
@@ -204,6 +207,7 @@ func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 		TokenID:             11,
 		ChannelID:           1,
 		NodeName:            "node-a",
+		Requests:            1,
 		Quota:               30,
 		TokenUsed:           12,
 		CacheReadTokens:     5,
@@ -251,4 +255,38 @@ func TestSaveQuotaDataCacheSavesRowsBesideARejectedOne(t *testing.T) {
 	var models []string
 	require.NoError(t, DB.Model(&QuotaData{}).Order("model_name").Pluck("model_name", &models).Error)
 	assert.Equal(t, []string{"gpt-a", "gpt-b"}, models)
+}
+
+// An asynchronous task's later settlement adds its difference to the
+// dashboard data and a refund subtracts its amount, both without counting
+// another request, so the hourly costs are what the wallet was charged.
+func TestTaskSettlementsAndRefundsAdjustQuotaData(t *testing.T) {
+	truncateTables(t)
+	CacheQuotaDataLock.Lock()
+	CacheQuotaData = make(map[string]*QuotaData)
+	CacheQuotaDataLock.Unlock()
+	savedExport := common.DataExportEnabled
+	common.DataExportEnabled = true
+	t.Cleanup(func() { common.DataExportEnabled = savedExport })
+
+	// Three tasks reserve 100, 50 and 40; the first settles at 130, the
+	// second fails and the third settles at 20.
+	for _, reserved := range []int{100, 50, 40} {
+		LogQuotaData(QuotaDataLogParams{UserID: 1, Username: "alice", ModelName: "video-a", CreatedAt: common.GetTimestamp(), Requests: 1, Quota: reserved})
+	}
+	for _, settlement := range []struct {
+		logType int
+		quota   int
+	}{{LogTypeConsume, 30}, {LogTypeRefund, 50}, {LogTypeRefund, 20}} {
+		RecordTaskBillingLog(RecordTaskBillingLogParams{UserId: 1, LogType: settlement.logType, ModelName: "video-a", Quota: settlement.quota})
+	}
+	SaveQuotaDataCache()
+
+	var totals struct {
+		Count int
+		Quota int
+	}
+	require.NoError(t, DB.Model(&QuotaData{}).Where("user_id = ?", 1).Select("sum(count) AS count, sum(quota) AS quota").Scan(&totals).Error)
+	assert.Equal(t, 3, totals.Count)
+	assert.Equal(t, 130+0+20, totals.Quota)
 }

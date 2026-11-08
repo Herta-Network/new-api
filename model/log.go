@@ -398,6 +398,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			Username:            username,
 			ModelName:           params.ModelName,
 			Quota:               params.Quota,
+			Requests:            1,
 			CreatedAt:           createdAt,
 			TokenUsed:           params.PromptTokens + params.CompletionTokens,
 			CacheReadTokens:     int64(cacheReadTokens),
@@ -454,16 +455,24 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	if err != nil {
 		common.SysLog(common.LogText("failed to record task billing log: %s", err.Error()))
 	}
-	if params.LogType == LogTypeConsume && common.DataExportEnabled {
+	// A settlement difference or a refund changes the cost of a request the
+	// dashboard data counted when it was submitted: it adds its quota, a
+	// refund as a negative amount, and no request, so the hourly costs, and
+	// the statement's daily ones, are what the wallet was charged.
+	if (params.LogType == LogTypeConsume || params.LogType == LogTypeRefund) && common.LogConsumeEnabled && common.DataExportEnabled {
 		nodeName := params.NodeName
 		if nodeName == "" {
 			nodeName = common.NodeName
+		}
+		quota := params.Quota
+		if params.LogType == LogTypeRefund {
+			quota = -quota
 		}
 		LogQuotaData(QuotaDataLogParams{
 			UserID:    params.UserId,
 			Username:  username,
 			ModelName: params.ModelName,
-			Quota:     params.Quota,
+			Quota:     quota,
 			CreatedAt: createdAt,
 			UseGroup:  params.Group,
 			TokenID:   params.TokenId,

@@ -50,10 +50,14 @@ var quotaDataUpsert = clause.OnConflict{
 const quotaDataFlushBatchSize = 1000
 
 type QuotaDataLogParams struct {
-	UserID              int
-	Username            string
-	ModelName           string
-	Quota               int
+	UserID    int
+	Username  string
+	ModelName string
+	// Quota is signed: a refund lowers the hour's cost.
+	Quota int
+	// Requests is the number of requests the row adds: 1 for a request, 0
+	// for a later settlement or refund of one.
+	Requests            int
 	CreatedAt           int64
 	TokenUsed           int
 	CacheReadTokens     int64
@@ -115,7 +119,7 @@ func LogQuotaData(params QuotaDataLogParams) {
 		TokenID:             params.TokenID,
 		ChannelID:           params.ChannelID,
 		NodeName:            params.NodeName,
-		Count:               1,
+		Count:               params.Requests,
 		Quota:               params.Quota,
 		TokenUsed:           params.TokenUsed,
 		CacheReadTokens:     max(0, params.CacheReadTokens),
