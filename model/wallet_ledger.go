@@ -14,7 +14,8 @@ import (
 // change (a monthly card's daily claim, a Telegram check-in) only adds a
 // constant; the console translates each one as an English source string.
 const (
-	// WalletLedgerTopUp is a paid top-up order; ref_id is its order number.
+	// WalletLedgerTopUp is a paid top-up order; ref_id is its order number
+	// and ref_name the name of the payment option the buyer chose.
 	WalletLedgerTopUp = "topup"
 	// WalletLedgerRedemption is a redemption code; ref_id is its id and
 	// ref_name its name, never the code itself.

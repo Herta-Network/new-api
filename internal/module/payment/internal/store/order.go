@@ -490,8 +490,14 @@ func fulfilOrderTx(tx *gorm.DB, order *entity.PaymentOrder) (done *fulfilment, b
 func fulfilPurchaseTx(tx *gorm.DB, order *entity.PaymentOrder) (*fulfilment, error) {
 	switch order.Purpose {
 	case entity.PaymentPurposeTopup:
+		// The ledger names a top-up by the payment option the buyer chose,
+		// as their orders do, even one deleted since.
+		var option entity.PaymentOption
+		if err := tx.Unscoped().Select("name").Where("id = ?", order.PaymentOptionId).Limit(1).Find(&option).Error; err != nil {
+			return nil, err
+		}
 		if err := model.CreditWalletTx(tx, order.UserId, order.QuotaAmount, model.WalletChange{
-			Type: model.WalletLedgerTopUp, RefId: order.OrderNo,
+			Type: model.WalletLedgerTopUp, RefId: order.OrderNo, RefName: option.Name,
 		}); err != nil {
 			return nil, err
 		}
