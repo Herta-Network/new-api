@@ -360,6 +360,48 @@ func TestRealtimeSessionChargesItsUsageOnce(t *testing.T) {
 	}
 }
 
+// An audio request at a model's fixed price (no billing expression) settles
+// at that price: the wallet, token, consume log and quota_data all carry it.
+func TestFixedPriceAudioChargesItsPrice(t *testing.T) {
+	truncate(t)
+	savedExport := common.DataExportEnabled
+	common.DataExportEnabled = true
+	t.Cleanup(func() { common.DataExportEnabled = savedExport })
+	model.CacheQuotaDataLock.Lock()
+	model.CacheQuotaData = make(map[string]*model.QuotaData)
+	model.CacheQuotaDataLock.Unlock()
+
+	const start = 1_000_000
+	const price = 4500 // 0.006 * QuotaPerUnit * group ratio 1.5
+	user := model.User{Username: "audio_payer", Quota: start, Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(&user).Error)
+	token := model.Token{UserId: user.Id, Key: "audio-payer-token", Name: "audio", RemainQuota: start, Status: common.TokenStatusEnabled}
+	require.NoError(t, model.DB.Create(&token).Error)
+	channel := model.Channel{Name: "audio", Key: "unused", Status: common.ChannelStatusEnabled}
+	require.NoError(t, model.DB.Create(&channel).Error)
+
+	info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, RequestId: "audio-request", ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id}, OriginModelName: "audio-price-test", UsingGroup: "default", UserGroup: "default", UserSetting: dto.UserSetting{BillingPreference: "wallet_only"}, StartTime: time.Now(), RelayFormat: types.RelayFormatOpenAIAudio, PriceData: hosttypes.PriceData{UsePrice: true, ModelPrice: 0.006, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1.5}}}
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("POST", "/v1/audio/speech", nil)
+	require.Nil(t, PreConsumeBilling(ctx, price, info))
+	PostAudioConsumeQuota(ctx, info, &dto.Usage{PromptTokens: 50, CompletionTokens: 400, TotalTokens: 450,
+		PromptTokensDetails: dto.InputTokenDetails{TextTokens: 50}, CompletionTokenDetails: dto.OutputTokenDetails{AudioTokens: 400}}, nil)
+	model.SaveQuotaDataCache()
+
+	require.NoError(t, model.DB.First(&user, user.Id).Error)
+	require.NoError(t, model.DB.First(&token, token.Id).Error)
+	assert.Equal(t, start-price, user.Quota)
+	assert.Equal(t, start-price, token.RemainQuota)
+	assert.Equal(t, price, user.UsedQuota)
+	var log model.Log
+	require.NoError(t, model.LOG_DB.Where("user_id = ?", user.Id).Take(&log).Error)
+	assert.Equal(t, price, log.Quota)
+	var data model.QuotaData
+	require.NoError(t, model.DB.Where("user_id = ?", user.Id).Take(&data).Error)
+	assert.Equal(t, price, data.Quota)
+	assert.Equal(t, price, data.WalletQuota)
+}
+
 // The statement's consumption is what the wallet paid: a call a
 // subscription paid and the refund of a subscription's task count as calls
 // but move neither the wallet nor the consumption, so a day's closing
