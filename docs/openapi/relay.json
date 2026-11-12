@@ -5054,7 +5054,16 @@
                 "background": {
                     "type": "object"
                 },
+                "complexity": {
+                    "type": "object"
+                },
                 "extra_fields": {
+                    "type": "object"
+                },
+                "frame_count": {
+                    "type": "object"
+                },
+                "frame_duration_ms": {
                     "type": "object"
                 },
                 "image": {
@@ -5064,6 +5073,9 @@
                     "type": "object"
                 },
                 "input_fidelity": {
+                    "type": "object"
+                },
+                "markup": {
                     "type": "object"
                 },
                 "mask": {
@@ -5103,6 +5115,9 @@
                     "type": "boolean"
                 },
                 "style": {
+                    "type": "object"
+                },
+                "svg": {
                     "type": "object"
                 },
                 "user": {

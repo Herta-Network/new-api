@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/internal/module/currency/internal/exchangerate"
 	"github.com/QuantumNous/new-api/internal/module/currency/internal/store"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/shopspring/decimal"
@@ -95,6 +96,20 @@ func (r ResolvedRate) Inverse() string {
 		return ""
 	}
 	return decimal.NewFromInt(1).Div(rate).String()
+}
+
+func init() {
+	service.CNYToUSDRate = cnyToUSDRate
+}
+
+// cnyToUSDRate is the price of one CNY in USD that upstream balances in CNY,
+// such as a task plugin's, convert at.
+func cnyToUSDRate(ctx context.Context) (decimal.Decimal, error) {
+	rate, err := ResolveRate(ctx, "CNY", "USD")
+	if err != nil {
+		return decimal.Zero, err
+	}
+	return decimal.NewFromString(rate.Rate)
 }
 
 // ResolveRate is the one place a currency pair gets its rate, for payments,

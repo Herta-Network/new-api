@@ -1,6 +1,7 @@
 package model
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -73,4 +74,33 @@ export function parseTaskResult() { return {}; }
 	_, ok = jsplugin.DefaultRegistry.Get(key)
 	assert.False(t, ok)
 	assert.Equal(t, []string{key}, jsplugin.DefaultRegistry.Snapshot().DisabledFactory)
+}
+
+func TestTaskPluginGatewayIDConvergesUnderConcurrentCreation(t *testing.T) {
+	truncateTables(t)
+	const callers = 8
+	ids := make([]string, callers)
+	errs := make([]error, callers)
+	start := make(chan struct{})
+	var callersDone sync.WaitGroup
+	for i := range callers {
+		callersDone.Go(func() {
+			<-start
+			ids[i], errs[i] = GetTaskPluginGatewayID()
+		})
+	}
+	close(start)
+	callersDone.Wait()
+
+	for i := range callers {
+		require.NoError(t, errs[i])
+		assert.Equal(t, ids[0], ids[i])
+	}
+	assert.Regexp(t, `^[0-9a-f]{64}$`, ids[0])
+	var rows int64
+	require.NoError(t, DB.Model(&Option{}).Where(&Option{Key: TaskPluginGatewayIDKey}).Count(&rows).Error)
+	assert.EqualValues(t, 1, rows)
+	again, err := GetTaskPluginGatewayID()
+	require.NoError(t, err)
+	assert.Equal(t, ids[0], again)
 }

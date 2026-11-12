@@ -2,10 +2,14 @@ package model
 
 import (
 	"database/sql/driver"
+	"encoding/json"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/pgtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // 保护契约:PostgreSQL 走 simple protocol(PrepareStmt 关闭)时,driver.Valuer
@@ -91,4 +95,74 @@ func TestJSONColumnScannersAcceptStringAndBytes(t *testing.T) {
 			assert.Equal(t, "k", private.Key)
 		})
 	}
+}
+
+func TestJSONColumnDatabaseRoundTrip(t *testing.T) {
+	type row struct {
+		ID          int `gorm:"primaryKey"`
+		Name        string
+		Info        ChannelInfo     `gorm:"type:json"`
+		Properties  Properties      `gorm:"type:json"`
+		PrivateData TaskPrivateData `gorm:"type:json"`
+		Payload     JSONValue       `gorm:"type:json"`
+		Other       string          `gorm:"type:text"`
+	}
+	const payload = `{"id":9007199254740993,"count":0,"enabled":false}`
+	const logData = `{"content":"\u003ctag\u003e图片","id":9007199254740993}`
+	// A table of its own in a fresh schema; the application's tables come
+	// from the migrations.
+	db := pgtest.NewSchemaDB(t)
+	const tableName = "json_codec_round_trip"
+	table := db.Model(&row{}).Table(tableName).Session(&gorm.Session{})
+	require.NoError(t, table.AutoMigrate(&row{}))
+	require.NoError(t, table.Create(map[string]any{
+		"name":         "legacy",
+		"info":         `{"is_multi_key":true,"multi_key_size":2,"multi_key_status_list":{"0":1,"1":0},"multi_key_polling_index":0,"multi_key_mode":""}`,
+		"properties":   `{"input":"\u003cp\u003e图片\u003c/p\u003e"}`,
+		"private_data": `{"upstream_task_id":"upstream-1","plugin_state":` + payload + `}`,
+		"payload":      payload,
+		"other":        logData,
+	}).Error)
+	require.NoError(t, table.AutoMigrate(&row{}))
+	other, err := common.Marshal(map[string]any{"content": "<tag>图片", "id": json.Number("9007199254740993")})
+	require.NoError(t, err)
+	current := row{
+		Name:        "current",
+		Info:        ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyStatusList: map[int]int{0: 1, 1: 0}},
+		Properties:  Properties{Input: "<p>图片</p>"},
+		PrivateData: TaskPrivateData{UpstreamTaskID: "upstream-1", PluginState: json.RawMessage(payload)},
+		Payload:     JSONValue(payload),
+		Other:       string(other),
+	}
+	require.NoError(t, table.Create(&current).Error)
+	for _, name := range []string{"legacy", "current"} {
+		t.Run(name, func(t *testing.T) {
+			var got row
+			require.NoError(t, table.Where("name = ?", name).First(&got).Error)
+			assert.Equal(t, current.Info, got.Info)
+			assert.Equal(t, current.Properties, got.Properties)
+			assert.Equal(t, "upstream-1", got.PrivateData.UpstreamTaskID)
+			assert.JSONEq(t, payload, string(got.PrivateData.PluginState))
+			assert.Equal(t, logData, got.Other)
+			var decoded struct {
+				ID      json.Number `json:"id"`
+				Count   *int        `json:"count"`
+				Enabled *bool       `json:"enabled"`
+			}
+			require.NoError(t, common.Unmarshal(got.Payload, &decoded))
+			assert.Equal(t, json.Number("9007199254740993"), decoded.ID)
+			require.NotNil(t, decoded.Count)
+			require.NotNil(t, decoded.Enabled)
+			assert.Zero(t, *decoded.Count)
+			assert.False(t, *decoded.Enabled)
+		})
+	}
+	require.NoError(t, table.Create(&row{Name: "empty"}).Error)
+	var empty row
+	require.NoError(t, table.Where(map[string]any{
+		"name": "empty", "properties": nil, "private_data": nil, "payload": nil,
+	}).First(&empty).Error)
+	assert.Equal(t, Properties{}, empty.Properties)
+	assert.Equal(t, TaskPrivateData{}, empty.PrivateData)
+	assert.Nil(t, empty.Payload)
 }

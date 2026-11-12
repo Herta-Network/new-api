@@ -271,13 +271,15 @@ func TestRealtimeSessionChargesItsUsageOnce(t *testing.T) {
 		price            float64
 		wallet, reserve  int
 		want             int
-		roundErr         bool
+		// prices is the session's price after each round that succeeded.
+		prices   []int
+		roundErr bool
 	}{
-		{name: "ratio session charges its usage once", preference: "wallet_only", reserve: 3000, want: 4000},
-		{name: "ratio session refunds an unused reservation", preference: "wallet_only", reserve: 10000, want: 4000},
-		{name: "fixed price session charges its price once", preference: "wallet_only", price: 0.006, reserve: 3000, want: 3000},
-		{name: "subscription pays the session once", preference: "subscription_only", reserve: 3000, want: 4000},
-		{name: "a round the wallet cannot cover ends the session", preference: "wallet_only", wallet: 3500, reserve: 3000, want: 4000, roundErr: true},
+		{name: "ratio session charges its usage once", preference: "wallet_only", reserve: 3000, want: 4000, prices: []int{2500, 4000}},
+		{name: "ratio session refunds an unused reservation", preference: "wallet_only", reserve: 10000, want: 4000, prices: []int{2500, 4000}},
+		{name: "fixed price session charges its price once", preference: "wallet_only", price: 0.006, reserve: 3000, want: 3000, prices: []int{3000, 3000}},
+		{name: "subscription pays the session once", preference: "subscription_only", reserve: 3000, want: 4000, prices: []int{2500, 4000}},
+		{name: "a round the wallet cannot cover ends the session", preference: "wallet_only", wallet: 3500, reserve: 3000, want: 4000, prices: []int{2500}, roundErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			truncate(t)
@@ -319,6 +321,7 @@ func TestRealtimeSessionChargesItsUsageOnce(t *testing.T) {
 			// holds the session's charge so far.
 			session := &dto.RealtimeUsage{}
 			var roundErr error
+			var prices []int
 			for _, round := range rounds {
 				session.TotalTokens += round.TotalTokens
 				session.InputTokens += round.InputTokens
@@ -327,10 +330,13 @@ func TestRealtimeSessionChargesItsUsageOnce(t *testing.T) {
 				session.InputTokenDetails.AudioTokens += round.InputTokenDetails.AudioTokens
 				session.OutputTokenDetails.TextTokens += round.OutputTokenDetails.TextTokens
 				session.OutputTokenDetails.AudioTokens += round.OutputTokenDetails.AudioTokens
-				if roundErr = PreWssConsumeQuota(ctx, info, session); roundErr != nil {
+				var price int
+				if price, roundErr = PreWssConsumeQuota(ctx, info, session); roundErr != nil {
 					break
 				}
+				prices = append(prices, price)
 			}
+			assert.Equal(t, tc.prices, prices, "each round reports the session's price so far")
 			if tc.roundErr {
 				require.Error(t, roundErr)
 			} else {

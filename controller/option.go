@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/request_plugin_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
@@ -220,6 +221,11 @@ func UpdateOption(c *gin.Context) {
 	}
 	if err := operation_setting.ValidatePaymentOption(option.Key, option.Value.(string)); err != nil {
 		common.ApiError(c, err)
+		return
+	}
+	// The request plugin API validates each instance config.
+	if option.Key == request_plugin_setting.InstancesOption {
+		common.ApiErrorT(c, "Request plugin instances cannot be changed through the general settings API")
 		return
 	}
 	if option.Key == "TaskPublicAddress" && option.Value.(string) != "" {

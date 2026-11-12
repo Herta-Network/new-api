@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -28,6 +29,24 @@ func ListSystemInstances(c *gin.Context) {
 	}
 
 	common.ApiSuccess(c, responses)
+}
+
+// GetNodeSync answers whether each node runs the latest revision of every
+// sync topic.
+//
+// @Summary		查看节点同步状态
+// @Description	每个同步主题（设置、渠道等）的最新版本，以及每个节点是否已加载这个版本、加载时间和失败原因。
+// @Tags			系统信息
+// @Success		200	{object}	common.ApiResponse{data=service.NodeSyncStatus}
+// @Security		RootAuth
+// @Router			/api/system-info/sync [get]
+func GetNodeSync(c *gin.Context) {
+	status, err := service.GetNodeSyncStatus()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, status)
 }
 
 type systemDeletedCount struct {
