@@ -1188,3 +1188,53 @@ func TestOAuthBindIgnoresLegacyGitHubUsernames(t *testing.T) {
 		})
 	}
 }
+
+// A user an invitation code brought in through OAuth keeps the inviter, and
+// gets the invitee bonus on the wallet with its ledger entry, once.
+func TestOAuthRegistrationPersistsInviter(t *testing.T) {
+	pgtest.Reset(t, model.DB)
+	db := model.DB
+	oldRedis, oldRegister := common.RedisEnabled, common.RegisterEnabled
+	oldNew, oldInvitee, oldInviter := common.QuotaForNewUser, common.QuotaForInvitee, common.QuotaForInviter
+	common.RedisEnabled, common.RegisterEnabled = false, true
+	common.QuotaForNewUser, common.QuotaForInvitee, common.QuotaForInviter = 0, 70, 0
+	t.Cleanup(func() {
+		common.RedisEnabled, common.RegisterEnabled = oldRedis, oldRegister
+		common.QuotaForNewUser, common.QuotaForInvitee, common.QuotaForInviter = oldNew, oldInvitee, oldInviter
+	})
+	inviter := model.User{Username: "inviter", AffCode: "valid-aff", Status: common.UserStatusEnabled}
+	require.NoError(t, db.Create(&inviter).Error)
+	for _, tc := range []struct {
+		name, code string
+		want       int
+		bonus      int
+	}{
+		{"valid", "valid-aff", inviter.Id, 70}, {"missing", "", 0, 0}, {"invalid", "unknown-aff", 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			provider := &oauth.GitHubProvider{}
+			identity := &oauth.OAuthUser{ProviderUserID: "inviter-test-" + tc.name, Username: "oauth-" + tc.name}
+			created, _, err := findOrCreateOAuthUser(ctx, provider, identity, &oauth.OAuthToken{}, tc.code)
+			require.NoError(t, err)
+			var stored model.User
+			require.NoError(t, db.First(&stored, created.Id).Error)
+			assert.Equal(t, tc.want, stored.InviterId)
+			assert.Equal(t, identity.ProviderUserID, stored.GitHubId)
+			existing, _, err := findOrCreateOAuthUser(ctx, provider, identity, &oauth.OAuthToken{}, "valid-aff")
+			require.NoError(t, err)
+			assert.Equal(t, created.Id, existing.Id)
+			require.NoError(t, db.First(&stored, created.Id).Error)
+			assert.Equal(t, tc.want, stored.InviterId, "login must not reassign the inviter")
+			assert.Equal(t, tc.bonus, stored.Quota)
+			var bonuses []model.WalletLedgerEntry
+			require.NoError(t, db.Where("user_id = ? AND type = ?", created.Id, model.WalletLedgerInviteeBonus).Find(&bonuses).Error)
+			if tc.bonus == 0 {
+				assert.Empty(t, bonuses)
+				return
+			}
+			require.Len(t, bonuses, 1, "the bonus is credited at sign-up only")
+			assert.EqualValues(t, tc.bonus, bonuses[0].Quota)
+		})
+	}
+}

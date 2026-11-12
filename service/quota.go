@@ -116,22 +116,23 @@ func realtimeSessionQuota(relayInfo *relaycommon.RelayInfo, modelName string, us
 }
 
 // PreWssConsumeQuota holds a realtime session's charge so far after each
-// response. usage is the session's usage so far: the session's reservation
-// grows to its price, and PostWssConsumeQuota settles the session's total
-// against that reservation once, so the wallet pays the session's usage
-// exactly once. The wallet (or subscription) and the token must cover each
-// increase; when they cannot, the error ends the session. A free model has no
-// reservation and is never charged.
-func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage) error {
+// response and returns the session's price so far. usage is the session's
+// usage so far: the session's reservation grows to its price, and
+// PostWssConsumeQuota settles the session's total against that reservation
+// once, so the wallet pays the session's usage exactly once. The wallet (or
+// subscription) and the token must cover each increase; when they cannot, the
+// error ends the session. A free model has no reservation, is never charged,
+// and has no price.
+func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage) (int, error) {
 	if relayInfo.Billing == nil {
-		return nil
+		return 0, nil
 	}
 	quota, _ := realtimeSessionQuota(relayInfo, relayInfo.UpstreamModelName, usage)
 	if err := relayInfo.Billing.ReserveBeforeSubmit(quota); err != nil {
-		return err
+		return 0, err
 	}
 	logger.LogInfo(ctx, common.LogText("realtime session reserved quota: %d", relayInfo.Billing.GetPreConsumedQuota()))
-	return nil
+	return quota, nil
 }
 
 func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelName string,

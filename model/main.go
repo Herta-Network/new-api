@@ -287,6 +287,9 @@ func migrateDB() error {
 	if err := EnsureLegacyAccessTokenRetireAt(common.GetTimestamp()); err != nil {
 		return fmt.Errorf("initialize legacy access token deadline: %w", err)
 	}
+	if err := MigrateSensitiveWords(); err != nil {
+		return fmt.Errorf("migrate sensitive words: %w", err)
+	}
 	return InitializeExternalIdentityClaims()
 }
 

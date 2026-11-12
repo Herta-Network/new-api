@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -59,6 +60,7 @@ const maxAdvancedCustomBalanceResponseBytes = 256 << 10
 type channelBalanceResult struct {
 	Balance     float64
 	RawResponse string
+	Detail      *model.ChannelBalanceDetail
 }
 
 type OpenAIUsageResponse struct {
@@ -626,12 +628,20 @@ func fetchAdvancedCustomBalance(channel *model.Channel) (channelBalanceResult, e
 	return channelBalanceResult{RawResponse: string(formatted)}, nil
 }
 
+// updateChannelBalance queries a built-in channel type's balance and stores
+// its detail next to the USD balance the query writes.
 func updateChannelBalance(channel *model.Channel) (channelBalanceResult, error) {
+	var result channelBalanceResult
+	var err error
 	if channel.Type == constant.ChannelTypeAdvancedCustom {
-		return fetchAdvancedCustomBalance(channel)
+		result, err = fetchAdvancedCustomBalance(channel)
+	} else {
+		var balance float64
+		balance, err = updateStandardChannelBalance(channel)
+		result = channelBalanceResult{Balance: balance}
 	}
-	balance, err := updateStandardChannelBalance(channel)
-	return channelBalanceResult{Balance: balance}, err
+	result.Detail = recordBuiltinBalance(channel, result, err)
+	return result, err
 }
 
 func updateStandardChannelBalance(channel *model.Channel) (float64, error) {
@@ -712,10 +722,13 @@ type channelBalanceResponse struct {
 	// RawResponse instead.
 	Balance     *float64 `json:"balance,omitempty"`
 	RawResponse string   `json:"raw_response,omitempty"`
+	// BalanceDetail is the channel's last balance query: what a task plugin
+	// reported, or the query's failure.
+	BalanceDetail *model.ChannelBalanceDetail `json:"balance_detail,omitempty"`
 }
 
 // @Summary		更新渠道余额
-// @Description	需要 channel.operate 权限。向上游查询余额并保存。高级自定义渠道返回 raw_response（上游原始响应），其他渠道返回 balance（美元）。多密钥和任务插件渠道不支持。
+// @Description	需要 channel.operate 权限。向上游查询余额并保存。高级自定义渠道返回 raw_response（上游原始响应），其他渠道返回 balance（美元）和 balance_detail。任务插件渠道只在插件报告余额时支持；多密钥渠道不支持。
 // @Tags			渠道
 // @Param			id	path		int	true	"渠道 ID"
 // @Success		200	{object}	channelBalanceResponse
@@ -733,7 +746,23 @@ func UpdateChannelBalance(c *gin.Context) {
 		return
 	}
 	if channel.Type == constant.ChannelTypeTaskPlugin {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "Task Plugin channels do not support balance queries"})
+		plugin, ok := service.PluginOfChannel(channel)
+		if !ok || !pluginReportsBalance(plugin) {
+			common.ApiErrorT(c, "The plugin of this channel does not report a balance")
+			return
+		}
+		_, detail, err := updatePluginChannelBalance(channel, plugin, false)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		balance := channel.Balance
+		if detail != nil {
+			if usd, ok := usdBalance(detail.BalanceResult); ok {
+				balance = usd
+			}
+		}
+		c.JSON(http.StatusOK, channelBalanceResponse{Success: true, Balance: &balance, BalanceDetail: detail})
 		return
 	}
 	if channel.ChannelInfo.IsMultiKey {
@@ -751,64 +780,143 @@ func UpdateChannelBalance(c *gin.Context) {
 	}
 	if result.RawResponse == "" {
 		response.Balance = &result.Balance
+		response.BalanceDetail = result.Detail
 	} else {
 		response.RawResponse = result.RawResponse
 	}
 	c.JSON(http.StatusOK, response)
 }
 
-func updateAllChannelsBalance() error {
-	channels, err := model.GetAllChannels(0, 0, true, false)
-	if err != nil {
-		return err
-	}
-	for _, channel := range channels {
-		if channel.Status != common.ChannelStatusEnabled {
-			continue
-		}
-		if channel.ChannelInfo.IsMultiKey {
-			continue // skip multi-key channels
-		}
-		// TODO: support Azure
-		//if channel.Type != common.ChannelTypeOpenAI && channel.Type != common.ChannelTypeCustom {
-		//	continue
-		//}
-		result, err := updateChannelBalance(channel)
-		if err != nil {
-			continue
-		} else if result.RawResponse == "" {
-			// err is nil & balance <= 0 means quota is used up
-			if result.Balance <= 0 {
-				service.DisableChannel(*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, "", channel.GetAutoBan()), "Insufficient balance")
-			}
-		}
-		time.Sleep(common.RequestInterval)
-	}
-	return nil
+// channelBalanceSummary is the result of an update of all balances.
+type channelBalanceSummary struct {
+	Queried int `json:"queried"`
 }
 
+// channelBalanceUpdate is the update of all balances UpdateAllChannelsBalance
+// queued, or the one already queued or running.
+type channelBalanceUpdate struct {
+	// Started is false when the update was already queued or running.
+	Started bool                   `json:"started"`
+	TaskID  string                 `json:"task_id"`
+	Status  model.SystemTaskStatus `json:"status"`
+}
+
+// channelBalanceTask is the progress of an update of all balances.
+type channelBalanceTask struct {
+	TaskID string                 `json:"task_id"`
+	Status model.SystemTaskStatus `json:"status"`
+	// State is the progress: how many enabled channels the update has
+	// queried of how many.
+	State *service.SystemTaskProgress `json:"state"`
+	Error string                      `json:"error"`
+}
+
+// updateAllChannelsBalance queries the balance of every enabled channel,
+// balanceUpdateConcurrency channels at once, and reports how many of them it
+// has queried. Once ctx ends, as when the run loses its task lease, it starts
+// no more queries and returns ctx's error.
+func updateAllChannelsBalance(ctx context.Context, report func(processed, total int)) (channelBalanceSummary, error) {
+	channels, err := model.GetAllChannels(0, 0, true, false)
+	if err != nil {
+		return channelBalanceSummary{}, err
+	}
+	enabled := make([]*model.Channel, 0, len(channels))
+	for _, channel := range channels {
+		if channel.Status == common.ChannelStatusEnabled {
+			enabled = append(enabled, channel)
+		}
+	}
+	report(0, len(enabled))
+
+	queue := make(chan *model.Channel)
+	queried := make(chan struct{})
+	var workers sync.WaitGroup
+	for range balanceUpdateConcurrency {
+		workers.Go(func() {
+			for channel := range queue {
+				updateBalanceInRun(channel)
+				queried <- struct{}{}
+				time.Sleep(common.RequestInterval)
+			}
+		})
+	}
+	go func() {
+		defer close(queue)
+		for _, channel := range enabled {
+			select {
+			case <-ctx.Done():
+				return
+			case queue <- channel:
+			}
+		}
+	}()
+	go func() {
+		workers.Wait()
+		close(queried)
+	}()
+
+	summary := channelBalanceSummary{}
+	for range queried {
+		summary.Queried++
+		report(summary.Queried, len(enabled))
+	}
+	return summary, ctx.Err()
+}
+
+// UpdateAllChannelsBalance queues an update of all balances as a system task
+// and answers at once with its task id. When one is already queued or
+// running, it answers with that one, and started is false.
+//
 // @Summary		更新所有渠道余额
-// @Description	需要 channel.operate 权限。同步逐个查询所有已启用的单密钥渠道的余额，耗时随渠道数增长；余额不大于 0 的渠道会被自动禁用。
+// @Description	需要 channel.operate 权限。在后台以系统任务查询所有已启用渠道的余额（多个渠道并发），立即返回任务 ID；已有同类任务排队或运行时返回那个任务，started 为 false。进度用 /api/channel/update_balance/task/{task_id} 查询。余额不大于 0 的渠道会被自动禁用。
 // @Tags			渠道
-// @Success		200	{object}	common.ApiResponse
+// @Success		200	{object}	common.ApiResponse{data=channelBalanceUpdate}
 // @Security		AdminAuth
 // @Router			/api/channel/update_balance [get]
 func UpdateAllChannelsBalance(c *gin.Context) {
-	// TODO: make it async
-	err := updateAllChannelsBalance()
+	task, created, err := service.EnqueueSystemTask(model.SystemTaskTypeChannelBalance, nil)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, common.ApiResponse{Success: true})
-	return
+	data := channelBalanceUpdate{Started: created, TaskID: task.TaskID, Status: task.Status}
+	if !created {
+		common.ApiSuccessT(c, "A balance update is already running", data)
+		return
+	}
+	common.ApiSuccessT(c, "Balance update started in the background", data)
 }
 
-func AutomaticallyUpdateChannels(frequency int) {
-	for {
-		time.Sleep(time.Duration(frequency) * time.Minute)
-		common.SysLog(common.LogText("updating all channels"))
-		_ = updateAllChannelsBalance()
-		common.SysLog(common.LogText("channels update done"))
+// GetChannelBalanceTask answers the progress of an update of all balances,
+// read from the system task any node can see: its status, how many enabled
+// channels it has queried of how many, and its failure. It reads no other
+// kind of system task.
+//
+// @Summary		查询更新所有渠道余额的进度
+// @Description	需要 channel.operate 权限。读取一次更新所有渠道余额的系统任务：状态、已查询的渠道数和总数、失败原因。只读这一种系统任务。
+// @Tags			渠道
+// @Param			task_id	path		string	true	"系统任务 ID"
+// @Success		200		{object}	common.ApiResponse{data=channelBalanceTask}
+// @Security		AdminAuth
+// @Router			/api/channel/update_balance/task/{task_id} [get]
+func GetChannelBalanceTask(c *gin.Context) {
+	task, err := model.GetSystemTaskByTaskID(c.Param("task_id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
 	}
+	if task == nil || task.Type != model.SystemTaskTypeChannelBalance {
+		common.ApiErrorT(c, "Balance update task not found")
+		return
+	}
+	data := channelBalanceTask{TaskID: task.TaskID, Status: task.Status, Error: task.Error}
+	if task.State != "" {
+		state := service.SystemTaskProgress{}
+		if err := task.DecodeState(&state); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		data.State = &state
+	}
+	common.ApiSuccess(c, data)
 }

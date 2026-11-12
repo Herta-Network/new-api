@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -71,6 +72,44 @@ func TestSystemTaskHistoryFilters(t *testing.T) {
 	deleted, err = DeleteSystemTaskHistory(SystemTaskFilter{})
 	require.NoError(t, err)
 	assert.Zero(t, deleted, "repeated cleanup preserves the scheduler's latest runs")
+}
+
+// The daily cleanup deletes finished rows older than the retention in
+// batches, and keeps active rows, newer rows and the newest row of each type.
+func TestDeleteFinishedSystemTasks(t *testing.T) {
+	truncateTables(t)
+	db := DB
+	const cutoff int64 = 1_000_000
+	old := make([]SystemTask, systemTaskCleanupBatchSize+1)
+	for i := range old {
+		old[i] = SystemTask{TaskID: fmt.Sprintf("sync-old-%d", i), Type: SyncTaskType(SyncTopicChannels), Status: SystemTaskStatusSucceeded, CreatedAt: 10, UpdatedAt: cutoff - 1}
+	}
+	require.NoError(t, db.CreateInBatches(&old, 200).Error)
+	kept := []SystemTask{
+		{TaskID: "test-old-pending", Type: SystemTaskTypeChannelTest, Status: SystemTaskStatusPending, CreatedAt: 10, UpdatedAt: 10},
+		{TaskID: "test-old-running", Type: SystemTaskTypeChannelTest, Status: SystemTaskStatusRunning, CreatedAt: 10, UpdatedAt: 10},
+		{TaskID: "sync-at-cutoff", Type: SyncTaskType(SyncTopicChannels), Status: SystemTaskStatusSucceeded, CreatedAt: 10, UpdatedAt: cutoff},
+		{TaskID: "sync-newest", Type: SyncTaskType(SyncTopicChannels), Status: SystemTaskStatusFailed, CreatedAt: 10, UpdatedAt: 10},
+		{TaskID: "log-newest", Type: SystemTaskTypeLogCleanup, Status: SystemTaskStatusFailed, CreatedAt: 10, UpdatedAt: 10},
+		{TaskID: "snapshot-newest", Type: SystemTaskTypeWalletBalanceSnapshot, Status: SystemTaskStatusSucceeded, CreatedAt: 10, UpdatedAt: 10},
+	}
+	deletedRows := []SystemTask{
+		{TaskID: "log-old-failed", Type: SystemTaskTypeLogCleanup, Status: SystemTaskStatusFailed, CreatedAt: 10, UpdatedAt: 10},
+		{TaskID: "snapshot-old", Type: SystemTaskTypeWalletBalanceSnapshot, Status: SystemTaskStatusSucceeded, CreatedAt: 10, UpdatedAt: 10},
+	}
+	require.NoError(t, db.Create(&deletedRows).Error)
+	require.NoError(t, db.Create(&kept).Error)
+
+	deleted, err := DeleteFinishedSystemTasks(context.Background(), cutoff)
+	require.NoError(t, err)
+	assert.EqualValues(t, len(old)+len(deletedRows), deleted)
+	var remaining []string
+	require.NoError(t, db.Model(&SystemTask{}).Order("id").Pluck("task_id", &remaining).Error)
+	assert.Equal(t, []string{"test-old-pending", "test-old-running", "sync-at-cutoff", "sync-newest", "log-newest", "snapshot-newest"}, remaining, "the newest row of each type stays for the scheduler and the node sync")
+
+	deleted, err = DeleteFinishedSystemTasks(context.Background(), cutoff)
+	require.NoError(t, err)
+	assert.Zero(t, deleted)
 }
 
 type testSystemTaskPayload struct {
