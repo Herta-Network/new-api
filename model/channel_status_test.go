@@ -15,6 +15,59 @@ import (
 	"gorm.io/gorm"
 )
 
+// BatchSetChannelTag rebuilds abilities from the channels it reads in its own
+// transaction, so their tags follow the new value while routing fields stay
+// and unselected channels keep theirs.
+func TestBatchSetChannelTag(t *testing.T) {
+	setupChannelStatusTest(t)
+
+	oldTag, newTag := "old-tag", "new-tag"
+	priority, weight := int64(7), uint(23)
+	channels := []Channel{
+		{Name: "enabled", Status: common.ChannelStatusEnabled},
+		{Name: "disabled", Status: common.ChannelStatusAutoDisabled},
+		{Name: "unselected", Status: common.ChannelStatusEnabled},
+	}
+	for i := range channels {
+		channel := &channels[i]
+		channel.Models, channel.Group = "model-a,model-b", "default,second"
+		channel.Tag, channel.Priority, channel.Weight = &oldTag, &priority, &weight
+		require.NoError(t, DB.Create(channel).Error)
+		require.NoError(t, channel.AddAbilities(DB))
+	}
+	ids := []int{channels[0].Id, channels[1].Id}
+	for _, tc := range []struct {
+		name string
+		tag  *string
+	}{
+		{name: "set", tag: &newTag},
+		{name: "clear", tag: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, BatchSetChannelTag(ids, tc.tag))
+			for i, channel := range channels {
+				wantTag := tc.tag
+				if i == 2 {
+					wantTag = &oldTag
+				}
+				var stored Channel
+				require.NoError(t, DB.First(&stored, channel.Id).Error)
+				assert.Equal(t, wantTag, stored.Tag, channel.Name)
+				assert.Equal(t, channel.Status, stored.Status, channel.Name)
+				var abilities []Ability
+				require.NoError(t, DB.Where("channel_id = ?", channel.Id).Find(&abilities).Error)
+				require.Len(t, abilities, 4)
+				for _, ability := range abilities {
+					assert.Equal(t, wantTag, ability.Tag, channel.Name)
+					assert.Equal(t, channel.Status == common.ChannelStatusEnabled, ability.Enabled, channel.Name)
+					assert.Equal(t, channel.Priority, ability.Priority, channel.Name)
+					assert.Equal(t, weight, ability.Weight, channel.Name)
+				}
+			}
+		})
+	}
+}
+
 // channelsRevision is the id of the newest channels sync task, 0 without one.
 func channelsRevision(t *testing.T) int64 {
 	t.Helper()

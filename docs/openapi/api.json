@@ -19941,6 +19941,14 @@
                         "$ref": "#/definitions/jsplugin.Sample"
                     }
                 },
+                "scope": {
+                    "description": "Scope is the range of requests a request processing plugin says it is\nmade for, or null when it names none.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/jsplugin.TransformScope"
+                        }
+                    ]
+                },
                 "sortPriority": {
                     "type": "integer"
                 },
@@ -21814,6 +21822,14 @@
                         "$ref": "#/definitions/jsplugin.Sample"
                     }
                 },
+                "scope": {
+                    "description": "Scope is the range of requests the plugin is made for, which an\nadministrator confirms once to run an instance there.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/jsplugin.TransformScope"
+                        }
+                    ]
+                },
                 "sortPriority": {
                     "type": "integer"
                 },
@@ -21944,6 +21960,23 @@
                 "reply": {
                     "description": "Reply is a sample assistant answer for a plugin's reply check.",
                     "type": "string"
+                }
+            }
+        },
+        "jsplugin.TransformScope": {
+            "type": "object",
+            "properties": {
+                "channelTypes": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "models": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -24766,6 +24799,31 @@
                 },
                 "plugin": {
                     "type": "string"
+                },
+                "plugin_scope": {
+                    "description": "PluginScope is the confirmed scope of a plugin scope instance; nil for\nan instance placed by hand.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/request_plugin_setting.Scope"
+                        }
+                    ]
+                }
+            }
+        },
+        "request_plugin_setting.Scope": {
+            "type": "object",
+            "properties": {
+                "channel_types": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "models": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
