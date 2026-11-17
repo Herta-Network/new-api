@@ -1043,6 +1043,9 @@ type taskPluginOption struct {
 	taskPluginParts
 	Samples  []jsplugin.Sample `json:"samples"`
 	Optional bool              `json:"optional"`
+	// Scope is the range of requests a request processing plugin says it is
+	// made for, or null when it names none.
+	Scope *jsplugin.TransformScope `json:"scope"`
 
 	// The channel form of a provider or task channel.
 	ChannelConfig *jsplugin.ConfigSchema `json:"channelConfig"`
@@ -1116,6 +1119,7 @@ func GetTaskPluginOptions(c *gin.Context) {
 				taskPluginParts: parts,
 				Samples:         append([]jsplugin.Sample{}, meta.Samples...),
 				Optional:        meta.Optional,
+				Scope:           meta.Scope,
 
 				ChannelConfig:      loaded.Meta.ChannelConfig,
 				CheckKey:           loaded.HasProviderHook("checkKey"),
