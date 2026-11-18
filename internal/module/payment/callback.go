@@ -47,6 +47,9 @@ func HandleNotify(ctx context.Context, platform, token string, n gateway.Notific
 	if err != nil {
 		return fmt.Errorf("open the gateway of payment method %d: %w", method.Id, err)
 	}
+	if notifyURL, err := gateway.NotifyURL(methodView(method), siteAddress()); err == nil {
+		n.NotifyURL = notifyURL
+	}
 	notice, err := gw.ParseCallback(ctx, n)
 	if err != nil {
 		return gateway.InvalidCallback(err)
@@ -72,8 +75,8 @@ type NotifyResponse struct {
 // NotifyReply answers a callback of style that HandleNotify returned err
 // for: 200 when it was handled, 404 for an unknown notify URL, 400 for a
 // callback redelivery cannot fix, 500 for a failure the next delivery may
-// get past. Gateways with TextReply read "success"; the others read the
-// status.
+// get past. Gateways with TextReply read "success", those with ResultReply
+// Antom's result object; the others read the status.
 func NotifyReply(style gateway.CallbackStyle, err error) NotifyResponse {
 	status := http.StatusOK
 	switch {
@@ -91,6 +94,15 @@ func NotifyReply(style gateway.CallbackStyle, err error) NotifyResponse {
 			body = "fail"
 		}
 		return NotifyResponse{Status: status, ContentType: "text/plain; charset=utf-8", Body: body}
+	}
+	if style.ResultReply {
+		// Antom resends a notification until it reads exactly this success;
+		// the answer needs no signature.
+		body := `{"result":{"resultCode":"SUCCESS","resultStatus":"S","resultMessage":"success"}}`
+		if status != http.StatusOK {
+			body = `{"result":{"resultCode":"FAIL","resultStatus":"F","resultMessage":"fail"}}`
+		}
+		return NotifyResponse{Status: status, ContentType: "application/json", Body: body}
 	}
 	return NotifyResponse{Status: status, ContentType: "application/json", Body: fmt.Sprintf(`{"success":%t}`, status == http.StatusOK)}
 }

@@ -46,6 +46,7 @@ import (
 const (
 	testEPayMethod   = 10
 	testStripeMethod = 11
+	testAntomOption  = 12
 	testUser         = 1
 	testPlan         = 7
 	testFreePlan     = 8
@@ -107,6 +108,7 @@ func (f *fakeEPay) lastPayment() url.Values {
 type paymentFixture struct {
 	stripe *gatewaytest.FakeStripe
 	epay   *fakeEPay
+	antom  *gatewaytest.FakeAntom
 }
 
 // setupPayment gives the test an empty database with a USD site, the
@@ -132,12 +134,13 @@ func setupPayment(t *testing.T) *paymentFixture {
 	system_setting.ServerAddress = "https://www.example.test"
 	t.Cleanup(func() { system_setting.ServerAddress = savedAddress })
 
-	f := &paymentFixture{stripe: gatewaytest.NewFakeStripe(t), epay: &fakeEPay{}}
+	f := &paymentFixture{stripe: gatewaytest.NewFakeStripe(t), epay: &fakeEPay{}, antom: gatewaytest.NewFakeAntom(t)}
 	epayServer := httptest.NewServer(f.epay)
 	t.Cleanup(epayServer.Close)
 	registry := gateway.NewRegistry(
 		gateway.WithHTTPClient(&http.Client{Timeout: 5 * time.Second}),
 		gateway.WithStripeBackends(f.stripe.Backends),
+		gateway.WithAntomBaseURL(f.antom.URL),
 	)
 	savedRegistry := gatewayRegistry
 	gatewayRegistry = func() *gateway.Registry { return registry }
@@ -1109,6 +1112,112 @@ func TestStripeCheckoutAndWebhook(t *testing.T) {
 	}, unmatched[0])
 }
 
+// An Antom channel keeps its private key on the server, charges the
+// converted price, and settles on a notification only once Antom's inquiry
+// confirms the payment; a notification of another payment is recorded for
+// an operator.
+func TestAntomCheckoutAndNotification(t *testing.T) {
+	f := setupPayment(t)
+	ctx := context.Background()
+	require.NoError(t, model.DB.Create(&entity.PaymentOption{Id: testAntomOption, Name: "Alipay+", Enabled: true}).Error)
+	config := map[string]any{}
+	require.NoError(t, common.UnmarshalJsonStr(f.antom.Config("ALIPAY_CN", "CNY"), &config))
+	input := MethodInput{Name: "Alipay", Platform: gateway.PlatformAntom, OptionId: testAntomOption, Enabled: true, Weight: 1, Config: config}
+	detail, err := CreateMethod(ctx, input)
+	require.NoError(t, err)
+	assert.Equal(t, "", detail.Config["private_key"])
+	assert.True(t, detail.SecretsSet["private_key"])
+	assert.Equal(t, "https://www.example.test/api/payment/notify/antom/"+detail.Token, detail.NotifyURL)
+	input.Config["private_key"] = ""
+	_, err = UpdateMethod(ctx, detail.Id, input)
+	require.NoError(t, err)
+	assert.Equal(t, gatewaytest.PrivateKey(f.antom.MerchantKey), storedConfig(t, detail.Id)["private_key"])
+	// The daily rate task refreshes the pair Antom's prices convert with.
+	pairs, err := chargeRatePairs("USD")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []currency.Pair{{From: "USD", To: "CNY", Use: currency.RateUseEPay}, {From: "USD", To: "CNY", Use: currency.RateUseAntom}}, pairs)
+
+	order, checkout, err := CreateOrder(ctx, testUser, topup("10", testAntomOption), Buyer{IP: "203.0.113.7", UserAgent: desktopUserAgent})
+	require.NoError(t, err)
+	assert.Equal(t, gateway.ActionQRCode, checkout.Type)
+	invoices, err := store.ListInvoices(order.Id)
+	require.NoError(t, err)
+	invoice := invoices[0]
+	assert.Equal(t, "CNY", invoice.PaymentCurrency)
+	request := f.antom.Requests("pay")[0]
+	assert.Equal(t, invoice.InvoiceNo, request["paymentRequestId"])
+	assert.Equal(t, map[string]any{"currency": "CNY", "value": strconv.FormatInt(invoice.PaymentAmount, 10)}, request["paymentAmount"])
+	assert.Equal(t, detail.NotifyURL, request["paymentNotifyUrl"])
+	assert.Equal(t, order.Subject, request["order"].(map[string]any)["orderDescription"])
+	assert.Equal(t, map[string]any{"terminalType": "WEB", "clientIp": "203.0.113.7"}, request["env"])
+	paymentID, _ := f.antom.Payment(invoice.InvoiceNo)
+
+	path := "/api/payment/notify/antom/" + detail.Token
+	delivered := func(header http.Header, body []byte) gateway.Notification {
+		return gateway.Notification{HTTPMethod: http.MethodPost, Body: body, Header: header, Signature: header.Get("Signature"), Path: path}
+	}
+	notify := func(notification map[string]any) error {
+		return HandleNotify(ctx, gateway.PlatformAntom, detail.Token, delivered(f.antom.Notify(path, notification)), "203.0.113.9")
+	}
+	quota := userQuota(t)
+
+	body, err := common.Marshal(f.antom.Notification(invoice.InvoiceNo, "S"))
+	require.NoError(t, err)
+	forged := delivered(f.antom.Sign(f.antom.ImpostorKey, time.Now().Format(time.RFC3339), path, body), body)
+	assert.ErrorIs(t, HandleNotify(ctx, gateway.PlatformAntom, detail.Token, forged, ""), gateway.ErrInvalidCallback)
+	// A paid result Antom's inquiry does not confirm yet settles nothing
+	// and is answered so that Antom resends it.
+	err = notify(f.antom.Notification(invoice.InvoiceNo, "S"))
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, gateway.ErrInvalidCallback)
+	require.NoError(t, notify(f.antom.Notification(invoice.InvoiceNo, "F")), "a failed result is acknowledged")
+	assert.Equal(t, quota, userQuota(t))
+
+	f.antom.SetStatus(invoice.InvoiceNo, "SUCCESS")
+	for range 2 {
+		require.NoError(t, notify(f.antom.Notification(invoice.InvoiceNo, "S")))
+	}
+	stored, err := store.GetOrderByNo(order.OrderNo)
+	require.NoError(t, err)
+	assert.Equal(t, entity.PaymentOrderFinished, stored.Status)
+	assert.Equal(t, paymentID, stored.TradeNo)
+	credited := userQuota(t)
+	assert.Greater(t, credited, quota)
+
+	// A result of another amount or currency than the invoice's cannot
+	// settle it: it is recorded and acknowledged.
+	for _, amount := range []func(expected map[string]any) map[string]any{
+		func(expected map[string]any) map[string]any { return map[string]any{"currency": "CNY", "value": "1"} },
+		func(expected map[string]any) map[string]any {
+			return map[string]any{"currency": "USD", "value": expected["value"]}
+		},
+	} {
+		other, checkout, err := CreateOrder(ctx, testUser, topup("10", testAntomOption), Buyer{IP: "203.0.113.7", UserAgent: phoneUserAgent})
+		require.NoError(t, err)
+		assert.Equal(t, gateway.ActionURL, checkout.Type, "a phone opens the wallet's page")
+		invoices, err := store.ListInvoices(other.Id)
+		require.NoError(t, err)
+		notification := f.antom.Notification(invoices[0].InvoiceNo, "S")
+		notification["paymentAmount"] = amount(notification["paymentAmount"].(map[string]any))
+		require.NoError(t, notify(notification))
+		var unmatched []entity.PaymentUnmatched
+		require.NoError(t, model.DB.Where("order_no = ?", other.OrderNo).Find(&unmatched).Error)
+		assert.Len(t, unmatched, 1)
+		stored, err := store.GetOrderByNo(other.OrderNo)
+		require.NoError(t, err)
+		assert.Equal(t, entity.PaymentOrderPending, stored.Status)
+
+		// Its owner closes it: the payment is cancelled at Antom first.
+		closed, err := CloseOrder(ctx, stored, CloseByOwner)
+		require.NoError(t, err)
+		assert.Equal(t, entity.PaymentOrderClosed, closed.Status)
+		_, status := f.antom.Payment(invoices[0].InvoiceNo)
+		assert.Equal(t, "CANCELLED", status)
+	}
+	assert.Equal(t, credited, userQuota(t))
+	assert.Equal(t, map[string]any{"terminalType": "WAP", "osType": "IOS", "clientIp": "203.0.113.7"}, f.antom.Requests("pay")[1]["env"])
+}
+
 func TestCloseAndSyncAskTheGateway(t *testing.T) {
 	f := setupPayment(t)
 	ctx := context.Background()
@@ -1380,6 +1489,7 @@ func TestStripeWebhookFollowsTheMethod(t *testing.T) {
 func TestNotifyReply(t *testing.T) {
 	text := gateway.CallbackStyle{TextReply: true}
 	status := gateway.CallbackStyle{Body: true, SignatureHeader: "Stripe-Signature"}
+	result := gateway.CallbackStyle{Body: true, SignatureHeader: "Signature", ResultReply: true}
 	for _, tt := range []struct {
 		name  string
 		style gateway.CallbackStyle
@@ -1392,6 +1502,11 @@ func TestNotifyReply(t *testing.T) {
 		{"handled status", status, nil, NotifyResponse{http.StatusOK, "application/json", `{"success":true}`}},
 		{"unknown target", status, ErrNotifyTargetNotFound, NotifyResponse{http.StatusNotFound, "application/json", `{"success":false}`}},
 		{"retry status", status, errors.New("confirm payment: timeout"), NotifyResponse{http.StatusInternalServerError, "application/json", `{"success":false}`}},
+		// Antom resends a notification until it reads exactly its success
+		// result.
+		{"handled result", result, nil, NotifyResponse{http.StatusOK, "application/json", `{"result":{"resultCode":"SUCCESS","resultStatus":"S","resultMessage":"success"}}`}},
+		{"invalid result", result, gateway.InvalidCallback(errors.New("verify sign failed")), NotifyResponse{http.StatusBadRequest, "application/json", `{"result":{"resultCode":"FAIL","resultStatus":"F","resultMessage":"fail"}}`}},
+		{"retry result", result, errors.New("confirm payment: timeout"), NotifyResponse{http.StatusInternalServerError, "application/json", `{"result":{"resultCode":"FAIL","resultStatus":"F","resultMessage":"fail"}}`}},
 	} {
 		assert.Equal(t, tt.want, NotifyReply(tt.style, tt.err), tt.name)
 	}
