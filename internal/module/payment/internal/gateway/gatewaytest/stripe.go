@@ -7,10 +7,11 @@
 // Changed in new-api: the fake answers intents with newapi metadata and the
 // payment method types they were created with, or automatic payment
 // methods when none were named, replays idempotent creations as Stripe
-// does, updates webhook endpoints, and refuses customer calls.
+// does, updates webhook endpoints, and refuses customer calls; the package
+// also holds a fake Antom API (antom.go).
 
-// Package gatewaytest provides a fake Stripe API for tests of the payment
-// gateway and the payment service.
+// Package gatewaytest provides fake Stripe and Antom APIs for tests of the
+// payment gateway and the payment service.
 package gatewaytest
 
 import (

@@ -40,23 +40,24 @@ var (
 	epayInteger   = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
 )
 
-// epayV2Keys are the keys of an EPay V2 merchant, with the DER they were
-// read from.
-type epayV2Keys struct {
+// rsaKeys are a merchant's RSA private key and its provider's RSA public
+// key, with the DER they were read from. EPay V2 and Antom sign with them.
+type rsaKeys struct {
 	private    *rsa.PrivateKey
 	public     *rsa.PublicKey
 	privateDER []byte
 	publicDER  []byte
 }
 
-// parseEPayV2Keys reads the merchant's private key (PKCS #8 or PKCS #1) and
-// the gateway's public key (PKIX or PKCS #1), each as PEM or as the bare
-// Base64 DER merchant consoles show.
-func parseEPayV2Keys(privateKey, publicKey string) (*epayV2Keys, error) {
-	keys := &epayV2Keys{}
+// parseRSAKeys reads the merchant's private key (PKCS #8 or PKCS #1) and
+// the provider's public key (PKIX or PKCS #1), each as PEM or as the bare
+// Base64 DER merchant consoles show; both must have at least 2048 bits.
+// privateErr and publicErr report a key that does not qualify.
+func parseRSAKeys(privateKey, publicKey string, privateErr, publicErr error) (*rsaKeys, error) {
+	keys := &rsaKeys{}
 	var err error
-	if keys.privateDER, err = epayKeyDER(privateKey); err != nil {
-		return nil, errEPayV2PrivateKey
+	if keys.privateDER, err = rsaKeyDER(privateKey); err != nil {
+		return nil, privateErr
 	}
 	if parsed, err := x509.ParsePKCS8PrivateKey(keys.privateDER); err == nil {
 		keys.private, _ = parsed.(*rsa.PrivateKey)
@@ -64,10 +65,10 @@ func parseEPayV2Keys(privateKey, publicKey string) (*epayV2Keys, error) {
 		keys.private, _ = x509.ParsePKCS1PrivateKey(keys.privateDER)
 	}
 	if keys.private == nil || keys.private.N.BitLen() < 2048 {
-		return nil, errEPayV2PrivateKey
+		return nil, privateErr
 	}
-	if keys.publicDER, err = epayKeyDER(publicKey); err != nil {
-		return nil, errEPayV2PublicKey
+	if keys.publicDER, err = rsaKeyDER(publicKey); err != nil {
+		return nil, publicErr
 	}
 	if parsed, err := x509.ParsePKIXPublicKey(keys.publicDER); err == nil {
 		keys.public, _ = parsed.(*rsa.PublicKey)
@@ -75,15 +76,15 @@ func parseEPayV2Keys(privateKey, publicKey string) (*epayV2Keys, error) {
 		keys.public, _ = x509.ParsePKCS1PublicKey(keys.publicDER)
 	}
 	if keys.public == nil || keys.public.N.BitLen() < 2048 {
-		return nil, errEPayV2PublicKey
+		return nil, publicErr
 	}
 	return keys, nil
 }
 
-// epayKeyDER decodes a key. A PEM key pasted into a one-line field loses its
+// rsaKeyDER decodes a key. A PEM key pasted into a one-line field loses its
 // line breaks, so the armor is cut off instead of parsed; an encrypted key
 // keeps headers in its body and does not decode.
-func epayKeyDER(text string) ([]byte, error) {
+func rsaKeyDER(text string) ([]byte, error) {
 	text = strings.TrimSpace(text)
 	if rest, ok := strings.CutPrefix(text, "-----BEGIN "); ok {
 		_, body, found := strings.Cut(rest, "-----")

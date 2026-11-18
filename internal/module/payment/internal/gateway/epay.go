@@ -24,7 +24,8 @@
 // asks for one; answers read the code, pid and status as numbers or strings;
 // the order name is cut to what the gateway keeps; transport failures of
 // requests without the merchant key in their URL keep their cause; a
-// payment the gateway turns down is marked refused.
+// payment the gateway turns down is marked refused; the V2 keys are read by
+// the RSA key parser Antom shares.
 
 package gateway
 
@@ -127,7 +128,7 @@ type EPayConfig struct {
 type epayGateway struct {
 	config EPayConfig
 	// v2 holds the keys of an EPay V2 method.
-	v2         *epayV2Keys
+	v2         *rsaKeys
 	httpClient *http.Client
 }
 
@@ -163,7 +164,7 @@ func openEPay(r *Registry, method Method) (Gateway, error) {
 			return nil, errors.New("incomplete EPay configuration")
 		}
 	case EPayV2:
-		if g.v2, err = parseEPayV2Keys(config.PrivateKey, config.PlatformPublicKey); err != nil {
+		if g.v2, err = parseRSAKeys(config.PrivateKey, config.PlatformPublicKey, errEPayV2PrivateKey, errEPayV2PublicKey); err != nil {
 			return nil, err
 		}
 	default:
@@ -204,7 +205,7 @@ func normalizeEPay(raw []byte) (string, error) {
 		}
 	case EPayV2:
 		config.Key = ""
-		keys, err := parseEPayV2Keys(config.PrivateKey, config.PlatformPublicKey)
+		keys, err := parseRSAKeys(config.PrivateKey, config.PlatformPublicKey, errEPayV2PrivateKey, errEPayV2PublicKey)
 		if err != nil {
 			return "", err
 		}

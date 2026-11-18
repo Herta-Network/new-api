@@ -327,6 +327,7 @@ func startCheckout(ctx context.Context, order *entity.PaymentOrder, invoice *ent
 		ReturnURL: service.ConsoleURL("/user/wallet?payment_order=" + url.QueryEscape(order.OrderNo)),
 		Subject:   order.Subject,
 		Mobile:    gateway.MobileUserAgent(buyer.UserAgent),
+		OS:        gateway.MobileOS(buyer.UserAgent),
 		Claim: func(_ context.Context, tradeNo string) (string, error) {
 			return store.ClaimInvoiceTrade(invoice, tradeNo)
 		},
