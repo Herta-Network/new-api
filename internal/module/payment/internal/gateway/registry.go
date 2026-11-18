@@ -5,7 +5,7 @@
 // The original is licensed under GPL-3.0 and is redistributed here under the
 // AGPL-3.0 of new-api, as GPL-3.0 section 13 permits.
 //
-// Changed in new-api: only EPay, Stripe and Cryptomus are served; platforms
+// Changed in new-api: only EPay, Stripe, Cryptomus and Antom are served; platforms
 // are lowercase names; NormalizeConfig validates the configuration a
 // method is saved with (EPay endpoint and credentials, Stripe key prefixes
 // and mode, Cryptomus credentials) instead of only re-encoding it; the
@@ -14,7 +14,8 @@
 // checkout mode and payment form), take several lines, carry a hint, and
 // apply only under a choice of another field (the credentials of each EPay
 // version, the payment form of EPay API orders); an injected HTTP client also
-// carries Stripe traffic.
+// carries Stripe traffic; Antom (antom.go) is registered with its region,
+// wallet and currency choices.
 
 package gateway
 
@@ -32,6 +33,7 @@ const (
 	PlatformEPay      = "epay"
 	PlatformStripe    = "stripe"
 	PlatformCryptomus = "cryptomus"
+	PlatformAntom     = "antom"
 	PlatformBalance   = "balance"
 )
 
@@ -63,6 +65,7 @@ type Registry struct {
 	httpClient       *http.Client
 	stripeBackends   *stripe.Backends
 	cryptomusBaseURL string
+	antomBaseURL     string
 }
 
 // Option configures a Registry.
@@ -87,6 +90,12 @@ func WithStripeBackends(backends *stripe.Backends) Option {
 // of a payment method.
 func WithCryptomusBaseURL(baseURL string) Option {
 	return func(r *Registry) { r.cryptomusBaseURL = baseURL }
+}
+
+// WithAntomBaseURL sends every Antom request to baseURL instead of the
+// domain of the method's region; tests use it to reach a local fake.
+func WithAntomBaseURL(baseURL string) Option {
+	return func(r *Registry) { r.antomBaseURL = baseURL }
 }
 
 // NewRegistry builds a registry of the supported gateways.
@@ -116,6 +125,7 @@ var platforms = map[string]platformSpec{
 	PlatformEPay:      {open: openEPay, normalize: normalizeEPay, style: CallbackStyle{UniqueParams: true, TextReply: true}},
 	PlatformStripe:    {open: openStripe, normalize: normalizeStripe, style: CallbackStyle{Body: true, SignatureHeader: "Stripe-Signature"}},
 	PlatformCryptomus: {open: openCryptomus, normalize: normalizeCryptomus, style: CallbackStyle{Body: true, TextReply: true}},
+	PlatformAntom:     {open: openAntom, normalize: normalizeAntom, style: CallbackStyle{Body: true, SignatureHeader: "Signature", ResultReply: true}},
 }
 
 // Open returns the gateway of the payment method.
@@ -250,6 +260,36 @@ func Platforms() []PlatformInfo {
 			Fields: []Field{
 				{Key: "merchant_id", Label: "Merchant UUID", Required: true},
 				{Key: "api_key", Label: "Payment API key", Required: true, Secret: true},
+			},
+		},
+		{
+			Platform: PlatformAntom,
+			Name:     "Antom",
+			URL:      "https://docs.antom.com/ac/cashierpay/overview",
+			Fields: []Field{
+				{Key: "client_id", Label: "Client ID", Required: true,
+					Description: "From Antom Dashboard, Developer, Quick start. A sandbox client ID starts with SANDBOX_ and calls the sandbox."},
+				{Key: "private_key", Label: "Merchant private key", Required: true, Secret: true,
+					Description: "The RSA private key whose public key is uploaded to Antom Dashboard."},
+				{Key: "platform_public_key", Label: "Antom public key", Type: FieldTextarea, Required: true,
+					Description: "From Antom Dashboard, Developer, Quick start, Integration resources."},
+				// A new method starts on the first choices.
+				{Key: "region", Label: "Antom region", Type: FieldSelect, Required: true,
+					Description: "Where your merchant entity is registered with Antom; it selects the Antom domain.",
+					Options: []FieldOption{
+						{Value: AntomRegionAsia, Label: "Asia"},
+						{Value: AntomRegionNorthAmerica, Label: "North America"},
+						{Value: AntomRegionEurope, Label: "Europe"},
+						{Value: AntomRegionUS, Label: "United States merchants"},
+					}},
+				{Key: "payment_method_type", Label: "Wallet", Type: FieldSelect, Required: true,
+					Description: "The one wallet this channel collects. It must be enabled in your Antom contract.",
+					Options:     antomPaymentMethodTypes},
+				{Key: "currency", Label: "Payment currency", Type: FieldSelect, Required: true,
+					Description: "The currency the buyer is charged in, usually the wallet's own, such as CNY for Alipay. Prices are converted into it.",
+					Options:     antomCurrencyOptions},
+				{Key: "settlement_currency", Label: "Settlement currency", Required: true,
+					Description: "The currency Antom settles to you in, as in your contract, such as USD."},
 			},
 		},
 	}

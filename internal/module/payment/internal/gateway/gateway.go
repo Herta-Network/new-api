@@ -16,7 +16,10 @@
 // be a QR code to show, a gateway says whether its checkout reaches the
 // provider, and a provider's refusal is marked apart from its failure. A
 // Checkout says whether the buyer pays from a phone, which MobileUserAgent
-// tells from the User-Agent.
+// tells from the User-Agent, and on which phone system (MobileOS). A
+// notification also carries the request header and path and the method's
+// notify URL, which Antom signs, and a callback can be acknowledged with
+// Antom's result object.
 
 // Package gateway is the protocol layer of new-api payments. A Gateway
 // speaks one payment provider's protocol for one configured payment method:
@@ -29,6 +32,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
@@ -117,6 +121,9 @@ type Checkout struct {
 	// judges its own request, so a buyer who moves to another device gets
 	// the payment form of that device.
 	Mobile bool
+	// OS is the phone system of that request (see MobileOS), for gateways
+	// that open the payment app differently on each.
+	OS string
 	// Claim binds a provider-side payment (a Stripe intent, a Cryptomus
 	// invoice) as the order's only one and returns the payment the order
 	// holds afterwards: tradeNo when the claim won, the concurrent winner's
@@ -137,6 +144,27 @@ func MobileUserAgent(userAgent string) bool {
 	return slices.ContainsFunc(mobileUserAgentMarks, func(mark string) bool {
 		return strings.Contains(userAgent, mark)
 	})
+}
+
+// Phone systems MobileOS tells apart.
+const (
+	OSiOS     = "ios"
+	OSAndroid = "android"
+)
+
+// MobileOS returns the system of a phone or tablet browser from its
+// User-Agent: OSiOS, OSAndroid, or empty for any other system or a
+// computer. iPadOS asks for desktop sites by default and reads as a
+// computer.
+func MobileOS(userAgent string) string {
+	userAgent = strings.ToLower(userAgent)
+	switch {
+	case strings.Contains(userAgent, "iphone"), strings.Contains(userAgent, "ipad"), strings.Contains(userAgent, "ipod"):
+		return OSiOS
+	case strings.Contains(userAgent, "android"):
+		return OSAndroid
+	}
+	return ""
 }
 
 // Action types tell the client how to complete a payment.
@@ -202,6 +230,14 @@ type Notification struct {
 	// CallbackStyle's signature header for gateways that sign the body.
 	Body      []byte
 	Signature string
+	// Header is the request header and Path the request URI as received,
+	// for gateways that sign them with the body.
+	Header http.Header
+	Path   string
+	// NotifyURL is the callback URL the payment method gives its gateway
+	// now; empty when it has none. The provider signs the path it called,
+	// which a proxy in front of the site may have rewritten.
+	NotifyURL string
 }
 
 // Notice is an authenticated callback.
@@ -246,6 +282,9 @@ type CallbackStyle struct {
 	UniqueParams bool
 	// TextReply acknowledges a callback with the plain text "success".
 	TextReply bool
+	// ResultReply acknowledges a callback with the JSON result object Antom
+	// requires: resultStatus S, resultCode SUCCESS.
+	ResultReply bool
 }
 
 // Gateway is the protocol of one payment provider, bound to one configured

@@ -10,7 +10,8 @@
 //
 // Changed in new-api: one test file with testify; the fake Stripe API it
 // uses lives in gatewaytest; EPay API checkout with its payment forms, EPay
-// V2 and telling phones by their User-Agent are covered.
+// V2, telling phones and their systems by their User-Agent, and Antom (with
+// the fake Antom API of gatewaytest) are covered.
 
 package gateway
 
@@ -31,6 +32,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -162,6 +164,7 @@ func TestRegistryDescribesThePlatforms(t *testing.T) {
 		PlatformEPay:      {UniqueParams: true, TextReply: true},
 		PlatformStripe:    {Body: true, SignatureHeader: "Stripe-Signature"},
 		PlatformCryptomus: {Body: true, TextReply: true},
+		PlatformAntom:     {Body: true, SignatureHeader: "Signature", ResultReply: true},
 	} {
 		style, ok := registry.CallbackStyle(platform)
 		assert.True(t, ok, platform)
@@ -190,6 +193,7 @@ func TestRegistryDescribesThePlatforms(t *testing.T) {
 		PlatformEPay:      {"key", "private_key"},
 		PlatformStripe:    {"secret_key", "webhook_secret"},
 		PlatformCryptomus: {"api_key"},
+		PlatformAntom:     {"private_key"},
 	}, secrets)
 
 	// Each form offers exactly the choices a save accepts, and a field shown
@@ -198,6 +202,8 @@ func TestRegistryDescribesThePlatforms(t *testing.T) {
 		PlatformEPay: {"url": "https://pay.example", "pid": "1", "key": "k", "type": "alipay",
 			"private_key": epayV2PrivatePEM(), "platform_public_key": epayV2PlatformPublicKey()},
 		PlatformStripe: {"public_key": "pk_test_a", "secret_key": "sk_test_b"},
+		PlatformAntom: {"client_id": "SANDBOX_5X00000000000000", "private_key": epayV2PrivatePEM(), "platform_public_key": epayV2PlatformPublicKey(),
+			"region": AntomRegionAsia, "payment_method_type": "ALIPAY_CN", "currency": "CNY", "settlement_currency": "USD"},
 	}
 	choices := map[string][]string{}
 	for _, info := range Platforms() {
@@ -226,6 +232,10 @@ func TestRegistryDescribesThePlatforms(t *testing.T) {
 		"epay.checkout":              {EPayCheckoutAPI, EPayCheckoutPage},
 		"epay.pay_form":              {EPayFormJump, EPayFormQRCode, EPayFormAuto},
 		"stripe.payment_method_type": {"card", "alipay", "wechat_pay"},
+		"antom.region":               {AntomRegionAsia, AntomRegionNorthAmerica, AntomRegionEurope, AntomRegionUS},
+		"antom.payment_method_type": {"ALIPAY_CN", "ALIPAY_HK", "GCASH", "DANA", "TNG", "TRUEMONEY", "BOOST", "KAKAOPAY", "NAVERPAY",
+			"TOSSPAY", "RABBIT_LINE_PAY", "KPLUS"},
+		"antom.currency": antomCurrencies,
 	}, choices)
 }
 
@@ -1036,19 +1046,23 @@ func TestEPayAPIPaymentForm(t *testing.T) {
 }
 
 func TestMobileUserAgent(t *testing.T) {
-	for userAgent, mobile := range map[string]bool{
-		"Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1":                                                      true,
-		"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36":                                                                              true,
-		"Mozilla/5.0 (Linux; Android 14; SM-X710) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36":                                                                               true,
-		"Mozilla/5.0 (iPad; CPU OS 12_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/12.1.2 Mobile/15E148 Safari/604.1":                                                             true,
-		"Mozilla/5.0 (Phone; OpenHarmony 5.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 ArkWeb/4.1.6.1":                                                                    true,
-		"Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.50(0x1800323c) NetType/WIFI":                                 true,
-		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36":                                                                              false,
-		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15":                                                                        false,
-		"Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36 NetType/WIFI MicroMessenger/7.0.20.1781(0x6700143B) WindowsWechat(0x63090c11)": false,
-		"": false,
+	type device struct {
+		mobile bool
+		os     string
+	}
+	for userAgent, want := range map[string]device{
+		"Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1":                                                      {true, OSiOS},
+		"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36":                                                                              {true, OSAndroid},
+		"Mozilla/5.0 (Linux; Android 14; SM-X710) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36":                                                                               {true, OSAndroid},
+		"Mozilla/5.0 (iPad; CPU OS 12_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/12.1.2 Mobile/15E148 Safari/604.1":                                                             {true, OSiOS},
+		"Mozilla/5.0 (Phone; OpenHarmony 5.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 ArkWeb/4.1.6.1":                                                                    {true, ""},
+		"Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.50(0x1800323c) NetType/WIFI":                                 {true, OSiOS},
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36":                                                                              {false, ""},
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15":                                                                        {false, ""},
+		"Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36 NetType/WIFI MicroMessenger/7.0.20.1781(0x6700143B) WindowsWechat(0x63090c11)": {false, ""},
+		"": {false, ""},
 	} {
-		assert.Equal(t, mobile, MobileUserAgent(userAgent), userAgent)
+		assert.Equal(t, want, device{MobileUserAgent(userAgent), MobileOS(userAgent)}, userAgent)
 	}
 }
 
@@ -1802,4 +1816,478 @@ func TestStripeWebhookEndpoints(t *testing.T) {
 
 	require.NoError(t, webhooks.Delete(ctx, "we_1"))
 	assert.Nil(t, fake.Webhook("we_1"))
+}
+
+// ---- Antom ----
+
+// openFakeAntom opens an Antom method of fake's client collecting wallet in
+// currency.
+func openFakeAntom(t *testing.T, fake *gatewaytest.FakeAntom, wallet, currency string) Gateway {
+	t.Helper()
+	registry := NewRegistry(WithHTTPClient(&http.Client{Timeout: 5 * time.Second}), WithAntomBaseURL(fake.URL))
+	return mustOpen(t, registry, Method{Platform: PlatformAntom, Config: fake.Config(wallet, currency)})
+}
+
+// antomCheckout is a checkout of orderNo from a computer whose claims are
+// appended to claimed.
+func antomCheckout(orderNo string, charge Charge, claimed *[]string) Checkout {
+	return Checkout{
+		Order:     &Order{OrderNo: orderNo, ClientIP: "203.0.113.7"},
+		Charge:    charge,
+		NotifyURL: "https://www.example.test/api/payment/notify/antom/token",
+		ReturnURL: "https://console.example.test/user/wallet?payment_order=" + orderNo,
+		Subject:   "Top-up 19.90 CNY",
+		Claim: func(_ context.Context, tradeNo string) (string, error) {
+			*claimed = append(*claimed, tradeNo)
+			return tradeNo, nil
+		},
+	}
+}
+
+// startAntomPayment starts the payment of orderNo for 19.90 CNY and returns
+// the invoice as it stands afterwards.
+func startAntomPayment(t *testing.T, gw Gateway, orderNo string) *Order {
+	t.Helper()
+	var claimed []string
+	_, err := gw.StartPayment(context.Background(), antomCheckout(orderNo, Charge{1990, "CNY"}, &claimed))
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	return &Order{OrderNo: orderNo, PaymentAmount: 1990, PaymentCurrency: "CNY", TradeNo: claimed[0]}
+}
+
+func TestAntomConfig(t *testing.T) {
+	fake := gatewaytest.NewFakeAntom(t)
+	privateDER, err := base64.StdEncoding.DecodeString(gatewaytest.PrivateKey(fake.MerchantKey))
+	require.NoError(t, err)
+	valid := map[string]string{
+		"client_id":   " SANDBOX_5X00000000000000 ",
+		"private_key": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER})),
+		// Pasted into one line, the PEM armor of a public key is cut off.
+		"platform_public_key": "-----BEGIN PUBLIC KEY----- " + gatewaytest.PublicKey(fake.AntomKey) + " -----END PUBLIC KEY-----",
+		"region":              AntomRegionAsia, "payment_method_type": "ALIPAY_HK", "currency": " hkd ", "settlement_currency": "usd",
+	}
+	normalize := func(fields map[string]string) (string, error) {
+		raw, err := common.Marshal(fields)
+		require.NoError(t, err)
+		return NewRegistry().NormalizeConfig(PlatformAntom, raw)
+	}
+	config, err := normalize(valid)
+	require.NoError(t, err)
+	var stored AntomConfig
+	require.NoError(t, common.UnmarshalJsonStr(config, &stored))
+	assert.Equal(t, AntomConfig{
+		ClientID: "SANDBOX_5X00000000000000", PrivateKey: gatewaytest.PrivateKey(fake.MerchantKey), PlatformPublicKey: gatewaytest.PublicKey(fake.AntomKey),
+		Region: AntomRegionAsia, PaymentMethodType: "ALIPAY_HK", Currency: "HKD", SettlementCurrency: "USD",
+	}, stored)
+	gw := mustOpen(t, NewRegistry(), Method{Platform: PlatformAntom, Config: config})
+	assert.Equal(t, "HKD", gw.ChargeCurrency())
+
+	// The form describes exactly the stored fields.
+	var fields map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(config, &fields))
+	var keys []string
+	for _, info := range Platforms() {
+		if info.Platform == PlatformAntom {
+			for _, field := range info.Fields {
+				keys = append(keys, field.Key)
+			}
+		}
+	}
+	assert.ElementsMatch(t, slices.Collect(maps.Keys(fields)), keys)
+
+	for name, change := range map[string][]string{
+		"no client ID":             {"client_id", ""},
+		"a client ID with a space": {"client_id", "SANDBOX_5X 1"},
+		"a weak public key":        {"platform_public_key", weakPublicKey()},
+		"no region":                {"region", ""},
+		"an unknown wallet":        {"payment_method_type", "PAYPAL"},
+		"an undocumented currency": {"currency", "CHF"},
+		"a settlement currency":    {"settlement_currency", "US"},
+	} {
+		_, err := normalize(withField(valid, change...))
+		assert.Error(t, err, name)
+	}
+	_, err = normalize(withField(valid, "private_key", gatewaytest.PublicKey(fake.AntomKey)))
+	assert.Equal(t, errAntomPrivateKey, err)
+	_, err = normalize(withField(valid, "platform_public_key", "not a key"))
+	assert.Equal(t, errAntomPublicKey, err)
+}
+
+func TestAntomVerifiesItsAnswers(t *testing.T) {
+	ctx := context.Background()
+	fake := gatewaytest.NewFakeAntom(t)
+	gw := openFakeAntom(t, fake, "ALIPAY_CN", "CNY")
+	order := &Order{OrderNo: "P1R1", PaymentAmount: 1990, PaymentCurrency: "CNY"}
+	// The fake fails the test on a request whose signature does not verify
+	// with the merchant's public key; the gateway trusts no answer whose
+	// signature does not verify with Antom's.
+	for name, answers := range map[string]gatewaytest.AntomAnswers{
+		"tampered":           {Tampered: true},
+		"signed long ago":    {Skew: -10 * time.Minute},
+		"signed ahead":       {Skew: 10 * time.Minute},
+		"signed by impostor": {Key: fake.ImpostorKey},
+	} {
+		fake.SetAnswers(answers)
+		_, err := gw.QueryPayment(ctx, order)
+		assert.Error(t, err, name)
+		_, err = gw.Reconcile(ctx, CloseRequest{Order: order})
+		assert.ErrorIs(t, err, ErrUnconfirmed, name)
+	}
+	fake.SetAnswers(gatewaytest.AntomAnswers{})
+	tradeNo, err := gw.QueryPayment(ctx, order)
+	require.NoError(t, err)
+	assert.Empty(t, tradeNo, "Antom has no payment of the order")
+	assert.Len(t, fake.Requests("inquiryPayment"), 9)
+}
+
+func TestAntomStartPayment(t *testing.T) {
+	ctx := context.Background()
+	fake := gatewaytest.NewFakeAntom(t)
+	// A production client calls /ams/api, where the fake serves it.
+	fake.ClientID = "2188120000000001"
+	gw := openFakeAntom(t, fake, "ALIPAY_CN", "CNY")
+	assert.True(t, gw.ServerCheckout())
+	assert.True(t, gw.NeedsNotifyURL(&Order{}))
+
+	var claimed []string
+	checkout := antomCheckout("P20261117R1", Charge{1990, "CNY"}, &claimed)
+	action, err := gw.StartPayment(ctx, checkout)
+	require.NoError(t, err)
+	paymentID, status := fake.Payment("P20261117R1")
+	assert.Equal(t, "PROCESSING", status)
+	assert.Equal(t, []string{paymentID}, claimed)
+	// A computer scans the payment code, not its image.
+	assert.Equal(t, ActionQRCode, action.Type)
+	assert.True(t, strings.HasPrefix(action.QRCode, "https://global.alipay.com/2810020400"), action.QRCode)
+	amount := map[string]any{"currency": "CNY", "value": "1990"}
+	assert.Equal(t, map[string]any{
+		"productCode": "CASHIER_PAYMENT", "paymentRequestId": "P20261117R1", "paymentAmount": amount,
+		"paymentMethod": map[string]any{"paymentMethodType": "ALIPAY_CN"}, "settlementStrategy": map[string]any{"settlementCurrency": "USD"},
+		"paymentRedirectUrl": checkout.ReturnURL, "paymentNotifyUrl": checkout.NotifyURL,
+		"env":   map[string]any{"terminalType": "WEB", "clientIp": "203.0.113.7"},
+		"order": map[string]any{"referenceOrderId": "P20261117R1", "orderDescription": "Top-up 19.90 CNY", "orderAmount": amount},
+	}, fake.Requests("pay")[0])
+
+	// Resumed on an iPhone, the checkout asks for the same payment again:
+	// Antom returns it, and the phone opens its page.
+	checkout.Order.TradeNo = paymentID
+	checkout.Mobile, checkout.OS = true, OSiOS
+	action, err = gw.StartPayment(ctx, checkout)
+	require.NoError(t, err)
+	assert.Equal(t, ActionURL, action.Type)
+	assert.True(t, strings.HasPrefix(action.URL, "https://render.alipay.com/"), action.URL)
+	assert.Equal(t, map[string]any{"terminalType": "WAP", "osType": "IOS", "clientIp": "203.0.113.7"}, fake.Requests("pay")[1]["env"])
+	assert.Equal(t, []string{paymentID}, claimed, "the payment is claimed once")
+	_, status = fake.Payment("P20261117R1")
+	assert.Equal(t, "PROCESSING", status)
+
+	for _, tt := range []struct {
+		name, subject, os string
+		mobile            bool
+		hook              func(answer map[string]any)
+		env               map[string]any
+		description       string
+		action            string
+	}{
+		{name: "an Android phone", subject: "Pro", mobile: true, os: OSAndroid,
+			env: map[string]any{"terminalType": "WAP", "osType": "ANDROID", "clientIp": "203.0.113.7"}, description: "Pro", action: ActionURL},
+		// Antom knows phones by iOS or Android alone; another phone gets the
+		// page a computer would open.
+		{name: "another phone", mobile: true,
+			env: map[string]any{"terminalType": "WEB", "clientIp": "203.0.113.7"}, description: "P20261117R4", action: ActionURL},
+		{name: "a wallet without a code", subject: strings.Repeat("汉", 300), hook: func(answer map[string]any) { delete(answer, "orderCodeForm") },
+			env: map[string]any{"terminalType": "WEB", "clientIp": "203.0.113.7"}, description: strings.Repeat("汉", 256), action: ActionURL},
+		{name: "an app link alone", subject: "Pro", mobile: true, os: OSAndroid, hook: func(answer map[string]any) { delete(answer, "normalUrl") },
+			env: map[string]any{"terminalType": "WAP", "osType": "ANDROID", "clientIp": "203.0.113.7"}, description: "Pro", action: ActionURL},
+	} {
+		orderNo := fmt.Sprintf("P20261117R%d", len(fake.Requests("pay"))+1)
+		fake.SetPayHook(tt.hook)
+		checkout := antomCheckout(orderNo, Charge{1990, "CNY"}, &claimed)
+		checkout.Subject, checkout.Mobile, checkout.OS = tt.subject, tt.mobile, tt.os
+		action, err := gw.StartPayment(ctx, checkout)
+		require.NoError(t, err, tt.name)
+		assert.Equal(t, tt.action, action.Type, tt.name)
+		request := fake.Requests("pay")[len(fake.Requests("pay"))-1]
+		assert.Equal(t, tt.env, request["env"], tt.name)
+		assert.Equal(t, tt.description, request["order"].(map[string]any)["orderDescription"], tt.name)
+	}
+	assert.True(t, strings.HasPrefix(claimed[len(claimed)-1], "2026"))
+	fake.SetPayHook(nil)
+}
+
+func TestAntomChargesInSmallestUnits(t *testing.T) {
+	ctx := context.Background()
+	fake := gatewaytest.NewFakeAntom(t)
+	for _, tt := range []struct {
+		currency, rate string
+		// site is 19.90 of the site currency, USD.
+		charge int64
+		value  string
+	}{
+		{"CNY", "7.2419", 14411, "14411"},
+		// Zero-decimal currencies count whole units; the charge is rounded
+		// to them before its expectation is recorded.
+		{"JPY", "150.123", 298700, "2987"},
+		{"KRW", "1385.5", 2757100, "27571"},
+		// IDR counts hundredths but takes whole rupiah only.
+		{"IDR", "16234.567", 32306800, "32306800"},
+	} {
+		gw := openFakeAntom(t, fake, "ALIPAY_CN", tt.currency)
+		charge, err := ChargeFor(gw, 1990, "USD", tt.rate)
+		require.NoError(t, err, tt.currency)
+		assert.Equal(t, Charge{tt.charge, tt.currency}, charge)
+		var claimed []string
+		_, err = gw.StartPayment(ctx, antomCheckout("P-"+tt.currency, charge, &claimed))
+		require.NoError(t, err, tt.currency)
+		requests := fake.Requests("pay")
+		assert.Equal(t, map[string]any{"currency": tt.currency, "value": tt.value}, requests[len(requests)-1]["paymentAmount"])
+		// A charge that is not in whole units where Antom needs them never
+		// reaches it.
+		if tt.charge%100 == 0 {
+			_, err = gw.StartPayment(ctx, antomCheckout("P-"+tt.currency+"-odd", Charge{tt.charge + 1, tt.currency}, &claimed))
+			assert.Error(t, err, tt.currency)
+		}
+	}
+	assert.Len(t, fake.Requests("pay"), 4)
+}
+
+func TestAntomStartPaymentFailures(t *testing.T) {
+	ctx := context.Background()
+	fake := gatewaytest.NewFakeAntom(t)
+	gw := openFakeAntom(t, fake, "ALIPAY_CN", "CNY")
+	var claimed []string
+
+	// Nothing that Antom would refuse reaches it.
+	_, err := gw.StartPayment(ctx, antomCheckout("P1R1", Charge{1990, "USD"}, &claimed))
+	assert.Error(t, err)
+	relative := antomCheckout("P1R1", Charge{1990, "CNY"}, &claimed)
+	relative.ReturnURL = "/user/wallet"
+	_, err = gw.StartPayment(ctx, relative)
+	assert.Error(t, err)
+	assert.Empty(t, fake.Requests("pay"))
+
+	// Antom turns the payment down.
+	fake.Refuse("pay", "PAYMENT_AMOUNT_EXCEED_LIMIT")
+	_, err = gw.StartPayment(ctx, antomCheckout("P2R1", Charge{1990, "CNY"}, &claimed))
+	assert.ErrorIs(t, err, ErrRefused)
+	assert.ErrorContains(t, err, "PAYMENT_AMOUNT_EXCEED_LIMIT")
+	fake.Refuse("pay", "")
+
+	// An unknown failure is not a refusal: the close of the invoice asks
+	// Antom about it.
+	fake.SetPayHook(func(answer map[string]any) {
+		answer["result"] = map[string]any{"resultStatus": "U", "resultCode": "UNKNOWN_EXCEPTION", "resultMessage": "unknown"}
+	})
+	_, err = gw.StartPayment(ctx, antomCheckout("P3R1", Charge{1990, "CNY"}, &claimed))
+	assert.Error(t, err)
+	assert.NotErrorIs(t, err, ErrRefused)
+	fake.SetPayHook(func(answer map[string]any) {
+		for _, link := range []string{"normalUrl", "schemeUrl", "orderCodeForm"} {
+			delete(answer, link)
+		}
+	})
+	_, err = gw.StartPayment(ctx, antomCheckout("P4R1", Charge{1990, "CNY"}, &claimed))
+	assert.ErrorContains(t, err, "has no payment page")
+	fake.SetPayHook(nil)
+	assert.Empty(t, claimed)
+
+	// A payment the invoice cannot claim is cancelled: the buyer never gets
+	// it.
+	failing := antomCheckout("P5R1", Charge{1990, "CNY"}, &claimed)
+	failing.Claim = func(context.Context, string) (string, error) { return "", errors.New("the invoice is closed") }
+	_, err = gw.StartPayment(ctx, failing)
+	assert.ErrorContains(t, err, "the invoice is closed")
+	_, status := fake.Payment("P5R1")
+	assert.Equal(t, "CANCELLED", status)
+
+	// A closed payment cannot be asked for again.
+	_, err = gw.StartPayment(ctx, antomCheckout("P5R1", Charge{1990, "CNY"}, &claimed))
+	assert.ErrorIs(t, err, ErrRefused)
+	// Nor can the same request ask for another amount.
+	startAntomPayment(t, gw, "P6R1")
+	_, err = gw.StartPayment(ctx, antomCheckout("P6R1", Charge{2990, "CNY"}, &claimed))
+	assert.ErrorContains(t, err, "REPEAT_REQ_INCONSISTENT")
+}
+
+func TestAntomCallback(t *testing.T) {
+	ctx := context.Background()
+	fake := gatewaytest.NewFakeAntom(t)
+	gw := openFakeAntom(t, fake, "ALIPAY_CN", "CNY")
+	invoice := startAntomPayment(t, gw, "P1R1")
+	const path = "/api/payment/notify/antom/token"
+	delivered := func(header http.Header, body []byte) Notification {
+		return Notification{HTTPMethod: http.MethodPost, Body: body, Header: header, Signature: header.Get("Signature"), Path: path}
+	}
+
+	header, body := fake.Notify(path, fake.Notification("P1R1", "S"))
+	notice, err := gw.ParseCallback(ctx, delivered(header, body))
+	require.NoError(t, err)
+	assert.Equal(t, &Notice{
+		OrderNo: "P1R1", TradeNo: invoice.TradeNo, Amount: 1990, Currency: "CNY", Paid: true, Status: "PAYMENT_RESULT SUCCESS",
+		Details: map[string]string{"result_status": "S", "result_message": "success", "payment_method_type": ""},
+	}, notice)
+	require.NoError(t, gw.CheckOrder(invoice, notice))
+	assert.Error(t, gw.CheckOrder(&Order{OrderNo: "P1R1", TradeNo: "another"}, notice))
+
+	// Behind a proxy that drops a path prefix, the signature covers the
+	// path of the notify URL Antom called.
+	header, body = fake.Notify("/pay"+path, fake.Notification("P1R1", "S"))
+	_, err = gw.ParseCallback(ctx, delivered(header, body))
+	assert.Error(t, err)
+	behindProxy := delivered(header, body)
+	behindProxy.NotifyURL = "https://www.example.test/pay" + path
+	_, err = gw.ParseCallback(ctx, behindProxy)
+	assert.NoError(t, err)
+
+	// Antom resends a notification for a day; its signing time is checked
+	// against that, as milliseconds or ISO 8601.
+	body, err = common.Marshal(fake.Notification("P1R1", "S"))
+	require.NoError(t, err)
+	for name, signed := range map[string]struct {
+		header http.Header
+		ok     bool
+	}{
+		"resent after 23 hours": {fake.Sign(fake.AntomKey, time.Now().Add(-23*time.Hour).Format(time.RFC3339), path, body), true},
+		"in milliseconds":       {fake.Sign(fake.AntomKey, strconv.FormatInt(time.Now().UnixMilli(), 10), path, body), true},
+		"two days old":          {fake.Sign(fake.AntomKey, time.Now().Add(-48*time.Hour).Format(time.RFC3339), path, body), false},
+		"ahead of the clock":    {fake.Sign(fake.AntomKey, time.Now().Add(time.Hour).Format(time.RFC3339), path, body), false},
+		"not a time":            {fake.Sign(fake.AntomKey, "yesterday", path, body), false},
+		"by an impostor":        {fake.Sign(fake.ImpostorKey, time.Now().Format(time.RFC3339), path, body), false},
+	} {
+		_, err := gw.ParseCallback(ctx, delivered(signed.header, body))
+		assert.Equal(t, signed.ok, err == nil, "%s: %v", name, err)
+	}
+	header, body = fake.Notify(path, fake.Notification("P1R1", "S"))
+	tampered := delivered(header, []byte(strings.Replace(string(body), `"1990"`, `"19900"`, 1)))
+	_, err = gw.ParseCallback(ctx, tampered)
+	assert.Error(t, err)
+	unsigned := delivered(header, body)
+	unsigned.Signature = ""
+	_, err = gw.ParseCallback(ctx, unsigned)
+	assert.Error(t, err)
+	queried := delivered(header, body)
+	queried.HTTPMethod = http.MethodGet
+	_, err = gw.ParseCallback(ctx, queried)
+	assert.Error(t, err)
+	// A notification of another client of the same Antom account.
+	fake.ClientID = "SANDBOX_5X00000000000001"
+	header, body = fake.Notify(path, fake.Notification("P1R1", "S"))
+	fake.ClientID = "SANDBOX_5X00000000000000"
+	_, err = gw.ParseCallback(ctx, delivered(header, body))
+	assert.ErrorContains(t, err, "client id")
+
+	// A failed payment and a payment awaiting the wallet's confirmation are
+	// lifecycle events; other notifications are ignored.
+	header, body = fake.Notify(path, fake.Notification("P1R1", "F"))
+	notice, err = gw.ParseCallback(ctx, delivered(header, body))
+	require.NoError(t, err)
+	assert.False(t, notice.Paid)
+	assert.Equal(t, "PAYMENT_RESULT ORDER_IS_CLOSED", notice.Status)
+	pending := fake.Notification("P1R1", "S")
+	pending["notifyType"] = "PAYMENT_PENDING"
+	header, body = fake.Notify(path, pending)
+	notice, err = gw.ParseCallback(ctx, delivered(header, body))
+	require.NoError(t, err)
+	assert.False(t, notice.Paid)
+	header, body = fake.Notify(path, map[string]any{"refundRequestId": "R1", "refundStatus": "SUCCESS", "result": map[string]any{"resultStatus": "S"}})
+	notice, err = gw.ParseCallback(ctx, delivered(header, body))
+	require.NoError(t, err)
+	assert.True(t, notice.Ignore)
+
+	// Amounts come in the currency's smallest unit.
+	yen := fake.Notification("P1R1", "S")
+	yen["paymentAmount"] = map[string]any{"currency": "JPY", "value": "1200"}
+	header, body = fake.Notify(path, yen)
+	notice, err = gw.ParseCallback(ctx, delivered(header, body))
+	require.NoError(t, err)
+	assert.Equal(t, int64(120000), notice.Amount)
+	for _, amount := range []map[string]any{{"currency": "CNY", "value": "19.90"}, {"currency": "CNY", "value": "-1"}, {"currency": "XYZ", "value": "1"}} {
+		malformed := fake.Notification("P1R1", "S")
+		malformed["paymentAmount"] = amount
+		header, body = fake.Notify(path, malformed)
+		_, err = gw.ParseCallback(ctx, delivered(header, body))
+		assert.Error(t, err, "%v", amount)
+	}
+}
+
+func TestAntomReconcileQueryAndConfirm(t *testing.T) {
+	ctx := context.Background()
+	fake := gatewaytest.NewFakeAntom(t)
+	gw := openFakeAntom(t, fake, "ALIPAY_CN", "CNY")
+
+	// An invoice whose checkout never started, or whose payment Antom never
+	// created, closes if no checkout claims a payment meanwhile.
+	verdict, err := gw.Reconcile(ctx, CloseRequest{Order: &Order{OrderNo: "P0R1"}})
+	require.NoError(t, err)
+	assert.Equal(t, Reconciliation{RequireStableCheckout: true}, verdict)
+	verdict, err = gw.Reconcile(ctx, CloseRequest{Order: &Order{OrderNo: "P0R1", PaymentAmount: 1990, PaymentCurrency: "CNY"}})
+	require.NoError(t, err)
+	assert.Equal(t, Reconciliation{RequireStableCheckout: true}, verdict)
+	assert.Empty(t, fake.Requests("cancel"))
+
+	// A payment awaiting the buyer is cancelled before the invoice closes.
+	waiting := startAntomPayment(t, gw, "P1R1")
+	verdict, err = gw.Reconcile(ctx, CloseRequest{Order: waiting})
+	require.NoError(t, err)
+	assert.Equal(t, Reconciliation{}, verdict)
+	_, status := fake.Payment("P1R1")
+	assert.Equal(t, "CANCELLED", status)
+	tradeNo, err := gw.QueryPayment(ctx, waiting)
+	require.NoError(t, err)
+	assert.Empty(t, tradeNo)
+
+	// A paid payment settles the invoice.
+	paid := startAntomPayment(t, gw, "P2R1")
+	tradeNo, err = gw.QueryPayment(ctx, paid)
+	require.NoError(t, err)
+	assert.Empty(t, tradeNo)
+	assert.Error(t, gw.ConfirmPayment(ctx, paid, &Notice{TradeNo: paid.TradeNo}), "not paid yet")
+	fake.SetStatus("P2R1", "SUCCESS")
+	require.NoError(t, gw.ConfirmPayment(ctx, paid, &Notice{TradeNo: paid.TradeNo}))
+	assert.Error(t, gw.ConfirmPayment(ctx, paid, &Notice{TradeNo: "another"}))
+	assert.Error(t, gw.ConfirmPayment(ctx, &Order{OrderNo: "P2R1", PaymentAmount: 2000, PaymentCurrency: "CNY"}, &Notice{TradeNo: paid.TradeNo}),
+		"another amount than the expectation")
+	tradeNo, err = gw.QueryPayment(ctx, paid)
+	require.NoError(t, err)
+	assert.Equal(t, paid.TradeNo, tradeNo)
+	verdict, err = gw.Reconcile(ctx, CloseRequest{Order: paid, Explicit: true})
+	require.NoError(t, err)
+	assert.Equal(t, Reconciliation{TradeNo: paid.TradeNo}, verdict)
+
+	// A failed payment closes without a cancellation.
+	failed := startAntomPayment(t, gw, "P3R1")
+	fake.SetStatus("P3R1", "FAIL")
+	verdict, err = gw.Reconcile(ctx, CloseRequest{Order: failed})
+	require.NoError(t, err)
+	assert.Equal(t, Reconciliation{}, verdict)
+	assert.Len(t, fake.Requests("cancel"), 1)
+
+	// A payment the wallet has not confirmed, one an operator refunded, one
+	// Antom cannot cancel or report, and one that does not match the
+	// invoice keep it pending.
+	pending := startAntomPayment(t, gw, "P4R1")
+	fake.SetStatus("P4R1", "PENDING")
+	refunded := startAntomPayment(t, gw, "P5R1")
+	fake.SetStatus("P5R1", "SUCCESS")
+	fake.Refund("P5R1")
+	uncancellable := startAntomPayment(t, gw, "P6R1")
+	for name, o := range map[string]*Order{
+		"pending": pending, "refunded": refunded,
+		"another payment": {OrderNo: "P2R1", PaymentAmount: 1990, PaymentCurrency: "CNY", TradeNo: "another"},
+	} {
+		_, err = gw.Reconcile(ctx, CloseRequest{Order: o})
+		assert.ErrorIs(t, err, ErrUnconfirmed, name)
+	}
+	assert.Error(t, gw.ConfirmPayment(ctx, refunded, &Notice{TradeNo: refunded.TradeNo}))
+	tradeNo, err = gw.QueryPayment(ctx, refunded)
+	require.NoError(t, err)
+	assert.Empty(t, tradeNo)
+	fake.Refuse("cancel", "PROCESS_FAIL")
+	_, err = gw.Reconcile(ctx, CloseRequest{Order: uncancellable, Explicit: true})
+	assert.ErrorIs(t, err, ErrUnconfirmed)
+	fake.Refuse("inquiryPayment", "SYSTEM_ERROR")
+	_, err = gw.Reconcile(ctx, CloseRequest{Order: uncancellable})
+	assert.ErrorIs(t, err, ErrUnconfirmed)
+	_, err = gw.QueryPayment(ctx, uncancellable)
+	assert.Error(t, err)
 }

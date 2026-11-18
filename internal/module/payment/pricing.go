@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -318,20 +319,28 @@ func init() {
 }
 
 // chargeRatePairs are the pairs a site in currency site converts prices
-// with for gateways that collect another currency: to CNY when an enabled
-// EPay method collects CNY.
+// with for gateways that collect another currency: to what an enabled EPay
+// method (CNY) or Antom method collects.
 func chargeRatePairs(site string) ([]currency.Pair, error) {
-	if site == "CNY" {
-		return nil, nil
-	}
 	methods, err := store.ListMethods()
 	if err != nil {
 		return nil, err
 	}
+	uses := map[string]string{gateway.PlatformEPay: currency.RateUseEPay, gateway.PlatformAntom: currency.RateUseAntom}
+	var pairs []currency.Pair
 	for _, method := range methods {
-		if method.Enabled && method.Platform == gateway.PlatformEPay {
-			return []currency.Pair{{From: site, To: "CNY", Use: currency.RateUseEPay}}, nil
+		use := uses[method.Platform]
+		if !method.Enabled || use == "" {
+			continue
+		}
+		gw, err := openGateway(method)
+		if err != nil {
+			continue
+		}
+		pair := currency.Pair{From: site, To: gw.ChargeCurrency(), Use: use}
+		if pair.To != "" && pair.To != site && !slices.Contains(pairs, pair) {
+			pairs = append(pairs, pair)
 		}
 	}
-	return nil, nil
+	return pairs, nil
 }
