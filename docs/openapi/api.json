@@ -3113,6 +3113,58 @@
                 }
             }
         },
+        "/api/data/perf-metrics/summary": {
+            "get": {
+                "security": [
+                    {
+                        "AdminAuth": []
+                    }
+                ],
+                "description": "统计所有设置了分组倍率的分组和 auto 分组，供管理端首页使用。",
+                "tags": [
+                    "数据统计"
+                ],
+                "summary": "获取全站模型性能概览",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "统计最近多少小时，默认 24，最大 720",
+                        "name": "hours",
+                        "in": "query"
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "multi",
+                        "description": "要返回近 7 天成功率序列的模型，可重复，最多 50 个",
+                        "name": "recent_model",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/controller.perfMetricsSummaryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/common.ApiResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/common.ApiResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/data/self": {
             "get": {
                 "security": [
@@ -8422,7 +8474,7 @@
         },
         "/api/perf-metrics": {
             "get": {
-                "description": "定价模块公开时登录可选，要求登录或已关闭时需要登录。",
+                "description": "定价模块公开时登录可选，要求登录或已关闭时需要登录。只返回访问者可用的分组。",
                 "tags": [
                     "系统"
                 ],
@@ -8472,7 +8524,7 @@
         },
         "/api/perf-metrics/summary": {
             "get": {
-                "description": "定价模块公开时登录可选，要求登录或已关闭时需要登录。",
+                "description": "定价模块公开时登录可选，要求登录或已关闭时需要登录。只统计访问者可用的分组。",
                 "tags": [
                     "系统"
                 ],
@@ -9435,7 +9487,7 @@
         },
         "/api/pricing": {
             "get": {
-                "description": "访问取决于顶部导航的定价模块设置：公开（登录可选）、需要登录，或关闭（返回 403，带 Authorization 的请求改为要求超级管理员）。已登录时按用户分组返回可用分组和分组倍率。",
+                "description": "访问取决于顶部导航的定价模块设置：公开（登录可选）、需要登录，或关闭（返回 403，带 Authorization 的请求改为要求超级管理员）。只返回访问者可用分组里的模型，每个模型的 enable_groups 和 group_ratio 也只含这些分组；已登录时分组倍率套用用户分组的组间倍率。",
                 "tags": [
                     "系统"
                 ],

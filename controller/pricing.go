@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -24,34 +25,33 @@ type pricingResponse struct {
 }
 
 // @Summary		获取模型定价
-// @Description	访问取决于顶部导航的定价模块设置：公开（登录可选）、需要登录，或关闭（返回 403，带 Authorization 的请求改为要求超级管理员）。已登录时按用户分组返回可用分组和分组倍率。
+// @Description	访问取决于顶部导航的定价模块设置：公开（登录可选）、需要登录，或关闭（返回 403，带 Authorization 的请求改为要求超级管理员）。只返回访问者可用分组里的模型，每个模型的 enable_groups 和 group_ratio 也只含这些分组；已登录时分组倍率套用用户分组的组间倍率。
 // @Tags			系统
 // @Success		200	{object}	pricingResponse
 // @Router			/api/pricing [get]
 func GetPricing(c *gin.Context) {
 	userId := c.GetInt("id")
-	groupRatio := map[string]float64{}
-	maps.Copy(groupRatio, ratio_setting.GetGroupRatioCopy())
-	var group string
-	if userId > 0 {
-		user, err := model.GetUserCache(userId)
-		if err == nil {
-			group = user.Group
-			for g := range groupRatio {
-				ratio, ok := ratio_setting.GetGroupGroupRatio(group, g)
-				if ok {
-					groupRatio[g] = ratio
-				}
-			}
-		}
-	}
-
-	usableGroup := service.GetUserUsableGroups(group)
+	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	usableGroup := service.GetUserUsableGroups(userGroup)
 	pricing := model.UsableCatalog(slices.Collect(maps.Keys(usableGroup)), model.AcceptsUnpricedModels(userId))
-	// check groupRatio contains usableGroup
-	for group := range ratio_setting.GetGroupRatioCopy() {
+	// The catalog entries are copies, but their EnableGroup slices belong to
+	// the pricing cache every viewer shares, so build new ones.
+	for i := range pricing {
+		pricing[i].EnableGroup = slices.DeleteFunc(slices.Clone(pricing[i].EnableGroup), func(group string) bool {
+			_, ok := usableGroup[group]
+			return !ok
+		})
+	}
+	groupRatio := ratio_setting.GetGroupRatioCopy()
+	for group := range groupRatio {
 		if _, ok := usableGroup[group]; !ok {
 			delete(groupRatio, group)
+			continue
+		}
+		if userGroup != "" {
+			if ratio, ok := ratio_setting.GetGroupGroupRatio(userGroup, group); ok {
+				groupRatio[group] = ratio
+			}
 		}
 	}
 
@@ -62,7 +62,7 @@ func GetPricing(c *gin.Context) {
 		GroupRatio:        groupRatio,
 		UsableGroup:       usableGroup,
 		SupportedEndpoint: model.GetSupportedEndpointMap(),
-		AutoGroups:        service.GetUserAutoGroup(group),
+		AutoGroups:        service.GetUserAutoGroup(userGroup),
 		PricingVersion:    "a42d372ccf0b5dd13ecf71203521f9d2",
 	})
 }

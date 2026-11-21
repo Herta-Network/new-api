@@ -43,6 +43,38 @@ func insertTask(t *testing.T, task *Task) {
 	require.NoError(t, DB.Create(task).Error)
 }
 
+// Upstream progress can reach 100% before a task is terminal, so the polling
+// queries select tasks by status alone.
+func TestUnfinishedTaskQueries(t *testing.T) {
+	truncateTables(t)
+	assert.False(t, HasUnfinishedSyncTasks())
+
+	const cutoff int64 = 1_800_000_000
+	for _, status := range []TaskStatus{TaskStatusNotStart, TaskStatusSubmitted, TaskStatusQueued, TaskStatusInProgress, TaskStatusSuccess, TaskStatusFailure} {
+		for _, progress := range []string{"99%", "100%"} {
+			t.Run(string(status)+"/"+progress, func(t *testing.T) {
+				task := &Task{TaskID: "query_candidate", Status: status, Progress: progress, SubmitTime: cutoff - 1}
+				insertTask(t, task)
+				t.Cleanup(func() { assert.NoError(t, DB.Delete(task).Error) })
+				unfinished := status != TaskStatusSuccess && status != TaskStatusFailure
+				assert.Equal(t, unfinished, HasUnfinishedSyncTasks())
+				if unfinished {
+					require.Len(t, GetAllUnFinishSyncTasks(1), 1)
+					assert.Equal(t, task.ID, GetAllUnFinishSyncTasks(1)[0].ID)
+					require.Len(t, GetTimedOutUnfinishedTasks(cutoff, 1), 1)
+					assert.Equal(t, task.ID, GetTimedOutUnfinishedTasks(cutoff, 1)[0].ID)
+				} else {
+					assert.Empty(t, GetAllUnFinishSyncTasks(1))
+					assert.Empty(t, GetTimedOutUnfinishedTasks(cutoff, 1))
+				}
+				require.NoError(t, DB.Model(task).Update("submit_time", cutoff).Error)
+				assert.Empty(t, GetTimedOutUnfinishedTasks(cutoff, 1), "the timeout cutoff is exclusive")
+				assert.Equal(t, unfinished, HasUnfinishedSyncTasks())
+			})
+		}
+	}
+}
+
 func TestGetTaskForProtocolObservationScopesOwnerAndPlatform(t *testing.T) {
 	truncateTables(t)
 	task := &Task{
