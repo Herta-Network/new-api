@@ -239,6 +239,7 @@ SQLite and MySQL are not supported, and there is no built-in migration from them
 | `SQL_DSN` | Required main database connection, such as `postgresql://user:password@host:5432/new-api`; the service does not start without it |
 | `LOG_SQL_DSN` | Optional separate log database (PostgreSQL or ClickHouse); unset writes logs to the main database |
 | `REDIS_CONN_STRING` | Redis connection string |
+| `REDIS_KEY_PREFIX` | Optional prefix, such as `newapi:`, of every Redis key and Pub/Sub channel, so a shared Redis can limit new-api's ACL user to `~newapi:*` and `&newapi:*`; unset keeps the current names |
 | `SESSION_SECRET` | Persistent authentication secret; all nodes must use the same value |
 | `CRYPTO_SECRET` | Defaults to `SESSION_SECRET`; nodes sharing Redis must use the same effective value |
 | `FRONTEND_ORIGINS` | Optional: console origins the console API admits in CORS besides the Frontend Address, which setup records; comma-separated exact origins, without paths or wildcards. Replaces the deprecated `SESSION_COOKIE_SECURE` and `SESSION_COOKIE_TRUSTED_URL` |

@@ -38,6 +38,12 @@ func InitRedisClient() (err error) {
 	}
 	opt.PoolSize = GetEnvOrDefault("REDIS_POOL_SIZE", 10)
 	RDB = redis.NewClient(opt)
+	if err := UseRedisKeyPrefix(RDB, os.Getenv("REDIS_KEY_PREFIX")); err != nil {
+		FatalLog(LogText("invalid REDIS_KEY_PREFIX: %s", err.Error()))
+	}
+	if RedisKeyPrefix != "" {
+		SysLog(LogText("Redis key prefix: %s", RedisKeyPrefix))
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
