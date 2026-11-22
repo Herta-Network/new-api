@@ -484,45 +484,6 @@ func normalizeLookupValues(values []string) []string {
 	return normalized
 }
 
-func GetPreferredModelOwnerChannelTypes(modelNames []string, groups []string) (map[string]int, error) {
-	result := make(map[string]int)
-	modelNames = normalizeLookupValues(modelNames)
-	if len(modelNames) == 0 {
-		return result, nil
-	}
-
-	type row struct {
-		Model       string
-		ChannelType int
-	}
-	var rows []row
-
-	query := DB.Table("abilities").
-		Select("abilities.model as model, channels.type as channel_type").
-		Joins("JOIN channels ON abilities.channel_id = channels.id").
-		Where("abilities.model IN ? AND abilities.enabled = ? AND channels.status = ?", modelNames, true, common.ChannelStatusEnabled).
-		Order("COALESCE(abilities.priority, 0) DESC").
-		Order("abilities.weight DESC").
-		Order("abilities.channel_id ASC")
-
-	groups = normalizeLookupValues(groups)
-	if len(groups) > 0 {
-		query = query.Where("abilities."+commonGroupCol+" IN ?", groups)
-	}
-
-	if err := query.Scan(&rows).Error; err != nil {
-		return nil, err
-	}
-
-	for _, r := range rows {
-		if _, ok := result[r.Model]; ok {
-			continue
-		}
-		result[r.Model] = r.ChannelType
-	}
-	return result, nil
-}
-
 func SearchModels(keyword string, vendor string, status string, syncOfficial string, offset int, limit int) ([]*Model, int64, error) {
 	var models []*Model
 	db := DB.Model(&Model{})

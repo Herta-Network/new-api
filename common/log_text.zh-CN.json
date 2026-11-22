@@ -63,7 +63,6 @@
   "GetPasskeyByCredentialID: passkey not found for credential ID length %d": "GetPasskeyByCredentialID: 未找到凭证 ID 对应的通行密钥，凭证 ID 长度 %d",
   "GetPasskeyByUserID: database error for user %d: %v": "GetPasskeyByUserID: 查询用户 %d 时数据库出错: %v",
   "GetPasskeyByUserID: empty user ID": "GetPasskeyByUserID: 用户 ID 为空",
-  "GetPreferredModelOwnerChannelTypes error: %v": "GetPreferredModelOwnerChannelTypes 出错: %v",
   "InitChannelCache failed: %s": "InitChannelCache 失败: %s",
   "InitChannelCache panic: %v": "InitChannelCache 发生 panic: %v",
   "InitChannelCache panic: %v, retrying once": "InitChannelCache 发生 panic: %v，重试一次",

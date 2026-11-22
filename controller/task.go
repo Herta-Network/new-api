@@ -541,7 +541,12 @@ func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskD
 				task.Username = user.Username
 			}
 		}
-		item := relay.TaskModel2Dto(task)
+		var item *dto.TaskDto
+		if viewerRole >= common.RoleAdminUser {
+			item = relay.TaskModel2Dto(task)
+		} else {
+			item = relay.UserTaskModel2Dto(task)
+		}
 		item.LegacyVideoAvailable = legacyVideoAvailable(task)
 		item.ResultDiscarded = task.PrivateData.ResultDiscarded
 		if task.Status == model.TaskStatusSuccess {

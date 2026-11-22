@@ -23,6 +23,10 @@ var legacySensitiveLogOtherKeys = []string{
 	"channel_name",
 	"channel_type",
 	"reject_reason",
+	// The model a channel maps the requested one to, kept in admin_info.
+	"is_model_mapped",
+	"upstream_model_name",
+	"response_model",
 }
 
 type logOtherVisibility int

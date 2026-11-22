@@ -192,6 +192,10 @@ func RecordRelayErrorLog(c *gin.Context, channelId int, err *types.NewAPIError, 
 	other.SetPublic("error_type", err.GetErrorType())
 	other.SetPublic("error_code", err.GetErrorCode())
 	other.SetPublic("status_code", err.StatusCode)
+	if relayInfo != nil && relayInfo.ChannelMeta != nil && relayInfo.IsModelMapped {
+		// The user view hides this name in the content, see formatUserLogs.
+		other.SetAdmin("upstream_model_name", relayInfo.UpstreamModelName)
+	}
 	AppendRelayLogAdminInfo(c, relayInfo, other)
 	appendRequestPluginRecord(relayInfo, other)
 	AppendResponseModelLogInfo(relayInfo, other)

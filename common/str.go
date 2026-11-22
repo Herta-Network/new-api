@@ -16,6 +16,40 @@ import (
 
 const LocalLogContentLimit = 2048
 
+// modelNameBytes are the bytes a model name continues with: a match next to
+// one is part of a longer name.
+const modelNameBytes = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_./"
+
+// ReplaceModelName replaces each whole occurrence of the model name name in
+// text with replacement. An occurrence inside a longer model name, such as
+// name followed by a date, is kept.
+func ReplaceModelName(text, name, replacement string) string {
+	if name == "" || name == replacement || !strings.Contains(text, name) {
+		return text
+	}
+	var b strings.Builder
+	start := 0
+	for {
+		i := strings.Index(text[start:], name)
+		if i < 0 {
+			break
+		}
+		i += start
+		end := i + len(name)
+		whole := (i == 0 || strings.IndexByte(modelNameBytes, text[i-1]) < 0) &&
+			(end == len(text) || strings.IndexByte(modelNameBytes, text[end]) < 0)
+		b.WriteString(text[start:i])
+		if whole {
+			b.WriteString(replacement)
+		} else {
+			b.WriteString(name)
+		}
+		start = end
+	}
+	b.WriteString(text[start:])
+	return b.String()
+}
+
 // LocalLogPreview limits log-only content unless debug logging is enabled.
 func LocalLogPreview(content string) string {
 	if DebugEnabled || len(content) <= LocalLogContentLimit {

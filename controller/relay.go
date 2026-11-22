@@ -116,7 +116,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if newAPIError != nil {
 			service.RecordRequestPolicyTermination(c, newAPIError)
 			logger.LogError(c, common.LogText("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
-			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
+			message := newAPIError.Error()
+			if relayInfo != nil && relayInfo.ChannelMeta != nil && relayInfo.IsModelMapped {
+				// The caller sees the model it asked for, never the one its
+				// channel maps it to.
+				message = common.ReplaceModelName(message, relayInfo.UpstreamModelName, relayInfo.OriginModelName)
+			}
+			newAPIError.SetMessage(common.MessageWithRequestId(message, requestId))
 			upstreamURLs := common.UpstreamAddresses(c)
 			if relayFormat != types.RelayFormatOpenAIRealtime && c.Writer.Written() &&
 				strings.HasPrefix(c.Writer.Header().Get("Content-Type"), "text/event-stream") {
@@ -174,6 +180,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 	relayInfo.SetRequestPluginIngress(ingressSteps, ingressRecord)
+	if relayFormat != types.RelayFormatOpenAIRealtime {
+		helper.HideMappedModel(c, relayInfo)
+	}
 
 	defer func() {
 		recovered := recover()
@@ -579,6 +588,7 @@ func RelayTask(c *gin.Context) {
 		})
 		return
 	}
+	helper.HideMappedModel(c, relayInfo)
 	if action := c.GetString("task_action"); action != "" {
 		relayInfo.Action = action
 	}

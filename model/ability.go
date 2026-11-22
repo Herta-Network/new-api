@@ -2,6 +2,8 @@ package model
 
 import (
 	"errors"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -232,7 +234,7 @@ func identityFilterRequiresKey(filters []dto.ChannelFilter) bool {
 }
 
 func (channel *Channel) AddAbilities(tx *gorm.DB) error {
-	models_ := strings.Split(channel.Models, ",")
+	models_ := channel.OfferedModels()
 	groups_ := strings.Split(channel.Group, ",")
 	abilitySet := make(map[string]struct{})
 	abilities := make([]Ability, 0, len(models_))
@@ -304,7 +306,7 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 	}
 
 	// Then add new abilities
-	models_ := channel.GetModels()
+	models_ := channel.OfferedModels()
 	groups_ := strings.Split(channel.Group, ",")
 	abilitySet := make(map[string]struct{})
 	abilities := make([]Ability, 0, len(models_))
@@ -371,6 +373,26 @@ func UpdateAbilityByTag(tag string, newTag *string, priority *int64, weight *uin
 }
 
 var fixLock = sync.Mutex{}
+
+// HideMappedUpstreamAbilities deletes the abilities channels saved before
+// mappings hid upstream names still have for their MappedUpstreamModels.
+// Running it again deletes nothing.
+func HideMappedUpstreamAbilities() error {
+	var channels []*Channel
+	if err := DB.Select("id", "models", "model_mapping").Where("model_mapping <> ?", "").Find(&channels).Error; err != nil {
+		return err
+	}
+	for _, channel := range channels {
+		upstream := channel.MappedUpstreamModels()
+		if len(upstream) == 0 {
+			continue
+		}
+		if err := DB.Where("channel_id = ? AND model IN ?", channel.Id, slices.Collect(maps.Keys(upstream))).Delete(&Ability{}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func FixAbility() (int, int, error) {
 	lock := fixLock.TryLock()

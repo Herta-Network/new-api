@@ -167,6 +167,37 @@ func TestLegacyLogOtherVisibilityIsRoleSeparated(t *testing.T) {
 	})
 }
 
+// A user's logs name the model they asked for, never the upstream model its
+// channel maps it to, in old rows that kept the mapping at the top level and
+// in rows that keep it in admin_info. Admins see the rows unchanged.
+func TestUserLogsHideMappedUpstreamModel(t *testing.T) {
+	const content = "upstream: model 'zz-upstream-real' not found; zz-upstream-real-0601 and zz-upstream-realtime differ"
+	legacy := common.MapToJsonStr(map[string]any{
+		"request_path":        "/v1/chat/completions",
+		"is_model_mapped":     true,
+		"upstream_model_name": "zz-upstream-real",
+		"response_model":      map[string]any{"upstream_model": "zz-upstream-real"},
+	})
+	scoped := common.MapToJsonStr(map[string]any{
+		"request_path": "/v1/chat/completions",
+		"admin_info":   map[string]any{"upstream_model_name": "zz-upstream-real"},
+	})
+	for name, other := range map[string]string{"legacy": legacy, "scoped": scoped} {
+		t.Run(name, func(t *testing.T) {
+			logs := []*Log{{ModelName: "zz-public-alias", Content: content, Other: other}}
+			formatUserLogs(logs, 0)
+			assert.Equal(t, "upstream: model 'zz-public-alias' not found; zz-upstream-real-0601 and zz-upstream-realtime differ", logs[0].Content)
+			assert.NotContains(t, logs[0].Other, "zz-upstream-real")
+			assert.Contains(t, logs[0].Other, "request_path")
+
+			admin := []*Log{{ModelName: "zz-public-alias", Content: content, Other: other}}
+			FormatAdminLogs(admin)
+			assert.Equal(t, content, admin[0].Content)
+			assert.Contains(t, admin[0].Other, "zz-upstream-real")
+		})
+	}
+}
+
 func TestLegacyRejectReasonDoesNotOverrideScopedValue(t *testing.T) {
 	other := common.MapToJsonStr(map[string]any{
 		"reject_reason": "legacy-value",

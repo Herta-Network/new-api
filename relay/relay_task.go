@@ -515,6 +515,10 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusBadRequest)
 		return
 	}
+	if props := originTask.Properties; props.UpstreamModelName != "" && props.UpstreamModelName != props.OriginModelName {
+		// Each format below names the model the caller asked for.
+		defer func() { respBody = helper.HideModelMembers(respBody, props.OriginModelName) }()
+	}
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
 
@@ -547,7 +551,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	// 通用 TaskDto 格式
 	respBody, err = common.Marshal(dto.TaskResponse[any]{
 		Code: "success",
-		Data: TaskModel2Dto(originTask),
+		Data: UserTaskModel2Dto(originTask),
 	})
 	if err != nil {
 		taskResp = service.TaskErrorWrapper(err, "marshal_response_failed", http.StatusInternalServerError)
@@ -715,4 +719,19 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Username:   task.Username,
 		Data:       task.Data,
 	}
+}
+
+// UserTaskModel2Dto is the task as its owner sees it: without the channel
+// that ran it, and naming the model the owner asked for wherever the channel
+// mapped it to another.
+func UserTaskModel2Dto(task *model.Task) *dto.TaskDto {
+	item := TaskModel2Dto(task)
+	item.ChannelId = 0
+	properties := task.Properties
+	if properties.UpstreamModelName != "" && properties.UpstreamModelName != properties.OriginModelName {
+		item.Data = helper.HideModelMembers(task.Data, properties.OriginModelName)
+	}
+	properties.UpstreamModelName = ""
+	item.Properties = properties
+	return item
 }

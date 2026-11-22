@@ -290,6 +290,9 @@ func migrateDB() error {
 	if err := MigrateSensitiveWords(); err != nil {
 		return fmt.Errorf("migrate sensitive words: %w", err)
 	}
+	if err := HideMappedUpstreamAbilities(); err != nil {
+		return fmt.Errorf("hide mapped upstream abilities: %w", err)
+	}
 	return InitializeExternalIdentityClaims()
 }
 

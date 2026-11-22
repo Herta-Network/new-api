@@ -73,6 +73,33 @@ func TestTaskLogDTOSeparatesUserAdminAndRootDetails(t *testing.T) {
 	assert.Contains(t, string(rootJSON), "upstream-private")
 }
 
+// A task's owner sees neither the channel that ran it nor the upstream model
+// the channel mapped the requested one to; admins see both.
+func TestTaskLogDTOHidesChannelAndMappedModelFromUsers(t *testing.T) {
+	task := &model.Task{
+		TaskID:    "task_mapped",
+		Platform:  "sora",
+		ChannelId: 801,
+		Properties: model.Properties{
+			OriginModelName:   "zz-public-alias",
+			UpstreamModelName: "zz-upstream-real",
+		},
+		Data: []byte(`{"id":"video_1","model":"zz-upstream-real","status":"completed"}`),
+	}
+
+	userJSON, err := common.Marshal(tasksToDto([]*model.Task{task}, false, common.RoleCommonUser)[0])
+	require.NoError(t, err)
+	assert.NotContains(t, string(userJSON), "zz-upstream-real")
+	assert.NotContains(t, string(userJSON), "801")
+	assert.Contains(t, string(userJSON), `"model":"zz-public-alias"`)
+	assert.Contains(t, string(userJSON), `"origin_model_name":"zz-public-alias"`)
+
+	adminView := tasksToDto([]*model.Task{task}, false, common.RoleAdminUser)[0]
+	assert.Equal(t, 801, adminView.ChannelId)
+	assert.Equal(t, task.Properties, adminView.Properties)
+	assert.JSONEq(t, string(task.Data), string(adminView.Data))
+}
+
 func TestTaskLogDTODoesNotInventHistoricalPluginProvenance(t *testing.T) {
 	task := &model.Task{
 		TaskID:   "task_without_snapshot",

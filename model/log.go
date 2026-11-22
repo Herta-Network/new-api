@@ -1,6 +1,7 @@
 package model
 
 import (
+	"cmp"
 	"context"
 	"strings"
 	"time"
@@ -115,6 +116,20 @@ func assignDisplayLogIds(logs []*Log, startIdx int) {
 func formatUserLogs(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].ChannelName = ""
+		// A user sees the model they asked for where an upstream message
+		// named the one its channel maps it to.
+		if strings.Contains(logs[i].Other, `"upstream_model_name"`) {
+			var mapped struct {
+				UpstreamModelName string `json:"upstream_model_name"`
+				AdminInfo         struct {
+					UpstreamModelName string `json:"upstream_model_name"`
+				} `json:"admin_info"`
+			}
+			if common.UnmarshalJsonStr(logs[i].Other, &mapped) == nil {
+				upstream := cmp.Or(mapped.AdminInfo.UpstreamModelName, mapped.UpstreamModelName)
+				logs[i].Content = common.ReplaceModelName(logs[i].Content, upstream, logs[i].ModelName)
+			}
+		}
 		logs[i].Other = formatLogOtherJSON(logs[i].Other, logOtherVisibilityUser)
 	}
 	assignDisplayLogIds(logs, startIdx)

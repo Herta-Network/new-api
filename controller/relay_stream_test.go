@@ -301,6 +301,101 @@ func TestRelayStreamErrorAfterKeepAlive(t *testing.T) {
 	}
 }
 
+// A response to a request whose channel mapped its model names the model the
+// caller asked for: in every model member of JSON and event-stream bodies, and
+// wherever an error names the upstream model. Other bodies, and responses to
+// unmapped requests, pass unchanged.
+func TestRelayResponsesNameTheRequestedModel(t *testing.T) {
+	mapped := &relaycommon.RelayInfo{OriginModelName: "zz-public-alias", ChannelMeta: &relaycommon.ChannelMeta{
+		IsModelMapped: true, UpstreamModelName: "zz-upstream-real",
+	}}
+	respond := func(info *relaycommon.RelayInfo, write func(c *gin.Context)) string {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		helper.HideMappedModel(c, info)
+		write(c)
+		return recorder.Body.String()
+	}
+	const completion = `{"id":"1","model":"zz-upstream-real-2024-08-06","choices":[{"message":{"content":"{\"model\": \"kept\"}"}}]}`
+	writeCompletion := func(c *gin.Context) { c.Data(http.StatusOK, "application/json", []byte(completion)) }
+	assert.JSONEq(t, `{"id":"1","model":"zz-public-alias","choices":[{"message":{"content":"{\"model\": \"kept\"}"}}]}`, respond(mapped, writeCompletion))
+	unmapped := &relaycommon.RelayInfo{OriginModelName: "zz-upstream-real", ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "zz-upstream-real"}}
+	assert.Equal(t, completion, respond(unmapped, writeCompletion))
+
+	stream := respond(mapped, func(c *gin.Context) {
+		helper.SetEventStreamHeaders(c)
+		require.NoError(t, helper.StringData(c, `{"type":"message_start","message":{"model": "zz-upstream-real"}}`))
+		require.NoError(t, helper.StringData(c, `{"modelVersion":"zz-upstream-real-001"}`))
+	})
+	assert.Contains(t, stream, `"message":{"model": "zz-public-alias"}`)
+	assert.Contains(t, stream, `{"modelVersion":"zz-public-alias"}`)
+	assert.NotContains(t, stream, "zz-upstream-real")
+
+	failure := respond(mapped, func(c *gin.Context) {
+		c.JSON(http.StatusNotFound, OpenAIErrorResponse{Error: types.OpenAIError{Message: "The model `zz-upstream-real` does not exist"}})
+	})
+	assert.Contains(t, failure, "The model `zz-public-alias` does not exist")
+	assert.NotContains(t, failure, "zz-upstream-real")
+
+	const audio = `{"model":"zz-upstream-real"}`
+	assert.Equal(t, audio, respond(mapped, func(c *gin.Context) { c.Data(http.StatusOK, "audio/mpeg", []byte(audio)) }))
+}
+
+// Rewriting a mapped response changes its length, so a client of a real
+// server must still read the whole body: as one write after a declared
+// Content-Length (service.IOCopyBytesGracefully, which Claude and Gemini
+// native, OpenAI and Responses non-stream answers use), or as several.
+func TestRelayResponsesRewriteKeepsBodyWhole(t *testing.T) {
+	const upstream = "zz-upstream-real"
+	cases := []struct {
+		name, origin, body string
+		parts              int
+	}{
+		{"claude longer name", "zz-public-alias-with-a-longer-name", `{"type":"message","model":"zz-upstream-real","content":[]}`, 1},
+		{"claude shorter name", "zz-a", `{"type":"message","model":"zz-upstream-real","content":[]}`, 1},
+		{"gemini longer name", "zz-public-alias-with-a-longer-name", `{"candidates":[],"modelVersion":"zz-upstream-real"}`, 1},
+		{"gemini shorter name", "zz-a", `{"candidates":[],"modelVersion":"zz-upstream-real"}`, 1},
+		{"declared length in two writes", "zz-public-alias-with-a-longer-name", `{"id":"1","object":"chat.completion","model":"zz-upstream-real"}`, 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := gin.New()
+			engine.POST("/v1/messages", func(c *gin.Context) {
+				helper.HideMappedModel(c, &relaycommon.RelayInfo{OriginModelName: tc.origin, ChannelMeta: &relaycommon.ChannelMeta{
+					IsModelMapped: true, UpstreamModelName: upstream,
+				}})
+				if tc.parts == 1 {
+					service.IOCopyBytesGracefully(c, &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": {"application/json"}},
+					}, []byte(tc.body))
+					return
+				}
+				c.Header("Content-Type", "application/json")
+				c.Header("Content-Length", strconv.Itoa(len(tc.body)))
+				half := len(tc.body) / 2
+				_, _ = c.Writer.WriteString(tc.body[:half])
+				_, _ = c.Writer.WriteString(tc.body[half:])
+			})
+			gateway := httptest.NewServer(engine)
+			defer gateway.Close()
+
+			client := &http.Client{Timeout: 5 * time.Second}
+			response, err := client.Post(gateway.URL+"/v1/messages", "application/json", strings.NewReader("{}"))
+			require.NoError(t, err)
+			defer response.Body.Close()
+			body, err := io.ReadAll(response.Body)
+			require.NoError(t, err)
+			var decoded map[string]any
+			require.NoError(t, common.Unmarshal(body, &decoded), string(body))
+			want := strings.ReplaceAll(tc.body, upstream, tc.origin)
+			assert.JSONEq(t, want, string(body))
+			assert.NotContains(t, string(body), upstream)
+		})
+	}
+}
+
 func TestStreamKeepAliveCancellation(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)

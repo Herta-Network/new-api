@@ -23,7 +23,7 @@ func SetRelayRouter(router *gin.Engine) {
 	modelsRouter.Use(middleware.TokenAuth())
 	{
 		//	@Summary		列出模型
-		//	@Description	列出调用者的令牌可用的模型。按请求头选择格式：带 x-api-key 和 anthropic-version 时返回 Anthropic 格式（anthropicModelListResponse：data、first_id、has_more、last_id）；带 x-goog-api-key 或查询参数 key 时返回 Gemini 格式（geminiModelListResponse，同 GET /v1beta/models）；否则返回 OpenAI 格式。
+		//	@Description	列出调用者的令牌可用的模型，不含渠道模型映射的目标名。按请求头选择格式：带 x-api-key 和 anthropic-version 时返回 Anthropic 格式（anthropicModelListResponse：data、first_id、has_more、last_id）；带 x-goog-api-key 或查询参数 key 时返回 Gemini 格式（geminiModelListResponse，同 GET /v1beta/models）；否则返回 OpenAI 格式，owned_by 是模型广场显示的供应商，没有时为 system。
 		//	@Tags			模型列表
 		//	@Success		200	{object}	controller.openAIModelListResponse
 		//	@Security		TokenAuth
@@ -43,7 +43,7 @@ func SetRelayRouter(router *gin.Engine) {
 		})
 
 		//	@Summary		查询模型
-		//	@Description	带 x-api-key 和 anthropic-version 时返回 Anthropic 格式（AnthropicModel），否则返回 OpenAI 格式。只查各渠道适配器内置的模型清单；不在清单里的模型仍返回 HTTP 200，响应体是 OpenAIErrorResponse，code 为 model_not_found。
+		//	@Description	带 x-api-key 和 anthropic-version 时返回 Anthropic 格式（AnthropicModel），否则返回 OpenAI 格式。只查 GET /v1/models 会列出的模型；不在其中的模型仍返回 HTTP 200，响应体是 OpenAIErrorResponse，code 为 model_not_found。
 		//	@Tags			模型列表
 		//	@Param			model	path		string	true	"模型名"
 		//	@Success		200		{object}	dto.OpenAIModels

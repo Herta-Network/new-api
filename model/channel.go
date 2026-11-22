@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	hostreasoning "github.com/QuantumNous/new-api/setting/reasoning"
 
 	"github.com/samber/lo"
 	"gorm.io/gorm"
@@ -306,6 +307,38 @@ func (channel *Channel) GetModels() []string {
 		return []string{}
 	}
 	return strings.Split(strings.Trim(channel.Models, ","), ",")
+}
+
+// MappedUpstreamModels returns the upstream names the channel's
+// model_mapping sends the models it lists to, following chains and base names
+// as relay does. A mapping hides these names behind the ones that map to
+// them: the channel neither lists nor serves them, though another channel
+// offering them without a mapping does.
+func (channel *Channel) MappedUpstreamModels() map[string]bool {
+	mapping := make(map[string]string)
+	if raw := channel.GetModelMapping(); raw == "" || common.UnmarshalJsonStr(raw, &mapping) != nil {
+		return nil
+	}
+	listed := make(map[string]bool)
+	for _, name := range channel.GetModels() {
+		listed[name] = true
+		listed[hostreasoning.BaseModelName(name)] = true
+	}
+	upstream := make(map[string]bool)
+	for name := range mapping {
+		target, cyclic := followChannelModelMapping(mapping, name)
+		if listed[name] && !cyclic && target != name {
+			upstream[target] = true
+		}
+	}
+	return upstream
+}
+
+// OfferedModels lists the channel's models without its MappedUpstreamModels:
+// the models it has abilities for and serves.
+func (channel *Channel) OfferedModels() []string {
+	upstream := channel.MappedUpstreamModels()
+	return slices.DeleteFunc(channel.GetModels(), func(name string) bool { return upstream[name] })
 }
 
 func (channel *Channel) GetGroups() []string {
@@ -952,6 +985,8 @@ func EditChannelByTag(tag string, newTag *string, modelMapping *string, models *
 		updatedTag = *newTag
 	}
 	if modelMapping != nil {
+		// The mapping decides which listed models a channel offers.
+		shouldReCreateAbilities = true
 		updateData.ModelMapping = modelMapping
 	}
 	if models != nil && *models != "" {

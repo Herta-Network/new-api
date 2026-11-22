@@ -271,7 +271,7 @@ func UpdateScheduledChannelLocked(ctx context.Context, channelID int, update fun
 					if group2model2channels[group] == nil {
 						group2model2channels[group] = make(map[string][]int)
 					}
-					for _, model := range cached.GetModels() {
+					for _, model := range cached.OfferedModels() {
 						ids := group2model2channels[group][model]
 						if slices.Contains(ids, channelID) {
 							continue

@@ -386,6 +386,133 @@ func TestModelListsShareCatalogPolicy(t *testing.T) {
 	assert.Equal(t, 37.5, pricing["zz-catalog-unpriced"].ModelRatio)
 }
 
+// A channel's model_mapping sends the names callers use to upstream names.
+// The channel neither serves nor lists a name it maps to; a channel offering
+// that name without mapping to it still does. No model list names a channel:
+// owned_by is the vendor of the model's metadata, else "system".
+func TestModelMappingHidesUpstreamModels(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1005,
+		Username: "mapped-model-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	vendor := &model.Vendor{Name: "Acme Labs", Status: 1}
+	require.NoError(t, db.Create(vendor).Error)
+	require.NoError(t, (&model.Model{ModelName: "zz-public-alias", VendorID: vendor.Id, Status: 1}).Insert())
+	mapping := `{"zz-public-alias":"zz-upstream-real","zz-alias-b":"zz-offered-elsewhere"}`
+	for _, channel := range []*model.Channel{
+		{
+			Id: 801, Type: constant.ChannelTypeOpenRouter, Key: "mapped-key", Status: common.ChannelStatusEnabled,
+			Name: "zz-secret-channel", Group: "default", ModelMapping: &mapping,
+			Models: "zz-public-alias,zz-upstream-real,zz-alias-b,zz-offered-elsewhere,zz-plain",
+		},
+		{
+			Id: 802, Type: constant.ChannelTypeOpenAI, Key: "plain-key", Status: common.ChannelStatusEnabled,
+			Name: "zz-other-channel", Group: "default", Models: "zz-offered-elsewhere",
+		},
+	} {
+		require.NoError(t, channel.Insert())
+	}
+	// A channel saved before mappings hid upstream names keeps abilities for
+	// them until startup deletes those, once.
+	require.NoError(t, db.Create(&model.Ability{Group: "default", Model: "zz-upstream-real", ChannelId: 801, Enabled: true}).Error)
+	require.NoError(t, model.HideMappedUpstreamAbilities())
+	require.NoError(t, model.HideMappedUpstreamAbilities())
+
+	originalMemoryCache := common.MemoryCacheEnabled
+	t.Cleanup(func() { common.MemoryCacheEnabled = originalMemoryCache })
+	for _, memoryCache := range []bool{false, true} {
+		common.MemoryCacheEnabled = memoryCache
+		model.InitChannelCache()
+		served := make(map[string]int)
+		for _, name := range []string{"zz-public-alias", "zz-upstream-real", "zz-offered-elsewhere"} {
+			if channel, _ := model.GetRandomSatisfiedChannel("default", name, 0, nil); channel != nil {
+				served[name] = channel.Id
+			}
+		}
+		assert.Equal(t, map[string]int{"zz-public-alias": 801, "zz-offered-elsewhere": 802}, served, "memory cache %t", memoryCache)
+	}
+	common.MemoryCacheEnabled = originalMemoryCache
+
+	expected := []string{"zz-alias-b", "zz-offered-elsewhere", "zz-plain", "zz-public-alias"}
+	serve := func(target, modelParam string, handle gin.HandlerFunc) []byte {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodGet, target, nil)
+		ctx.Params = gin.Params{{Key: "model", Value: modelParam}}
+		ctx.Set("id", 1005)
+		handle(ctx)
+		require.Equal(t, http.StatusOK, recorder.Code)
+		return recorder.Body.Bytes()
+	}
+	serveListed := func(target, modelParam string, handle gin.HandlerFunc) []byte {
+		body := serve(target, modelParam, handle)
+		for _, leak := range []string{"zz-secret-channel", "zz-other-channel", "zz-upstream-real", "openrouter"} {
+			assert.NotContains(t, string(body), leak, target)
+		}
+		return body
+	}
+
+	var openAI openAIModelListResponse
+	require.NoError(t, common.Unmarshal(serveListed("/v1/models", "", func(c *gin.Context) {
+		ListModels(c, constant.ChannelTypeOpenAI)
+	}), &openAI))
+	owners := make(map[string]string)
+	for _, item := range openAI.Data {
+		owners[item.Id] = item.OwnedBy
+	}
+	assert.Equal(t, map[string]string{
+		"zz-alias-b":           "system",
+		"zz-offered-elsewhere": "system",
+		"zz-plain":             "system",
+		"zz-public-alias":      "Acme Labs",
+	}, owners)
+
+	var anthropic anthropicModelListResponse
+	require.NoError(t, common.Unmarshal(serveListed("/v1/models", "", func(c *gin.Context) {
+		ListModels(c, constant.ChannelTypeAnthropic)
+	}), &anthropic))
+	var anthropicIDs []string
+	for _, item := range anthropic.Data {
+		anthropicIDs = append(anthropicIDs, item.ID)
+	}
+	assert.Equal(t, expected, anthropicIDs)
+
+	var gemini geminiModelListResponse
+	require.NoError(t, common.Unmarshal(serveListed("/v1beta/models", "", func(c *gin.Context) {
+		ListModels(c, constant.ChannelTypeGemini)
+	}), &gemini))
+	var geminiNames []string
+	for _, item := range gemini.Models {
+		geminiNames = append(geminiNames, fmt.Sprint(item.Name))
+	}
+	assert.Equal(t, expected, geminiNames)
+
+	var retrieved dto.OpenAIModels
+	require.NoError(t, common.Unmarshal(serveListed("/v1/models/zz-public-alias", "zz-public-alias", func(c *gin.Context) {
+		RetrieveModel(c, constant.ChannelTypeOpenAI)
+	}), &retrieved))
+	assert.Equal(t, "zz-public-alias", retrieved.Id)
+	assert.Equal(t, "Acme Labs", retrieved.OwnedBy)
+	var missing OpenAIErrorResponse
+	require.NoError(t, common.Unmarshal(serve("/v1/models/zz-upstream-real", "zz-upstream-real", func(c *gin.Context) {
+		RetrieveModel(c, constant.ChannelTypeOpenAI)
+	}), &missing))
+	assert.Equal(t, "model_not_found", missing.Error.Code)
+
+	var user userModelsResponse
+	require.NoError(t, common.Unmarshal(serveListed("/api/user/self/models", "", GetUserModels), &user))
+	assert.Equal(t, expected, user.Data)
+
+	var pricing pricingResponse
+	require.NoError(t, common.Unmarshal(serveListed("/api/pricing", "", GetPricing), &pricing))
+	assert.ElementsMatch(t, expected, slices.Collect(maps.Keys(pricingByModelName(pricing.Data))))
+}
+
 func TestListModelsIncludesTieredBillingModel(t *testing.T) {
 	withSelfUseModeDisabled(t)
 	withTieredBillingConfig(t, map[string]string{

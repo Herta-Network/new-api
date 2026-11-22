@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -28,7 +27,6 @@ import (
 // https://platform.openai.com/docs/api-reference/models/list
 
 var openAIModels []dto.OpenAIModels
-var openAIModelsMap map[string]dto.OpenAIModels
 var channelId2Models map[int][]string
 
 func init() {
@@ -89,10 +87,6 @@ func init() {
 			OwnedBy: "midjourney",
 		})
 	}
-	openAIModelsMap = make(map[string]dto.OpenAIModels)
-	for _, aiModel := range openAIModels {
-		openAIModelsMap[aiModel.Id] = aiModel
-	}
 	channelId2Models = make(map[int][]string)
 	for i := 1; i <= constant.ChannelTypeDummy; i++ {
 		apiType, success := common.ChannelType2APIType(i)
@@ -133,57 +127,19 @@ func channelTypePluginModels(channelType int) []string {
 	return models
 }
 
-func channelOwnerName(channelType int) string {
-	apiType, success := common.ChannelType2APIType(channelType)
-	if !success {
-		return strings.ToLower(constant.GetChannelTypeName(channelType))
-	}
-	adaptor := relay.GetAdaptor(apiType)
-	if adaptor == nil {
-		return strings.ToLower(constant.GetChannelTypeName(channelType))
-	}
-	adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
-		ChannelType: channelType,
-	}})
-	if name := strings.TrimSpace(adaptor.GetChannelName()); name != "" {
-		return name
-	}
-	return strings.ToLower(constant.GetChannelTypeName(channelType))
-}
+// modelOwnerSystem owns a model whose metadata names no vendor, as OpenAI
+// reports the models its platform owns.
+const modelOwnerSystem = "system"
 
-func getPreferredModelOwners(modelNames []string, groups []string) map[string]string {
-	channelTypes, err := model.GetPreferredModelOwnerChannelTypes(modelNames, groups)
-	if err != nil {
-		common.SysLog(common.LogText("GetPreferredModelOwnerChannelTypes error: %v", err))
-		return map[string]string{}
-	}
-
-	ownerByChannelType := make(map[int]string)
-	owners := make(map[string]string, len(channelTypes))
-	for modelName, channelType := range channelTypes {
-		owner, ok := ownerByChannelType[channelType]
-		if !ok {
-			owner = channelOwnerName(channelType)
-			ownerByChannelType[channelType] = owner
-		}
-		if owner != "" {
-			owners[modelName] = owner
-		}
-	}
-	return owners
-}
-
+// buildOpenAIModel names the owner from ownerByModel, the vendors of model
+// metadata. A channel never names it: a model list must not tell callers
+// which channel serves a model.
 func buildOpenAIModel(modelName string, ownerByModel map[string]string) dto.OpenAIModels {
-	var oaiModel dto.OpenAIModels
-	if staticModel, ok := openAIModelsMap[modelName]; ok {
-		oaiModel = staticModel
-	} else {
-		oaiModel = dto.OpenAIModels{
-			Id:      modelName,
-			Object:  "model",
-			Created: 1626777600,
-			OwnedBy: "custom",
-		}
+	oaiModel := dto.OpenAIModels{
+		Id:      modelName,
+		Object:  "model",
+		Created: 1626777600,
+		OwnedBy: modelOwnerSystem,
 	}
 	if owner, ok := ownerByModel[modelName]; ok && owner != "" {
 		oaiModel.OwnedBy = owner
@@ -250,17 +206,14 @@ type geminiModelListResponse struct {
 	NextPageToken *string           `json:"nextPageToken"`
 }
 
-func ListModels(c *gin.Context, modelType int) {
-	userModelNames := make([]string, 0)
+// usableOpenAIModels lists the models the caller's token may use, in the
+// order ListModels returns them, each owned by the vendor the model square
+// shows for it.
+func usableOpenAIModels(c *gin.Context) ([]dto.OpenAIModels, error) {
 	groups, err := getModelListGroups(c)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "get user group failed",
-		})
-		return
+		return nil, err
 	}
-	ownerGroups := groups.ownerGroups
 	modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
 	var tokenModelLimit map[string]bool
 	if modelLimitEnable {
@@ -272,23 +225,35 @@ func ListModels(c *gin.Context, modelType int) {
 			tokenModelLimit = map[string]bool{}
 		}
 	}
-	for _, modelName := range model.UsableModelNames(ownerGroups, model.AcceptsUnpricedModels(c.GetInt("id"))) {
+	vendorNames := make(map[int]string)
+	for _, vendor := range model.GetVendors() {
+		vendorNames[vendor.ID] = vendor.Name
+	}
+	ownerByModel := make(map[string]string)
+	for _, pricing := range model.GetPricing() {
+		ownerByModel[pricing.ModelName] = vendorNames[pricing.VendorID]
+	}
+	userOpenAiModels := make([]dto.OpenAIModels, 0)
+	for _, modelName := range model.UsableModelNames(groups.ownerGroups, model.AcceptsUnpricedModels(c.GetInt("id"))) {
 		if modelLimitEnable {
 			matchingName := ratio_setting.RoutingMatchModelName(modelName)
 			if !tokenModelLimit[modelName] && !tokenModelLimit[matchingName] {
 				continue
 			}
 		}
-		userModelNames = append(userModelNames, modelName)
-	}
-
-	ownerByModel := map[string]string{}
-	if len(ownerGroups) > 0 {
-		ownerByModel = getPreferredModelOwners(userModelNames, ownerGroups)
-	}
-	userOpenAiModels := make([]dto.OpenAIModels, 0, len(userModelNames))
-	for _, modelName := range userModelNames {
 		userOpenAiModels = append(userOpenAiModels, buildOpenAIModel(modelName, ownerByModel))
+	}
+	return userOpenAiModels, nil
+}
+
+func ListModels(c *gin.Context, modelType int) {
+	userOpenAiModels, err := usableOpenAIModels(c)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "get user group failed",
+		})
+		return
 	}
 
 	switch modelType {
@@ -404,7 +369,16 @@ func EnabledListModels(c *gin.Context) {
 
 func RetrieveModel(c *gin.Context, modelType int) {
 	modelId := c.Param("model")
-	if aiModel, ok := openAIModelsMap[modelId]; ok {
+	userOpenAiModels, err := usableOpenAIModels(c)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "get user group failed",
+		})
+		return
+	}
+	if index := slices.IndexFunc(userOpenAiModels, func(m dto.OpenAIModels) bool { return m.Id == modelId }); index >= 0 {
+		aiModel := userOpenAiModels[index]
 		switch modelType {
 		case constant.ChannelTypeAnthropic:
 			c.JSON(200, dto.AnthropicModel{
