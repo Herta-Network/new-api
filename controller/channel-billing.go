@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -257,9 +258,21 @@ func updateChannelAPI2GPTBalance(channel *model.Channel) (float64, error) {
 	return response.TotalRemaining, nil
 }
 
+// updateChannelSiliconFlowBalance reads the balance /v1/user/info reports at
+// the channel's base URL. Only SiliconFlow's international site
+// (api.siliconflow.com, priced in USD) still serves that endpoint: its China
+// site (siliconflow.cn) stopped serving it on 2026-08-14 and offers no
+// replacement, so a channel there fails with a message saying so and contacts
+// no upstream.
 func updateChannelSiliconFlowBalance(channel *model.Channel) (float64, error) {
-	url := "https://api.siliconflow.cn/v1/user/info"
-	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
+	baseURL := strings.TrimRight(channel.GetBaseURL(), "/")
+	if parsed, err := url.Parse(baseURL); err == nil {
+		host := strings.ToLower(parsed.Hostname())
+		if host == "siliconflow.cn" || strings.HasSuffix(host, ".siliconflow.cn") {
+			return 0, common.NewMessage("SiliconFlow no longer offers balance queries for siliconflow.cn accounts. Check the balance in the SiliconFlow console.")
+		}
+	}
+	body, err := GetResponseBody("GET", baseURL+"/v1/user/info", channel, GetAuthHeader(channel.Key))
 	if err != nil {
 		return 0, err
 	}
@@ -274,6 +287,11 @@ func updateChannelSiliconFlowBalance(channel *model.Channel) (float64, error) {
 	balance, err := strconv.ParseFloat(response.Data.TotalBalance, 64)
 	if err != nil {
 		return 0, err
+	}
+	// An overdue account reports a negative balance; only a non-finite one is
+	// malformed.
+	if math.IsNaN(balance) || math.IsInf(balance, 0) {
+		return 0, errors.New("SiliconFlow balance must be finite")
 	}
 	channel.UpdateBalance(balance)
 	return balance, nil

@@ -147,6 +147,92 @@ func useExchangeRateOverrides(t *testing.T, overrides map[string]string) {
 	settings.ExchangeRateOverrides, settings.ExchangeRateAPIKey = overrides, ""
 }
 
+// SiliconFlow's international site reports the account balance in USD at
+// /v1/user/info under the channel's base URL; an overdue account's negative
+// balance is stored as it is, and a failed query leaves the stored balance.
+func TestUpdateChannelSiliconFlowBalance(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		body    string
+		want    float64
+		wantErr string
+	}{
+		{name: "balance in USD", status: http.StatusOK, body: `{"code":20000,"message":"OK","status":true,"data":{"id":"userid","balance":"0.88","chargeBalance":"88.00","totalBalance":"88.88","status":"normal"}}`, want: 88.88},
+		{name: "overdue account", status: http.StatusOK, body: `{"code":20000,"message":"OK","status":true,"data":{"balance":"0.00","chargeBalance":"-1.50","totalBalance":"-1.50","status":"normal"}}`, want: -1.5},
+		{name: "upstream reports an error", status: http.StatusOK, body: `{"code":50000,"message":"internal error","status":false,"data":{}}`, wantErr: "code: 50000, message: internal error"},
+		{name: "upstream rejects the key", status: http.StatusUnauthorized, body: `"Invalid token"`, wantErr: "status code: 401"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupSub2APIBalanceTest(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, http.MethodGet, r.Method)
+				assert.Equal(t, "/v1/user/info", r.URL.Path)
+				assert.Equal(t, "Bearer sk-upstream", r.Header.Get("Authorization"))
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			baseURL := server.URL + "/"
+			channel := &model.Channel{Type: constant.ChannelTypeSiliconFlow, BaseURL: &baseURL, Key: "sk-upstream", Name: "siliconflow", Balance: 9}
+			require.NoError(t, model.DB.Create(channel).Error)
+
+			result, err := updateChannelBalance(channel)
+			stored := storedGapsChannel(t, channel.Id)
+			if tc.wantErr != "" {
+				require.EqualError(t, err, tc.wantErr)
+				assert.InDelta(t, 9.0, stored.Balance, 1e-9)
+				assert.Zero(t, stored.BalanceUpdatedTime)
+				return
+			}
+			require.NoError(t, err)
+			assert.InDelta(t, tc.want, result.Balance, 1e-9)
+			assert.InDelta(t, tc.want, stored.Balance, 1e-9)
+			detail := stored.GetBalanceDetail()
+			require.NotNil(t, detail)
+			assert.Equal(t, "USD", detail.Currency)
+		})
+	}
+}
+
+// SiliconFlow's China site stopped serving /user/info without a replacement,
+// so a channel there, including one left at the default base URL, answers a
+// console message saying so, contacts no upstream, and keeps its balance.
+func TestUpdateChannelSiliconFlowBalanceRejectsTheChinaSite(t *testing.T) {
+	setupSub2APIBalanceTest(t)
+	previousMemoryCache := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() { common.MemoryCacheEnabled = previousMemoryCache })
+	// The channels send their requests through this proxy, so a query that
+	// reached for SiliconFlow would fail here instead of leaving the machine.
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected upstream request: %s %s", r.Method, r.Host)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer proxy.Close()
+	setting := `{"proxy":"` + proxy.URL + `"}`
+
+	for _, baseURL := range []string{"", "https://api.siliconflow.cn", "https://api-st.siliconflow.cn/"} {
+		t.Run("base URL "+baseURL, func(t *testing.T) {
+			channel := &model.Channel{Type: constant.ChannelTypeSiliconFlow, Key: "sk-upstream", Name: "siliconflow-cn", Balance: 9, Setting: &setting}
+			if baseURL != "" {
+				channel.BaseURL = &baseURL
+			}
+			require.NoError(t, model.DB.Create(channel).Error)
+
+			response, raw := callChannelAPI(t, UpdateChannelBalance, http.MethodGet, "/api/channel/update_balance", "", idParam(channel.Id))
+
+			assert.False(t, response.Success, raw)
+			assert.Equal(t, "SiliconFlow no longer offers balance queries for siliconflow.cn accounts. Check the balance in the SiliconFlow console.", response.Message)
+			stored := storedGapsChannel(t, channel.Id)
+			assert.InDelta(t, 9.0, stored.Balance, 1e-9)
+			assert.Zero(t, stored.BalanceUpdatedTime)
+			assert.Nil(t, stored.GetBalanceDetail())
+		})
+	}
+}
+
 func TestUpdateChannelNewAPIBalanceUsesTheSmallerRemainingQuota(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
