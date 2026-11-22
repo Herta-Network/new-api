@@ -654,8 +654,6 @@ func updateStandardChannelBalance(channel *model.Channel) (float64, error) {
 		if channel.GetBaseURL() != "" {
 			baseURL = channel.GetBaseURL()
 		}
-	case constant.ChannelTypeAzure:
-		return 0, common.NewMessage("Not implemented yet")
 	case constant.ChannelTypeCustom:
 		baseURL = channel.GetBaseURL()
 	//case common.ChannelTypeOpenAISB:
@@ -679,7 +677,9 @@ func updateStandardChannelBalance(channel *model.Channel) (float64, error) {
 	case constant.ChannelTypeNewAPI:
 		return updateChannelNewAPIBalance(channel)
 	default:
-		return 0, common.NewMessage("Not implemented yet")
+		// Types such as Azure and Mistral have no balance endpoint that the
+		// channel's own key can call.
+		return 0, common.NewMessage("This channel type does not support balance queries")
 	}
 	url := fmt.Sprintf("%s/v1/dashboard/billing/subscription", baseURL)
 
@@ -728,7 +728,7 @@ type channelBalanceResponse struct {
 }
 
 // @Summary		更新渠道余额
-// @Description	需要 channel.operate 权限。向上游查询余额并保存。高级自定义渠道返回 raw_response（上游原始响应），其他渠道返回 balance（美元）和 balance_detail。任务插件渠道只在插件报告余额时支持；多密钥渠道不支持。
+// @Description	需要 channel.operate 权限。向上游查询余额并保存。高级自定义渠道返回 raw_response（上游原始响应），其他渠道返回 balance（美元）和 balance_detail。任务插件渠道只在插件报告余额时支持；多密钥渠道不支持；没有能用渠道密钥查询的余额接口的渠道类型（如 Azure、Mistral）返回不支持查询余额。
 // @Tags			渠道
 // @Param			id	path		int	true	"渠道 ID"
 // @Success		200	{object}	channelBalanceResponse

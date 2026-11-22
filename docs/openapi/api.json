@@ -1866,7 +1866,7 @@
                         "AdminAuth": []
                     }
                 ],
-                "description": "需要 channel.operate 权限。向上游查询余额并保存。高级自定义渠道返回 raw_response（上游原始响应），其他渠道返回 balance（美元）和 balance_detail。任务插件渠道只在插件报告余额时支持；多密钥渠道不支持。",
+                "description": "需要 channel.operate 权限。向上游查询余额并保存。高级自定义渠道返回 raw_response（上游原始响应），其他渠道返回 balance（美元）和 balance_detail。任务插件渠道只在插件报告余额时支持；多密钥渠道不支持；没有能用渠道密钥查询的余额接口的渠道类型（如 Azure、Mistral）返回不支持查询余额。",
                 "tags": [
                     "渠道"
                 ],
@@ -2340,6 +2340,49 @@
                                     "properties": {
                                         "data": {
                                             "$ref": "#/definitions/controller.channelKeyResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/channel/{id}/mistral/vibe-usage": {
+            "get": {
+                "security": [
+                    {
+                        "AdminAuth": []
+                    }
+                ],
+                "description": "需要 channel.read 权限。向上游查询密钥所属组织的套餐，以及每月 Vibe Code 额度的已用比例、额度金额和重置时间。读取的是 Mistral Vibe 客户端使用的 /v1/billing/subscription 和 /v1/billing/budget，Mistral 的 API 文档没有收录这两个接口。allowance_status 为 none 表示套餐没有 Vibe Code 额度，为 forbidden 表示 Mistral 不向这个密钥提供额度信息。不支持多密钥渠道。",
+                "tags": [
+                    "渠道"
+                ],
+                "summary": "获取 Mistral 渠道的 Vibe 额度用量",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Mistral 渠道 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.ApiResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/mistral.VibeUsage"
                                         }
                                     }
                                 }
@@ -22207,6 +22250,59 @@
             "properties": {
                 "active_connections": {
                     "type": "integer"
+                }
+            }
+        },
+        "mistral.VibeAllowance": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Amount is the monthly allowance in Currency.",
+                    "type": "number"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "payg_enabled": {
+                    "description": "PaygEnabled reports whether usage past the allowance is billed instead\nof refused.",
+                    "type": "boolean"
+                },
+                "reset_at": {
+                    "description": "ResetAt is when the allowance renews, in Unix seconds; 0 when Mistral\ndid not say.",
+                    "type": "integer"
+                },
+                "used_percent": {
+                    "description": "UsedPercent is the share of the allowance used; above 100 when\npay-as-you-go covers the usage past it.",
+                    "type": "number"
+                }
+            }
+        },
+        "mistral.VibeUsage": {
+            "type": "object",
+            "properties": {
+                "allowance": {
+                    "$ref": "#/definitions/mistral.VibeAllowance"
+                },
+                "allowance_status": {
+                    "description": "AllowanceStatus is ok, none or forbidden; Allowance is set only for ok.",
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "none",
+                        "forbidden"
+                    ]
+                },
+                "limit_reached": {
+                    "description": "LimitReached reports a used-up allowance without pay-as-you-go, which\nMistral answers with HTTP 402.",
+                    "type": "boolean"
+                },
+                "plan_name": {
+                    "description": "PlanName is the plan as Mistral's billing names it, as TEAM.",
+                    "type": "string"
+                },
+                "plan_title": {
+                    "description": "PlanTitle is the name Mistral shows for the plan, as Team; PlanName when\nthe plan is not a Le Chat plan.",
+                    "type": "string"
                 }
             }
         },

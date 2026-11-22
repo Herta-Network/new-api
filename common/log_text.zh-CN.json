@@ -359,6 +359,7 @@
   "failed to encode log admin info: %s": "序列化日志的 admin_info 失败: %s",
   "failed to fetch codex reset credits": "获取 Codex 重置次数失败",
   "failed to fetch codex usage": "获取 Codex 用量失败",
+  "failed to fetch Mistral Vibe usage: %s": "获取 Mistral Vibe 用量失败: %s",
   "failed to finalize bulk user session revoke tombstone: %s": "批量吊销会话后，写入吊销缓存失败: %s",
   "failed to finalize refresh-authenticated session revoke tombstone: %s": "按刷新令牌吊销会话后，写入吊销缓存失败: %s",
   "failed to finalize user session revoke tombstone: %s": "吊销会话后，写入吊销缓存失败: %s",

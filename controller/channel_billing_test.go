@@ -191,3 +191,35 @@ func TestUpdateChannelNewAPIBalanceUsesTheSmallerRemainingQuota(t *testing.T) {
 		})
 	}
 }
+
+// A channel type with no balance endpoint its own key can call (Mistral's
+// balance lives in its console; Azure has none) answers a console message
+// saying so, contacts no upstream, and leaves the stored balance as it was.
+func TestUpdateChannelBalanceRejectsTypesWithoutABalanceQuery(t *testing.T) {
+	setupSub2APIBalanceTest(t)
+	previousMemoryCache := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() { common.MemoryCacheEnabled = previousMemoryCache })
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer upstream.Close()
+
+	for _, channelType := range []int{constant.ChannelTypeMistral, constant.ChannelTypeAzure} {
+		t.Run(constant.GetChannelTypeName(channelType), func(t *testing.T) {
+			baseURL := upstream.URL
+			channel := &model.Channel{Type: channelType, BaseURL: &baseURL, Key: "sk-upstream", Name: "no-balance", Balance: 9}
+			require.NoError(t, model.DB.Create(channel).Error)
+
+			response, raw := callChannelAPI(t, UpdateChannelBalance, http.MethodGet, "/api/channel/update_balance", "", idParam(channel.Id))
+
+			assert.False(t, response.Success, raw)
+			assert.Equal(t, "This channel type does not support balance queries", response.Message)
+			stored := storedGapsChannel(t, channel.Id)
+			assert.InDelta(t, 9.0, stored.Balance, 1e-9)
+			assert.Zero(t, stored.BalanceUpdatedTime)
+			assert.Nil(t, stored.GetBalanceDetail())
+		})
+	}
+}
