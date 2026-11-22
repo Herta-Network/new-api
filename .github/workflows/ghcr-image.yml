@@ -12,6 +12,14 @@
 # VERSION (common.Version, shown by /api/status): the tag name for tag builds;
 # for branch builds <base>-<branch>.<7-char sha>, where <base> is the VERSION
 # file, else the nearest v* tag, else v0.0.0.
+#
+# Build: each platform compiles new-api on its own native runner, with Go from
+# go.mod and the module and build caches kept between runs by setup-go, and
+# passes the binary to the Dockerfile as the context named builder. That
+# context replaces the Dockerfile's builder stage, so BuildKit runs only the
+# runtime stage. The Build binary step must match the builder stage: when the
+# Dockerfile changes its Go version, environment, -pgo or -ldflags, change the
+# step too.
 name: Publish GHCR image
 
 on:
@@ -126,10 +134,28 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Write VERSION
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # The Dockerfile's builder stage, run on the runner. The Docker build
+      # has no .git, hence -buildvcs=false.
+      - name: Build binary
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
-        run: printf '%s\n' "$VERSION" > VERSION
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: '0'
+          GOWORK: 'off'
+          GOEXPERIMENT: greenteagc
+        run: |
+          pgo="$(go list -m -f '{{.Dir}}' github.com/MoeForge/moejs)/default.pgo"
+          mkdir -p "$RUNNER_TEMP/builder/build"
+          go build -buildvcs=false -pgo="$pgo" \
+            -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$VERSION'" \
+            -o "$RUNNER_TEMP/builder/build/new-api"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -141,19 +167,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The local context carries the VERSION written above; the default Git
-      # context would not.
+      # The builder context replaces the Dockerfile's builder stage, so
+      # COPY --from=builder /build/new-api takes the binary built above. Only
+      # the runtime stage's layers are cached; the binary's changes every run.
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
+          build-contexts: builder=${{ runner.temp }}/builder
           platforms: ${{ matrix.platform }}
           labels: ${{ needs.prepare.outputs.labels }}
           tags: ${{ env.IMAGE }}
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=ghcr-image-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=ghcr-image-${{ matrix.arch }}
+          cache-from: type=gha,scope=ghcr-runtime-${{ matrix.arch }}
+          cache-to: type=gha,mode=min,scope=ghcr-runtime-${{ matrix.arch }}
           provenance: mode=max
           sbom: true
 
@@ -190,9 +218,8 @@ jobs:
           pattern: ghcr-digest-*
           merge-multiple: true
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
+      # imagetools only talks to the registry, so the runner's preinstalled
+      # buildx serves without setting up a builder.
       - name: Log in to GHCR
         uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
         with:
