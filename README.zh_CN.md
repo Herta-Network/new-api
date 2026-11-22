@@ -235,6 +235,7 @@ docker compose logs -f new-api
 | `SQL_DSN` | 必填的主数据库连接串，如 `postgresql://user:password@host:5432/new-api`；未设置时服务无法启动 |
 | `LOG_SQL_DSN` | 可选的独立日志数据库连接串（PostgreSQL 或 ClickHouse）；未设置时日志写入主数据库 |
 | `REDIS_CONN_STRING` | Redis 连接串 |
+| `REDIS_KEY_PREFIX` | 可选，Redis 所有键和发布订阅频道的前缀，例如 `newapi:`，共享 Redis 时可以只给 ACL 用户授权 `~newapi:*` 和 `&newapi:*`；不设时键名不变 |
 | `SESSION_SECRET` | 持久保存的鉴权密钥，所有节点必须一致 |
 | `CRYPTO_SECRET` | 默认使用 `SESSION_SECRET`；共享 Redis 的节点必须使用相同的有效值 |
 | `FRONTEND_ORIGINS` | 可选：除初始化时记录的「前端地址」外，控制台接口在 CORS 中额外放行的精确 Origin，逗号分隔，不含路径或通配符。取代已废弃的 `SESSION_COOKIE_SECURE` 和 `SESSION_COOKIE_TRUSTED_URL` |

@@ -120,7 +120,7 @@ func StartSubscriber(ctx context.Context) {
 	}
 	subscriberOnce.Do(func() {
 		go func() {
-			pubsub := rdb.Subscribe(ctx, channelCloseTopic(rdb.Options().DB))
+			pubsub := rdb.Subscribe(ctx, common.RedisChannel(channelCloseTopic(rdb.Options().DB)))
 			defer pubsub.Close()
 			receiveChannelCloseEvents(ctx, pubsub.Channel(), getOriginID())
 		}()
