@@ -151,7 +151,14 @@ jobs:
           GOWORK: 'off'
           GOEXPERIMENT: greenteagc
         run: |
+          # go list -m names no directory for a module not yet downloaded,
+          # as on a run without the module cache.
+          go mod download github.com/MoeForge/moejs
           pgo="$(go list -m -f '{{.Dir}}' github.com/MoeForge/moejs)/default.pgo"
+          if [ ! -f "$pgo" ]; then
+            echo "::error::PGO profile not found: $pgo"
+            exit 1
+          fi
           mkdir -p "$RUNNER_TEMP/builder/build"
           go build -buildvcs=false -pgo="$pgo" \
             -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$VERSION'" \
