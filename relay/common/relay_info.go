@@ -170,6 +170,11 @@ type RelayInfo struct {
 	// RequestPluginHeaders are the header.patch effects of the current
 	// attempt's outbound stage; ApplyHeaderOverride applies them last.
 	RequestPluginHeaders []requestpatch.Effect
+	// SystemPromptApplied marks that the current attempt already applied the
+	// channel system prompt to the request in its client format, so an adaptor
+	// that applies it to its own format (Codex, for /v1/responses) must not
+	// apply it again after the conversion.
+	SystemPromptApplied bool
 	// RequestPluginRecord is the public record of the request plugin changes:
 	// the request's ingress, then the current attempt's stages.
 	RequestPluginRecord []RequestPluginRecord
@@ -289,6 +294,7 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	info.ClaudeToChatStreamState = nil
 	info.ChatToGeminiStreamState = nil
 	info.RequestPluginHeaders = nil
+	info.SystemPromptApplied = false
 	info.RequestPluginRecord = info.RequestPluginRecord[:min(info.requestPluginIngressRecord, len(info.RequestPluginRecord))]
 	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
 	paramOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelParamOverride)

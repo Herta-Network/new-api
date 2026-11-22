@@ -55,7 +55,9 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
 	isCompact := info != nil && info.RelayMode == relayconstant.RelayModeResponsesCompact
 
-	if info != nil && info.ChannelSetting.SystemPrompt != "" {
+	// A chat or Claude request relayed through Responses already carries the
+	// channel system prompt, applied before the conversion.
+	if info != nil && info.ChannelSetting.SystemPrompt != "" && !info.SystemPromptApplied {
 		systemPrompt := info.ChannelSetting.SystemPrompt
 
 		if len(request.Instructions) == 0 {

@@ -714,6 +714,15 @@ func (m *Message) StringContent() string {
 			}
 		}
 		return contentStr.String()
+	case []MediaContent:
+		// Content set with SetMediaContent.
+		var contentStr strings.Builder
+		for _, contentItem := range m.Content.([]MediaContent) {
+			if contentItem.Type == ContentTypeText {
+				contentStr.WriteString(contentItem.Text)
+			}
+		}
+		return contentStr.String()
 	}
 
 	return ""

@@ -1,21 +1,26 @@
 package relay
 
 import (
+	"cmp"
 	"encoding/json"
 	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	openaichannel "github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -274,6 +279,162 @@ func TestApplySystemPromptIfNeededSkipsToolLoadingMessages(t *testing.T) {
 			}
 			_, overrideSet := common.GetContextKey(c, constant.ContextKeySystemPromptOverride)
 			assert.Equal(t, tt.wantOverride, overrideSet)
+		})
+	}
+}
+
+func TestChannelSystemPromptInUpstreamRequest(t *testing.T) {
+	const (
+		prompt      = "Answer in English."
+		system      = `{"role":"system","content":"You are helpful."}`
+		arraySystem = `{"role":"system","content":[{"type":"text","text":"You are helpful."}]}`
+		codexKey    = `{"access_token":"fixture-token","account_id":"fixture-account"}`
+	)
+	settings := model_setting.GetGlobalSettings()
+	previousPolicy := settings.ChatCompletionsToResponsesPolicy
+	t.Cleanup(func() { settings.ChatCompletionsToResponsesPolicy = previousPolicy })
+
+	tests := []struct {
+		name        string
+		channelType int
+		model       string
+		// endpoint is /v1/chat/completions when empty; body is the client
+		// request, a chat request of system and a user message when empty.
+		endpoint     string
+		body         string
+		system       string
+		override     bool
+		passThrough  bool
+		viaResponses bool
+		// path is where the upstream request carries the system prompt and
+		// want its exact JSON there, absent when empty; wantContains lists
+		// texts it must hold instead.
+		path         string
+		want         string
+		wantContains []string
+		wantOverride bool
+	}{
+		{name: "claude without system prompt", channelType: constant.ChannelTypeAnthropic, model: "claude-sonnet-4-5",
+			path: "system", want: `[{"type":"text","text":"Answer in English."}]`},
+		{name: "claude keeps its system prompt", channelType: constant.ChannelTypeAnthropic, model: "claude-sonnet-4-5", system: system,
+			path: "system", want: `[{"type":"text","text":"You are helpful."}]`},
+		{name: "claude override", channelType: constant.ChannelTypeAnthropic, model: "claude-sonnet-4-5", system: system, override: true,
+			path: "system", want: `[{"type":"text","text":"Answer in English.\nYou are helpful."}]`, wantOverride: true},
+		{name: "claude override of array content", channelType: constant.ChannelTypeAnthropic, model: "claude-sonnet-4-5", system: arraySystem, override: true,
+			path: "system", want: `[{"type":"text","text":"Answer in English."},{"type":"text","text":"You are helpful."}]`, wantOverride: true},
+		{name: "claude pass-through", channelType: constant.ChannelTypeAnthropic, model: "claude-sonnet-4-5", passThrough: true,
+			path: "system"},
+		{name: "gemini without system prompt", channelType: constant.ChannelTypeGemini, model: "gemini-2.5-flash",
+			path: "systemInstruction.parts", want: `[{"text":"Answer in English."}]`},
+		{name: "gemini keeps its system prompt", channelType: constant.ChannelTypeGemini, model: "gemini-2.5-flash", system: system,
+			path: "systemInstruction.parts", want: `[{"text":"You are helpful."}]`},
+		{name: "gemini override", channelType: constant.ChannelTypeGemini, model: "gemini-2.5-flash", system: system, override: true,
+			path: "systemInstruction.parts", want: `[{"text":"Answer in English.\nYou are helpful."}]`, wantOverride: true},
+		{name: "gemini override of array content", channelType: constant.ChannelTypeGemini, model: "gemini-2.5-flash", system: arraySystem, override: true,
+			path: "systemInstruction.parts.0.text", wantContains: []string{prompt, "You are helpful."}, wantOverride: true},
+		{name: "openai injects once", channelType: constant.ChannelTypeOpenAI, model: "gpt-4o",
+			path: "messages", want: `[{"role":"system","content":"Answer in English."},{"role":"user","content":"hi"}]`},
+		{name: "openai override applies once", channelType: constant.ChannelTypeOpenAI, model: "gpt-4o", system: system, override: true,
+			path: "messages", want: `[{"role":"system","content":"Answer in English.\nYou are helpful."},{"role":"user","content":"hi"}]`, wantOverride: true},
+		{name: "openai developer-role model keeps the client's system prompt", channelType: constant.ChannelTypeOpenAI, model: "gpt-5", system: system,
+			path: "messages", want: `[{"role":"developer","content":"You are helpful."},{"role":"user","content":"hi"}]`},
+		{name: "openai via responses override applies once", channelType: constant.ChannelTypeOpenAI, model: "gpt-4o", system: system, override: true, viaResponses: true,
+			path: "instructions", want: `"Answer in English.\nYou are helpful."`, wantOverride: true},
+		{name: "openai completions left alone", channelType: constant.ChannelTypeOpenAI, model: "gpt-3.5-turbo-instruct", override: true,
+			endpoint: "/v1/completions", body: `{"model":"gpt-3.5-turbo-instruct","prompt":"hi"}`, path: "messages"},
+		{name: "openai moderations left alone", channelType: constant.ChannelTypeOpenAI, model: "omni-moderation-latest", override: true,
+			endpoint: "/v1/moderations", body: `{"model":"omni-moderation-latest","input":"hi"}`, path: "messages"},
+		{name: "openai edits left alone", channelType: constant.ChannelTypeOpenAI, model: "text-davinci-edit-001", override: true,
+			endpoint: "/v1/edits", body: `{"model":"text-davinci-edit-001","instruction":"fix","input":"hi"}`, path: "messages"},
+		{name: "codex chat via responses override applies once", channelType: constant.ChannelTypeCodex, model: "gpt-5-codex", system: system, override: true, viaResponses: true,
+			path: "instructions", want: `"Answer in English.\nYou are helpful."`, wantOverride: true},
+		{name: "codex claude messages via responses override applies once", channelType: constant.ChannelTypeCodex, model: "gpt-5-codex", override: true, viaResponses: true,
+			endpoint: "/v1/messages", body: `{"model":"gpt-5-codex","max_tokens":16,"system":"You are helpful.","messages":[{"role":"user","content":"hi"}]}`,
+			path: "instructions", want: `"Answer in English.\nYou are helpful."`, wantOverride: true},
+		{name: "codex responses gets the prompt from the adaptor", channelType: constant.ChannelTypeCodex, model: "gpt-5-codex",
+			endpoint: "/v1/responses", body: `{"model":"gpt-5-codex","input":"hi"}`, path: "instructions", want: `"Answer in English."`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings.ChatCompletionsToResponsesPolicy = model_setting.ChatCompletionsToResponsesPolicy{
+				Enabled: tt.viaResponses, AllChannels: true, ModelPatterns: []string{".*"},
+			}
+			received := make(chan []byte, 1)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err == nil {
+					received <- body
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = io.WriteString(w, `{"error":{"message":"fixture upstream failure","type":"upstream_error"}}`)
+			}))
+			t.Cleanup(upstream.Close)
+
+			endpoint, clientBody := cmp.Or(tt.endpoint, "/v1/chat/completions"), tt.body
+			if clientBody == "" {
+				messages := `{"role":"user","content":"hi"}`
+				if tt.system != "" {
+					messages = tt.system + "," + messages
+				}
+				clientBody = `{"model":"` + tt.model + `","messages":[` + messages + `]}`
+			}
+			key := "fixture-key"
+			if tt.channelType == constant.ChannelTypeCodex {
+				key = codexKey
+			}
+			gin.SetMode(gin.TestMode)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+			c.Request = httptest.NewRequest(http.MethodPost, endpoint, strings.NewReader(clientBody))
+			c.Request.Header.Set("Content-Type", "application/json")
+			common.SetContextKey(c, constant.ContextKeyChannelType, tt.channelType)
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstream.URL)
+			common.SetContextKey(c, constant.ContextKeyChannelKey, key)
+			common.SetContextKey(c, constant.ContextKeyOriginalModel, tt.model)
+			common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{
+				SystemPrompt:           prompt,
+				SystemPromptOverride:   tt.override,
+				PassThroughBodyEnabled: tt.passThrough,
+			})
+
+			var apiErr *relaytypes.NewAPIError
+			switch endpoint {
+			case "/v1/responses":
+				request, err := helper.GetAndValidateResponsesRequest(c)
+				require.NoError(t, err)
+				apiErr = ResponsesHelper(c, relaycommon.GenRelayInfoResponses(c, request))
+			case "/v1/messages":
+				request, err := helper.GetAndValidateClaudeRequest(c)
+				require.NoError(t, err)
+				apiErr = ClaudeHelper(c, relaycommon.GenRelayInfoClaude(c, request))
+			default:
+				request, err := helper.GetAndValidateTextRequest(c, relayconstant.Path2RelayMode(endpoint))
+				require.NoError(t, err)
+				apiErr = TextHelper(c, relaycommon.GenRelayInfoOpenAI(c, request))
+			}
+
+			require.NotNil(t, apiErr)
+			assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode, apiErr.Error())
+			require.Len(t, received, 1)
+			body := <-received
+			if tt.passThrough {
+				assert.Equal(t, clientBody, string(body))
+			}
+			got := ojson.GetBytes(body, tt.path)
+			switch {
+			case len(tt.wantContains) > 0:
+				for _, text := range tt.wantContains {
+					assert.Contains(t, got.String(), text, string(body))
+				}
+			case tt.want == "":
+				assert.False(t, got.Exists(), string(body))
+			default:
+				require.True(t, got.Exists(), string(body))
+				assert.JSONEq(t, tt.want, got.Raw)
+			}
+			assert.Equal(t, tt.wantOverride, common.GetContextKeyBool(c, constant.ContextKeySystemPromptOverride))
 		})
 	}
 }
