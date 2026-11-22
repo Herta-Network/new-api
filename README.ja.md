@@ -220,6 +220,7 @@ SQLite と MySQL には対応しておらず、それらからの移行ツール
 | `SQL_DSN` | 必須のメインデータベース接続。例：`postgresql://user:password@host:5432/new-api`。未設定ではサービスが起動しません |
 | `LOG_SQL_DSN` | 任意の独立ログデータベース（PostgreSQL または ClickHouse）。未設定ならログはメインデータベースに保存 |
 | `REDIS_CONN_STRING` | Redis 接続文字列 |
+| `REDIS_KEY_PREFIX` | 任意。Redis のすべてのキーと Pub/Sub チャンネルの接頭辞（例：`newapi:`）。共有 Redis で new-api の ACL ユーザーを `~newapi:*` と `&newapi:*` に限定できます。未設定なら名前は変わりません |
 | `SESSION_SECRET` | 永続的な認証用シークレット。全ノードで同じ値を使用 |
 | `CRYPTO_SECRET` | 既定は `SESSION_SECRET`。Redis を共有するノードは同じ実効値を使用 |
 | `FRONTEND_ORIGINS` | 任意。初期設定で記録される「フロントエンドURL」以外に、管理画面の API が CORS で許可する正確なオリジンをカンマ区切りで指定（パスやワイルドカード不可）。廃止された `SESSION_COOKIE_SECURE` と `SESSION_COOKIE_TRUSTED_URL` の後継 |

@@ -220,6 +220,7 @@ SQLite et MySQL ne sont pas pris en charge, et aucune migration depuis ces bases
 | `SQL_DSN` | Connexion obligatoire à la base principale, par exemple `postgresql://user:password@host:5432/new-api` ; le service ne démarre pas sans elle |
 | `LOG_SQL_DSN` | Base de journaux distincte facultative (PostgreSQL ou ClickHouse) ; sans elle, les journaux vont dans la base principale |
 | `REDIS_CONN_STRING` | Chaîne de connexion Redis |
+| `REDIS_KEY_PREFIX` | Facultatif : préfixe, par exemple `newapi:`, de toutes les clés et de tous les canaux Pub/Sub Redis, pour limiter l'utilisateur ACL de new-api à `~newapi:*` et `&newapi:*` sur un Redis partagé ; sans valeur, les noms restent inchangés |
 | `SESSION_SECRET` | Secret d'authentification persistant, identique sur tous les nœuds |
 | `CRYPTO_SECRET` | Vaut `SESSION_SECRET` par défaut ; même valeur effective pour les nœuds partageant Redis |
 | `FRONTEND_ORIGINS` | Facultatif : origines exactes, séparées par des virgules, que l'API de la console admet en CORS en plus de l'adresse du frontend enregistrée à l'installation, sans chemin ni joker. Remplace `SESSION_COOKIE_SECURE` et `SESSION_COOKIE_TRUSTED_URL`, obsolètes |
