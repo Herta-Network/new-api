@@ -44,8 +44,12 @@ var ErrRejected = errors.New("Kiro refused to renew the credential")
 // out, throttling or failing.
 var errUnavailable = errors.New("Kiro service unavailable")
 
-// statusError is another answer a Kiro service refused a call with.
-type statusError struct{ status int }
+// statusError is another answer a Kiro service refused a call with. Denied
+// reports an AccessDeniedException, Kiro refusing the account the operation.
+type statusError struct {
+	status int
+	denied bool
+}
 
 func (e statusError) Error() string {
 	return "Kiro service answered " + http.StatusText(e.status)
@@ -266,9 +270,9 @@ func rpc(ctx context.Context, client *http.Client, target, operation, token stri
 	default:
 		raw, _ := service.ReadUpstreamErrorBody(res.Body)
 		if tokenRefused(res.StatusCode, raw) {
-			return statusError{http.StatusUnauthorized}
+			return statusError{status: http.StatusUnauthorized}
 		}
-		return statusError{res.StatusCode}
+		return statusError{status: res.StatusCode, denied: strings.HasSuffix(gjson.GetBytes(raw, "__type").Str, "AccessDeniedException")}
 	}
 	raw, err := service.ReadUpstreamBody(res.Body)
 	if err != nil || common.Unmarshal(raw, result) != nil {

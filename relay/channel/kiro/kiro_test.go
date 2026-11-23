@@ -949,3 +949,125 @@ func TestStreamEndedEarlySettlement(t *testing.T) {
 		}
 	}
 }
+
+// The usage of a Kiro channel's account comes from GetUsageLimits, asked
+// with the channel's credential renewed as a request renews it, and leaves
+// out the account's user information. Each refusal reads as what the
+// administrator has to do about it.
+func TestChannelUsage(t *testing.T) {
+	const limits = `{"nextDateReset":1796083200.0,"daysUntilReset":12,
+		"overageConfiguration":{"overageStatus":"ENABLED"},
+		"subscriptionInfo":{"subscriptionTitle":"KIRO PRO+","type":"Q_DEVELOPER_STANDALONE_PRO_PLUS","overageCapability":"OVERAGE_CAPABLE","upgradeCapability":"UPGRADE_CAPABLE"},
+		"usageBreakdownList":[{"resourceType":"CREDIT","unit":"INVOCATIONS","currency":"USD","displayName":"Credit","displayNamePlural":"Credits",
+			"usageLimit":841,"usageLimitWithPrecision":841.0,"currentUsage":7,"currentUsageWithPrecision":7.82,"currentOverages":0,"overageRate":0.04,"overageCap":10000,
+			"freeTrialInfo":{"freeTrialStatus":"ACTIVE","freeTrialExpiry":1797000000,"usageLimit":50,"usageLimitWithPrecision":50.0,"currentUsage":3,"currentUsageWithPrecision":3.5},
+			"bonuses":[{"bonusCode":"FIRST_UPGRADE_TRIAL","status":"ACTIVE","usageLimit":500.0,"currentUsage":12.5,"expiresAt":1826535962.109},
+				{"bonusCode":"SPENT","displayName":"Launch bonus","status":"EXHAUSTED","usageLimit":100,"currentUsage":100,"expiresAt":1800000000},
+				{"bonusCode":"OLD","status":"EXPIRED","usageLimit":100,"currentUsage":0,"expiresAt":1700000000}]}],
+		"userInfo":{"userId":"d-9067a1b2c3.user-id","email":"owner@example.com"}}`
+	want := &Usage{PlanTitle: "KIRO PRO+", PlanType: "Q_DEVELOPER_STANDALONE_PRO_PLUS", ResetAt: 1796083200, OverageEnabled: true,
+		Resources: []UsageResource{{Type: "CREDIT", Name: "Credits", Used: 7.82, Limit: 841, OverageRate: 0.04, Currency: "USD", Bonuses: []UsageBonus{
+			{FreeTrial: true, Status: "ACTIVE", Used: 3.5, Limit: 50, ExpiresAt: 1797000000},
+			{Name: "FIRST_UPGRADE_TRIAL", Status: "ACTIVE", Used: 12.5, Limit: 500, ExpiresAt: 1826535962},
+			{Name: "Launch bonus", Status: "EXHAUSTED", Used: 100, Limit: 100, ExpiresAt: 1800000000},
+		}}}}
+
+	var mu sync.Mutex
+	status, answer := http.StatusOK, limits
+	refused := map[string]bool{}
+	var asked []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		switch r.Header.Get("X-Amz-Target") {
+		case "AmazonCodeWhispererService.ListAvailableProfiles":
+			_, _ = w.Write([]byte(`{"profiles":[{"arn":"` + testProfile + `","profileName":"QDefaultProfile"}]}`))
+		case "AmazonCodeWhispererService.GetUsageLimits":
+			var body map[string]any
+			assert.NoError(t, common.DecodeJson(r.Body, &body))
+			assert.Equal(t, map[string]any{"origin": "AI_EDITOR", "isEmailRequired": false, "profileArn": testProfile}, body)
+			assert.Equal(t, "/", r.URL.Path)
+			assert.Equal(t, "AI_EDITOR", r.URL.Query().Get("origin"))
+			assert.Equal(t, "false", r.URL.Query().Get("isEmailRequired"))
+			assert.Equal(t, testProfile, r.URL.Query().Get("profileArn"))
+			mu.Lock()
+			defer mu.Unlock()
+			asked = append(asked, token)
+			if refused[token] {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"__type":"com.amazon.kiro.controlplane#AccessDeniedException","message":"Invalid token"}`))
+				return
+			}
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(answer))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+	expires := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	message := func(err error) string {
+		var m *common.Message
+		require.ErrorAs(t, err, &m)
+		return m.Key
+	}
+
+	// An expired credential is renewed and the rotated refresh token saved.
+	auth := &fakeAuth{valid: map[string]bool{"refresh-0": true}}
+	useFakeAuth(t, auth)
+	channel := kiroChannelAt(t, `{"method":"social","refreshToken":"refresh-0"}`, server.URL)
+	usage, err := ChannelUsage(context.Background(), channel)
+	require.NoError(t, err)
+	assert.Equal(t, want, usage)
+	raw, err := common.Marshal(usage)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "example.com")
+	assert.NotContains(t, string(raw), "d-9067a1b2c3")
+	assert.Equal(t, []string{"access-refresh-b"}, asked)
+	assert.Equal(t, "refresh-b", storedKey(t, channel.Id).RefreshToken)
+
+	// A token Kiro refuses before its expiry is renewed once; the profile of a
+	// credential that names none is looked up.
+	auth.mu.Lock()
+	auth.valid["refresh-x"] = true
+	auth.mu.Unlock()
+	refused["usage-stale"], asked = true, nil
+	channel = kiroChannelAt(t, `{"method":"social","refreshToken":"refresh-x","accessToken":"usage-stale","expiresAt":"`+expires+`"}`, server.URL)
+	usage, err = ChannelUsage(context.Background(), channel)
+	require.NoError(t, err)
+	assert.Equal(t, want, usage)
+	assert.Equal(t, []string{"usage-stale", "access-refresh-c"}, asked)
+	assert.EqualValues(t, 2, auth.calls.Load())
+
+	// Refused again after the renewal, or a grant the auth service refuses:
+	// the administrator has to save a new credential.
+	auth.mu.Lock()
+	auth.valid["refresh-y"] = true
+	auth.mu.Unlock()
+	refused["usage-spent"], refused["access-refresh-d"] = true, true
+	channel = kiroChannelAt(t, `{"method":"social","refreshToken":"refresh-y","accessToken":"usage-spent","expiresAt":"`+expires+`","profileArn":"`+testProfile+`"}`, server.URL)
+	_, err = ChannelUsage(context.Background(), channel)
+	assert.Equal(t, "Kiro rejected the channel credential", message(err))
+	useFakeAuth(t, &fakeAuth{valid: map[string]bool{}, refuse: true})
+	channel = kiroChannelAt(t, `{"method":"social","refreshToken":"revoked"}`, server.URL)
+	_, err = ChannelUsage(context.Background(), channel)
+	assert.Equal(t, "Kiro rejected the channel credential", message(err))
+
+	cases := []struct {
+		name, answer, want string
+		status             int
+	}{
+		{"an account whose plan reports no usage", `{"__type":"com.amazon.aws.codewhisperer#AccessDeniedException","message":"FEATURE_NOT_SUPPORTED","reason":"FEATURE_NOT_SUPPORTED"}`, "The Kiro account is not allowed to query its usage", http.StatusBadRequest},
+		{"a suspended account", `{"__type":"com.amazon.aws.codewhisperer#AccessDeniedException","message":"Account suspended","reason":"TemporarilySuspended"}`, "The Kiro account is not allowed to query its usage", http.StatusForbidden},
+		{"an outage", `{}`, "Kiro is unavailable. Please try again later", http.StatusServiceUnavailable},
+		{"another refusal", `{"__type":"com.amazon.aws.codewhisperer#ValidationException","message":"bad origin"}`, "Upstream returned status {{status}}", http.StatusBadRequest},
+	}
+	channel = kiroChannelAt(t, `{"method":"social","refreshToken":"unused","accessToken":"usage-live","expiresAt":"`+expires+`","profileArn":"`+testProfile+`"}`, server.URL)
+	for _, tc := range cases {
+		mu.Lock()
+		status, answer = tc.status, tc.answer
+		mu.Unlock()
+		_, err = ChannelUsage(context.Background(), channel)
+		assert.Equal(t, tc.want, message(err), tc.name)
+	}
+	assert.Equal(t, "usage-live", storedKey(t, channel.Id).AccessToken, "a refusal of the account keeps the token")
+}

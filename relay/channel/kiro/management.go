@@ -66,62 +66,93 @@ func KeySummary(key string) string {
 	return string(raw)
 }
 
-// errSaveFirst is a model list asked for an unsaved channel whose credential
+// errSaveFirst is a management call for an unsaved channel whose credential
 // would have to be renewed: Kiro may rotate the refresh token, and only a
 // saved channel keeps the new one.
 var errSaveFirst = errors.New("save the Kiro channel before fetching its models")
 
-// ChannelModels lists the models the account of a Kiro channel offers. A
-// saved channel's credential is renewed as a request would renew it.
-func ChannelModels(ctx context.Context, channel *model.Channel) ([]string, error) {
+// account is the account of a Kiro channel as the management service is
+// called for it: the access token and its profile.
+type account struct {
+	client  *http.Client
+	runtime string
+	token   string
+	profile string
+}
+
+// withAccount calls the management service as the account of a Kiro
+// channel, finding the profile when the credential names none. A saved
+// channel's credential is renewed as a request renews it: when it expires,
+// and once when Kiro refuses the access token before then.
+func withAccount(ctx context.Context, channel *model.Channel, call func(context.Context, account) error) error {
 	if channel.ChannelInfo.IsMultiKey {
-		return nil, ErrCredential
+		return ErrCredential
 	}
 	credential, err := ParseCredential(channel.Key)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	setting := channel.GetSetting()
 	client, err := service.GetHttpClientWithProxySettings(setting.Proxy, setting)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	noRedirect := *client
 	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	ctx, cancel := context.WithTimeout(ctx, 2*renewTimeout)
 	defer cancel()
-	base := channel.GetBaseURL()
-	if !credential.Usable(time.Now()) || revoked(credential.AccessToken) {
-		if credential.Method == "access_token" {
-			return nil, ErrCredential
+	base, line := channel.GetBaseURL(), channel.Key
+	stale := !credential.Usable(time.Now()) || revoked(credential.AccessToken)
+	for retried := false; ; retried = true {
+		if stale {
+			if credential.Method == "access_token" {
+				return ErrCredential
+			}
+			if channel.Id <= 0 {
+				return errSaveFirst
+			}
+			if line, err = renew(ctx, &noRedirect, channel.Id, base, line); err != nil {
+				logRenewalFailure(channel.Id, err)
+				return err
+			}
+			if credential, err = ParseCredential(line); err != nil {
+				return err
+			}
 		}
-		if channel.Id <= 0 {
-			return nil, errSaveFirst
+		profile := credential.ProfileArn
+		runtime := runtimeURL(base, profile, credential.authRegion())
+		if profile == "" {
+			profile, err = profileFor(ctx, &noRedirect, runtime, credential.AccessToken)
+			runtime = runtimeURL(base, profile, credential.authRegion())
 		}
-		line, err := renew(ctx, &noRedirect, channel.Id, base, channel.Key)
+		if err == nil {
+			err = call(ctx, account{client: &noRedirect, runtime: runtime, token: credential.AccessToken, profile: profile})
+		}
+		if statusOf(err) != http.StatusUnauthorized || retried {
+			return err
+		}
+		// Kiro refused the access token before its expiry: renew it once.
+		revoke(credential.AccessToken)
+		stale = true
+	}
+}
+
+// ChannelModels lists the models the account of a Kiro channel offers.
+func ChannelModels(ctx context.Context, channel *model.Channel) ([]string, error) {
+	var ids []string
+	err := withAccount(ctx, channel, func(ctx context.Context, a account) error {
+		entry, err := catalogs.list(ctx, a.client, a.runtime, a.token, a.profile)
 		if err != nil {
-			logRenewalFailure(channel.Id, err)
-			return nil, err
+			return err
 		}
-		if credential, err = ParseCredential(line); err != nil {
-			return nil, err
+		ids = make([]string, 0, len(entry.models))
+		for id := range entry.models {
+			ids = append(ids, id)
 		}
-	}
-	profile := credential.ProfileArn
-	runtime := runtimeURL(base, profile, credential.authRegion())
-	if profile == "" {
-		if profile, err = profileFor(ctx, &noRedirect, runtime, credential.AccessToken); err != nil {
-			return nil, err
-		}
-		runtime = runtimeURL(base, profile, credential.authRegion())
-	}
-	entry, err := catalogs.list(ctx, &noRedirect, runtime, credential.AccessToken, profile)
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	ids := make([]string, 0, len(entry.models))
-	for id := range entry.models {
-		ids = append(ids, id)
 	}
 	slices.Sort(ids)
 	return ids, nil

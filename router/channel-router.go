@@ -94,6 +94,7 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodPost, path: "/:id/codex/usage/reset", permission: authz.ChannelOperate, handler: controller.ResetCodexChannelUsage},
 	{method: http.MethodGet, path: "/:id/opencode-go/usage", permission: authz.ChannelRead, handler: controller.GetOpenCodeGoChannelUsage},
 	{method: http.MethodGet, path: "/:id/mistral/vibe-usage", permission: authz.ChannelRead, handler: controller.GetMistralChannelVibeUsage},
+	{method: http.MethodGet, path: "/:id/kiro/usage", permission: authz.ChannelRead, handler: controller.GetKiroChannelUsage},
 	{method: http.MethodGet, path: "/:id/coding-plan/usage", permission: authz.ChannelRead, handler: controller.GetCodingPlanChannelUsage},
 	{method: http.MethodPost, path: "/ollama/pull", permission: authz.ChannelSensitiveWrite, handler: controller.OllamaPullModel},
 	{method: http.MethodPost, path: "/ollama/pull/stream", permission: authz.ChannelSensitiveWrite, handler: controller.OllamaPullModelStream},

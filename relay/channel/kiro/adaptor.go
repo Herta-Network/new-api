@@ -438,7 +438,7 @@ func (a *Adaptor) retryRefusedToken(c *gin.Context, info *relaycommon.RelayInfo,
 	}
 	body, replayable := requestBody.(common.ReplayableBody)
 	if a.renewedAfterRefusal || !replayable {
-		return nil, a.fail(c, info, statusError{http.StatusUnauthorized})
+		return nil, a.fail(c, info, statusError{status: http.StatusUnauthorized})
 	}
 	a.renewedAfterRefusal = true
 	if apiErr := a.renewCredential(c, info); apiErr != nil {

@@ -2349,6 +2349,49 @@
                 }
             }
         },
+        "/api/channel/{id}/kiro/usage": {
+            "get": {
+                "security": [
+                    {
+                        "AdminAuth": []
+                    }
+                ],
+                "description": "需要 channel.read 权限。向 Kiro 管理面（GetUsageLimits）查询账号的套餐、本周期各资源（如 credit）的已用量和上限、赠送额度、下次重置时间，以及超额开关和费率；不返回账号的用户信息。凭证过期时与转发请求一样续期并保存，Kiro 提前拒绝 access token 时续期后重试一次。不支持多密钥渠道。",
+                "tags": [
+                    "渠道"
+                ],
+                "summary": "获取 Kiro 渠道用量",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Kiro 渠道 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.ApiResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/kiro.Usage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/channel/{id}/mistral/vibe-usage": {
             "get": {
                 "security": [
@@ -22080,6 +22123,106 @@
                     "additionalProperties": {
                         "$ref": "#/definitions/jsplugin.UsageFieldSchema"
                     }
+                }
+            }
+        },
+        "kiro.Usage": {
+            "type": "object",
+            "properties": {
+                "overage_enabled": {
+                    "description": "OverageEnabled reports whether usage past a resource's limit is billed\nat its overage rate instead of refused.",
+                    "type": "boolean"
+                },
+                "plan_title": {
+                    "description": "PlanTitle is the plan as Kiro shows it, as KIRO PRO+.",
+                    "type": "string"
+                },
+                "plan_type": {
+                    "description": "PlanType is Kiro's identifier of the plan, as\nQ_DEVELOPER_STANDALONE_PRO_PLUS.",
+                    "type": "string"
+                },
+                "reset_at": {
+                    "description": "ResetAt is when the cycle's usage resets, in Unix seconds; 0 when Kiro\ndid not say.",
+                    "type": "integer"
+                },
+                "resources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/kiro.UsageResource"
+                    }
+                }
+            }
+        },
+        "kiro.UsageBonus": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "description": "ExpiresAt is when the bonus expires, in Unix seconds; 0 when Kiro did\nnot say.",
+                    "type": "integer"
+                },
+                "free_trial": {
+                    "description": "FreeTrial reports the free trial of a new account rather than a bonus.",
+                    "type": "boolean"
+                },
+                "limit": {
+                    "description": "Limit is how much the bonus grants.",
+                    "type": "number"
+                },
+                "name": {
+                    "description": "Name is the bonus as Kiro names it; empty for the free trial.",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Status is ACTIVE, or EXHAUSTED for one used up before it expires.",
+                    "type": "string",
+                    "enum": [
+                        "ACTIVE",
+                        "EXHAUSTED"
+                    ]
+                },
+                "used": {
+                    "description": "Used is how much of the bonus is spent.",
+                    "type": "number"
+                }
+            }
+        },
+        "kiro.UsageResource": {
+            "type": "object",
+            "properties": {
+                "bonuses": {
+                    "description": "Bonuses are the extra allowances granted on top of Limit.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/kiro.UsageBonus"
+                    }
+                },
+                "currency": {
+                    "description": "Currency is the currency of OverageRate, as USD.",
+                    "type": "string"
+                },
+                "limit": {
+                    "description": "Limit is how much of the resource the plan includes in a cycle.",
+                    "type": "number"
+                },
+                "name": {
+                    "description": "Name is Kiro's display name of the resource; Type when it gives none.",
+                    "type": "string"
+                },
+                "overage_rate": {
+                    "description": "OverageRate is the price of one unit past Limit, in Currency.",
+                    "type": "number"
+                },
+                "overage_used": {
+                    "description": "OverageUsed is the usage past Limit billed as overage.",
+                    "type": "number"
+                },
+                "type": {
+                    "description": "Type is Kiro's identifier of the resource, as CREDIT.",
+                    "type": "string"
+                },
+                "used": {
+                    "description": "Used is how much of the resource the cycle used, in its units.",
+                    "type": "number"
                 }
             }
         },
