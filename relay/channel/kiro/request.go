@@ -1,6 +1,7 @@
 package kiro
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -351,6 +352,10 @@ type turn struct {
 	Context   *userContext     `json:"userInputMessageContext,omitempty"`
 	Tools     []map[string]any `json:"toolUses,omitempty"`
 	Reasoning any              `json:"reasoningContent,omitempty"`
+
+	// toolChanges are the tool_addition and tool_removal blocks of a system
+	// message, applied in order to the tools the request declares.
+	toolChanges []gjson.Result
 }
 
 type userContext struct {
@@ -358,15 +363,19 @@ type userContext struct {
 	Results []any `json:"toolResults,omitempty"`
 }
 
+// messageTurn converts one Messages message. A system message, which GAR has
+// no turn for, comes back as a user turn holding its text.
 func messageTurn(m gjson.Result, model string) (string, *turn, error) {
 	role, content := m.Get("role").Str, m.Get("content")
 	t := &turn{}
 	kind := "assistantResponseMessage"
-	if role == "user" {
+	switch role {
+	case "user", "system":
 		kind = "userInputMessage"
 		t.Model = model
 		t.Origin = "AI_EDITOR"
-	} else if role != "assistant" {
+	case "assistant":
+	default:
 		return "", nil, fieldError{"role"}
 	}
 	if content.Type == gjson.String {
@@ -381,6 +390,16 @@ func messageTurn(m gjson.Result, model string) (string, *turn, error) {
 				return "", nil, fieldError{"text"}
 			}
 			parts = append(parts, b.Get("text").Str)
+		case "tool_addition", "tool_removal":
+			// Mid-conversation tool changes: a definition, or a reference to a
+			// tool of the request's tools.
+			tool := b.Get("tool")
+			valid := tool.Get("type").Str == "tool_reference" && tool.Get("name").Str != "" ||
+				tool.Get("type").Str == "tool_definition" && b.Get("type").Str == "tool_addition" && tool.Get("definition").IsObject()
+			if role != "system" || !valid {
+				return "", nil, fieldError{"tool change"}
+			}
+			t.toolChanges = append(t.toolChanges, b)
 		case "tool_use":
 			if role != "assistant" || b.Get("id").Str == "" || b.Get("name").Str == "" || !b.Get("input").IsObject() {
 				return "", nil, fieldError{"tool_use"}
@@ -429,20 +448,32 @@ func generateAssistantResponse(fields map[string]json.RawMessage, profile, scope
 	result := map[string]any{"profileArn": profile, "agentMode": "vibe"}
 	amrf := map[string]any{}
 	system := ""
+	outputConfig := map[string]json.RawMessage{}
 	for k, raw := range fields {
 		switch k {
 		// Kiro caches prompt prefixes on its own, whatever the cache markers say,
 		// and has no request metadata; cache_control is dropped wherever it appears.
 		case "model", "stream", "messages", "tools", "metadata", "cache_control":
+		// Kiro has no context editing (its 5.5 models take a million tokens),
+		// and the edits are not carried out here either. Claude Code asks for
+		// clear_thinking_20251015 with keep "all", which clears nothing, and,
+		// after an idle gap, for clear_tool_uses_20250919. Clearing earlier
+		// turns from the history sent to Kiro would change it where they start,
+		// losing Kiro's prefix cache from there on every later turn, while the
+		// input billed is estimated from the request as the client sent it.
+		// The response reports no applied_edits, which reads as nothing
+		// cleared; Claude Code reads them only to track tool-use clearing.
+		case "context_management":
 		case "system":
 			v, err := textBlocks(gjson.ParseBytes(raw))
 			if err != nil {
 				return nil, err
 			}
-			if model.SystemPrompt {
-				result["systemPrompt"] = v
-			} else {
-				system = v
+			system = v
+		case "output_config":
+			// Applied after the messages, whose system messages may change it.
+			if common.Unmarshal(raw, &outputConfig) != nil || outputConfig == nil {
+				return nil, fieldError{k}
 			}
 		case "tool_choice":
 			if v := gjson.ParseBytes(raw); v.Get("type").Str != "auto" || v.Get("disable_parallel_tool_use").Bool() {
@@ -462,7 +493,7 @@ func generateAssistantResponse(fields map[string]json.RawMessage, profile, scope
 			if model.TakesOption(k) {
 				amrf[k] = raw
 			}
-		case "thinking", "output_config":
+		case "thinking":
 			fitted, err := fitSchemaObject(k, raw, gjson.GetBytes(model.Schema, "properties."+k))
 			if err != nil {
 				return nil, err
@@ -475,15 +506,37 @@ func generateAssistantResponse(fields map[string]json.RawMessage, profile, scope
 		}
 	}
 	msgs := gjson.ParseBytes(fields["messages"]).Array()
-	if len(msgs) == 0 {
-		return nil, errors.New("Kiro requires message history")
-	}
 	history := []map[string]*turn{}
-	// Kiro has one turn per speaker. Preserve the order and tools of consecutive messages.
+	var toolChanges []gjson.Result
+	// Kiro has one turn per speaker. Preserve the order and tools of consecutive
+	// messages. System messages follow the rule of Responses developer
+	// messages: the leading ones join the system prompt, and a later one is
+	// user text where it stands, which joins the turn of the user message
+	// before or after it, so tool results still answer the turn that called.
 	for _, m := range msgs {
 		kind, t, err := messageTurn(m, model.ID)
 		if err != nil {
 			return nil, err
+		}
+		if m.Get("role").Str == "system" {
+			toolChanges = append(toolChanges, t.toolChanges...)
+			// Per-message effort (beta) holds from its message on, so the last
+			// one is the effort of the turn Kiro generates.
+			if config := m.Get("output_config"); config.Exists() && config.Type != gjson.Null {
+				if !config.IsObject() || common.UnmarshalJsonStr(config.Raw, &outputConfig) != nil {
+					return nil, fieldError{"output_config"}
+				}
+			}
+			switch {
+			case t.Content == "":
+				continue
+			case len(history) == 0 && system != "":
+				system += "\n\n" + t.Content
+				continue
+			case len(history) == 0:
+				system = t.Content
+				continue
+			}
 		}
 		if len(history) > 0 {
 			if previous := history[len(history)-1][kind]; previous != nil {
@@ -509,12 +562,17 @@ func generateAssistantResponse(fields map[string]json.RawMessage, profile, scope
 		}
 		history = append(history, map[string]*turn{kind: t})
 	}
+	if len(history) == 0 {
+		return nil, errors.New("Kiro requires message history")
+	}
 	current := history[len(history)-1]["userInputMessage"]
 	if current == nil {
 		return nil, fieldError{"assistant prefill"}
 	}
 	history = history[:len(history)-1]
-	if system != "" {
+	if system != "" && model.SystemPrompt {
+		result["systemPrompt"] = system
+	} else if system != "" {
 		first := current
 		for _, entry := range history {
 			if user := entry["userInputMessage"]; user != nil {
@@ -524,7 +582,43 @@ func generateAssistantResponse(fields map[string]json.RawMessage, profile, scope
 		}
 		first.Content = foldedSystem(system, first.Content)
 	}
-	for _, tool := range gjson.ParseBytes(fields["tools"]).Array() {
+	if len(outputConfig) > 0 {
+		fitted, err := fitSchemaObject("output_config", marshalRaw(outputConfig), gjson.GetBytes(model.Schema, "properties.output_config"))
+		if err != nil {
+			return nil, err
+		}
+		if fitted != nil {
+			amrf["output_config"] = fitted
+		}
+	}
+	tools := gjson.ParseBytes(fields["tools"]).Array()
+	declared := slices.Clone(tools)
+	for _, change := range toolChanges {
+		tool := change.Get("tool")
+		definition := tool.Get("definition")
+		name := cmp.Or(definition.Get("name").Str, tool.Get("name").Str)
+		named := func(t gjson.Result) bool { return t.Get("name").Str == name }
+		at := slices.IndexFunc(declared, named)
+		switch {
+		case change.Get("type").Str == "tool_removal":
+			if at >= 0 {
+				declared = slices.Delete(declared, at, at+1)
+			}
+		case definition.Exists() && at >= 0:
+			declared[at] = definition
+		case definition.Exists():
+			declared = append(declared, definition)
+		case at < 0:
+			// A reference names one of the request's tools, which Kiro is told
+			// about from the start, deferred or not, unless one was removed.
+			from := slices.IndexFunc(tools, named)
+			if from < 0 {
+				return nil, fieldError{"tool reference"}
+			}
+			declared = append(declared, tools[from])
+		}
+	}
+	for _, tool := range declared {
 		if tool.Get("name").Str == "" || !tool.Get("input_schema").IsObject() {
 			return nil, fieldError{"tool declaration"}
 		}

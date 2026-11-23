@@ -181,6 +181,106 @@ func TestMessagesDropCacheHintsAndMetadata(t *testing.T) {
 	assert.Equal(t, "be brief\n\nread it", request.Get("conversationState.history.0.userInputMessage.content").Str)
 }
 
+// Claude Code sends context_management and system messages in the middle of
+// the conversation: its environment, reminders after tool results, effort and
+// tool changes. Kiro has no system turn, so a system message is user text
+// where it stands, and tool results still answer the turn that called them.
+func TestClaudeCodeSystemMessages(t *testing.T) {
+	haiku := Model{ID: "claude-haiku-5.5", Schema: json.RawMessage(`{"properties":{
+		"thinking":{"properties":{"type":{"enum":["adaptive","disabled"]}}},
+		"output_config":{"properties":{"effort":{"enum":["low","medium","high"]}}}}}`)}
+	const (
+		system   = `"system":[{"type":"text","text":"be brief","cache_control":{"type":"ephemeral"}}]`
+		ask      = `{"role":"user","content":[{"type":"text","text":"list files"}]}`
+		call     = `{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s"},{"type":"tool_use","id":"toolu_1","name":"ls","input":{}}]}`
+		result   = `{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"a.go"}]}`
+		env      = `{"role":"system","content":"cwd is /repo"}`
+		reminder = `{"role":"system","content":[{"type":"text","text":"keep going","cache_control":{"type":"ephemeral"}}]}`
+	)
+	cases := []struct {
+		name, messages string
+		enabled        bool
+		// history is each history turn's kind and content; current the
+		// current message's content.
+		history          []string
+		current          string
+		results          int
+		systemPrompt, oc string
+		tools            []string
+	}{
+		{name: "environment after the question", messages: ask + `,` + env,
+			current: "be brief\n\nlist files\n\ncwd is /repo"},
+		{name: "reminder after tool results", messages: ask + `,` + call + `,` + result + `,` + reminder,
+			history: []string{"user: be brief\n\nlist files", "assistant: "}, current: "keep going", results: 1},
+		{name: "between the call and its results", messages: ask + `,` + call + `,` + env + `,` + result,
+			history: []string{"user: be brief\n\nlist files", "assistant: "}, current: "cwd is /repo", results: 1},
+		{name: "after tool results before the answer", messages: ask + `,` + call + `,` + result + `,` + reminder + `,{"role":"assistant","content":"a.go"},{"role":"user","content":"thanks"}`,
+			history: []string{"user: be brief\n\nlist files", "assistant: ", "user with results: keep going", "assistant: a.go"}, current: "thanks"},
+		{name: "leading system message", messages: env + `,` + ask, enabled: true,
+			current: "list files", systemPrompt: "be brief\n\ncwd is /repo"},
+		{name: "effort only", messages: ask + `,{"role":"system","content":[],"output_config":{"effort":"low","timing":{"now":"x"}}}`,
+			current: "be brief\n\nlist files", oc: `{"effort":"low"}`},
+		{name: "tool changes", messages: ask + `,{"role":"system","content":[{"type":"tool_removal","tool":{"type":"tool_reference","name":"ls"}},{"type":"tool_addition","tool":{"type":"tool_definition","definition":{"name":"mcp__db__query","input_schema":{"type":"object"}}}}]}`,
+			current: "be brief\n\nlist files", tools: []string{"read", "mcp__db__query"}},
+	}
+	for _, tc := range cases {
+		var request dto.ClaudeRequest
+		require.NoError(t, common.UnmarshalJsonStr(`{"model":"claude-haiku-5.5","max_tokens":32000,"stream":true,`+system+`,
+			"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"},{"type":"clear_tool_uses_20250919","trigger":{"type":"tool_uses","value":30}}]},
+			"thinking":{"type":"adaptive"},"output_config":{"effort":"high"},"metadata":{"user_id":"u"},
+			"tools":[{"name":"ls","input_schema":{"type":"object"}},{"name":"read","input_schema":{"type":"object"},"defer_loading":true}],
+			"messages":[`+tc.messages+`]}`, &request), tc.name)
+		fields, err := fields(&request)
+		require.NoError(t, err, tc.name)
+		model := haiku
+		model.SystemPrompt = tc.enabled
+		body, err := generateAssistantResponse(fields, testProfile, "scope", model)
+		require.NoError(t, err, tc.name)
+		state := marshalJSON(t, body).Get("conversationState")
+		var history []string
+		for _, entry := range state.Get("history").Array() {
+			if user := entry.Get("userInputMessage"); user.Exists() {
+				label := "user: "
+				if user.Get("userInputMessageContext.toolResults").Exists() {
+					label = "user with results: "
+				}
+				history = append(history, label+user.Get("content").Str)
+			} else {
+				history = append(history, "assistant: "+entry.Get("assistantResponseMessage.content").Str)
+			}
+		}
+		assert.Equal(t, tc.history, history, tc.name)
+		current := state.Get("currentMessage.userInputMessage")
+		assert.Equal(t, tc.current, current.Get("content").Str, tc.name)
+		results := current.Get("userInputMessageContext.toolResults").Array()
+		if assert.Len(t, results, tc.results, tc.name) && tc.results > 0 {
+			assert.Equal(t, "toolu_1", results[0].Get("toolUseId").Str, tc.name)
+			assert.Equal(t, "toolu_1", state.Get("history.1.assistantResponseMessage.toolUses.0.toolUseId").Str, tc.name)
+		}
+		systemPrompt, _ := body["systemPrompt"].(string)
+		assert.Equal(t, tc.systemPrompt, systemPrompt, tc.name)
+		amrf := marshalJSON(t, body["additionalModelRequestFields"])
+		assert.JSONEq(t, cmp.Or(tc.oc, `{"effort":"high"}`), amrf.Get("output_config").Raw, tc.name)
+		var tools []string
+		for _, tool := range current.Get("userInputMessageContext.tools").Array() {
+			tools = append(tools, tool.Get("toolSpecification.name").Str)
+		}
+		if tc.tools == nil {
+			tc.tools = []string{"ls", "read"}
+		}
+		assert.Equal(t, tc.tools, tools, tc.name)
+		assert.NotContains(t, marshalJSON(t, body).Raw, "cache_control", tc.name)
+	}
+	for _, refused := range []string{
+		`{"role":"system","content":[{"type":"tool_use","id":"toolu_2","name":"ls","input":{}}]}`,
+		`{"role":"system","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AA=="}}]}`,
+		`{"role":"system","content":[{"type":"tool_addition","tool":{"type":"tool_reference","name":"missing"}}]}`,
+	} {
+		_, err := generateAssistantResponse(members(t, `{"model":"m","messages":[`+ask+`,`+refused+`]}`), testProfile, "scope", haiku)
+		assert.Error(t, err, refused)
+	}
+}
+
 func TestRefusedOptions(t *testing.T) {
 	for _, extra := range []string{`"stop_sequences":["x"]`, `"output_format":{"type":"json_schema"}`} {
 		fields := members(t, `{"model":"m","messages":[{"role":"user","content":"hi"}],`+extra+`}`)
