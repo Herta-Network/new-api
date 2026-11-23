@@ -14,22 +14,22 @@ import (
 
 var channelAffinityTestSeq atomic.Int64
 
+// affinityTestKeys names a routing seed unique to the test: its source and
+// the fingerprint the statistics are kept under.
 func affinityTestKeys(t *testing.T) (string, string) {
 	t.Helper()
-	key := fmt.Sprintf("%s:%d", t.Name(), channelAffinityTestSeq.Add(1))
-	return key, key
+	source := fmt.Sprintf("rule:%s:%d", t.Name(), channelAffinityTestSeq.Add(1))
+	return source, scopedRouteSeed(1, "test-model", source, []byte(source)).fingerprint()
 }
 
-func buildChannelAffinityStatsContextForTest(ruleName, usingGroup, keyFP string) *gin.Context {
-	rec := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(rec)
-	setChannelAffinityContext(ctx, channelAffinityMeta{
-		CacheKey:       fmt.Sprintf("test:%s:%s:%s", ruleName, usingGroup, keyFP),
-		TTLSeconds:     600,
-		RuleName:       ruleName,
-		UsingGroup:     usingGroup,
-		KeyFingerprint: keyFP,
-	})
+// buildChannelAffinityStatsContextForTest is a request routed in usingGroup
+// by the seed affinityTestKeys named.
+func buildChannelAffinityStatsContextForTest(source, usingGroup, _ string) *gin.Context {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	router := NewChannelRouter(ctx)
+	router.inspected = true
+	router.request.seed = scopedRouteSeed(1, "test-model", source, []byte(source))
+	router.record(routeAttempt{Group: usingGroup, ChannelID: 1})
 	return ctx
 }
 

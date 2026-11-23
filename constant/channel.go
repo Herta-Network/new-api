@@ -247,3 +247,9 @@ func IsAdvancedCustomChannel(channelType int) bool {
 		return false
 	}
 }
+
+// ConversationSessionHeaders are conversation identities coding agents send:
+// OpenCode's own header, Claude Code's, and the ones Codex sends. A client
+// that names its session decides membership; history cannot move it
+// elsewhere. Conversation recognition and request routing both read them.
+var ConversationSessionHeaders = []string{"X-Opencode-Session", "X-Claude-Code-Session-Id", "Session_id", "Session-Id", "Conversation_id"}

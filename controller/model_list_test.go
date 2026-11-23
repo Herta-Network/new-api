@@ -430,8 +430,8 @@ func TestModelMappingHidesUpstreamModels(t *testing.T) {
 		model.InitChannelCache()
 		served := make(map[string]int)
 		for _, name := range []string{"zz-public-alias", "zz-upstream-real", "zz-offered-elsewhere"} {
-			if channel, _ := model.GetRandomSatisfiedChannel("default", name, 0, nil); channel != nil {
-				served[name] = channel.Id
+			if candidates, _ := model.ListRouteCandidates("default", name, nil); len(candidates) > 0 {
+				served[name] = candidates[0].Channel.Id
 			}
 		}
 		assert.Equal(t, map[string]int{"zz-public-alias": 801, "zz-offered-elsewhere": 802}, served, "memory cache %t", memoryCache)

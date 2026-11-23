@@ -210,7 +210,7 @@ func TestDecideRelayRetryReasons(t *testing.T) {
 			GetChannelConstraints(c).AddPin(dto.ChannelPin{ChannelId: 1, Source: dto.PinSourceToken, Rank: dto.PinRankToken, RetryMode: dto.PinRetrySingleAttempt})
 		}, want: PolicyDecision{Action: "stop", Reason: "pinned_channel", Source: "channel_constraint"}},
 		{name: "strict session", err: upstream(http.StatusTooManyRequests), retries: 1, setup: func(c *gin.Context) {
-			c.Set(ginKeyChannelAffinitySkipRetry, true)
+			NewChannelRouter(c).mode = "strict"
 			RequestPolicy(c).SessionModeSource = "global"
 		}, want: PolicyDecision{Action: "stop", Reason: "strict_session", Source: "global"}},
 		{name: "nil error", retries: 1, want: PolicyDecision{Action: "stop", Reason: "request_completed", Source: "system"}},

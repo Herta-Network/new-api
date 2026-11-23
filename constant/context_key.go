@@ -56,9 +56,9 @@ const (
 	// through service.ConversationSessionID.
 	ContextKeyConversationSessionID ContextKey = "conversation_session_id"
 
-	ContextKeyAutoGroup           ContextKey = "auto_group"
-	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"
-	ContextKeyAutoGroupRetryIndex ContextKey = "auto_group_retry_index"
+	// ContextKeyAutoGroup is the group an "auto" request's current attempt was
+	// routed in; group pricing and request plugins read it.
+	ContextKeyAutoGroup ContextKey = "auto_group"
 
 	/* user related keys */
 	ContextKeyUserId      ContextKey = "id"

@@ -211,7 +211,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	group, _ := model.GetUserGroup(testUserID, false)
 	c.Set("group", group)
 
-	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)
+	keyValue, keyIndex, newAPIError := channel.GetNextEnabledKey()
+	if newAPIError == nil {
+		newAPIError = middleware.SetupContextForSelectedChannel(c, channel, model.ChannelKey{Index: keyIndex, Value: keyValue}, testModel)
+	}
 	if newAPIError != nil {
 		return testResult{
 			context:     c,

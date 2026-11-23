@@ -33,7 +33,7 @@ type ModelRequest struct {
 
 func Distribute() func(c *gin.Context) {
 	return func(c *gin.Context) {
-		var channel *model.Channel
+		var choice service.RouteChoice
 		defer func() {
 			if c.Writer.Status() >= 400 {
 				service.RecordRequestPolicyTermination(c, types.NewErrorWithStatusCode(errors.New("request rejected"), types.ErrorCodeInvalidRequest, c.Writer.Status(), types.ErrOptionWithSkipRetry()))
@@ -100,22 +100,7 @@ func Distribute() func(c *gin.Context) {
 		if pinned || shouldSelectChannel {
 			usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 			var selectErr *service.ChannelSelectError
-			if value, exists := c.Get(contextKeyTaskPluginEndpointSelection); exists && !pinned {
-				if selected, ok := value.(taskPluginEndpointSelection); ok && selected.Model == modelRequest.Model && selected.Channel != nil && selected.Channel.Status == common.ChannelStatusEnabled {
-					if matches, _ := model.ChannelSatisfiesFilters(selected.Channel, modelRequest.Model, constraints.Filters); matches {
-						channel = selected.Channel
-					}
-				}
-			}
-			if channel == nil {
-				channel, _, selectErr = service.SelectChannelForRequest(c, modelRequest.Model, &service.RetryParam{
-					Ctx:         c,
-					ModelName:   modelRequest.Model,
-					TokenGroup:  usingGroup,
-					RequestPath: c.Request.URL.Path,
-					Retry:       common.GetPointer(0),
-				})
-			}
+			choice, selectErr = service.SelectChannelForRequest(c, modelRequest.Model)
 			if selectErr != nil {
 				if selectErr.FilterKind == taskdto.FilterTaskPluginIdentity {
 					logTaskPluginChannelDecision(c, selectErr.Channel, modelRequest.Model, "channel_rejected", "identity_mismatch")
@@ -131,11 +116,17 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
-		c.Next()
-		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
-			service.RecordChannelAffinity(c, channel.Id)
+		c.Set("original_model", modelRequest.Model) // for retry
+		if choice.Channel != nil {
+			// A channel the request cannot run on, such as one of a task
+			// plugin the request is not pinned to, stops it here instead of
+			// relaying with a half-prepared context.
+			if setupErr := SetupContextForSelectedChannel(c, choice.Channel, choice.Key, modelRequest.Model); setupErr != nil {
+				abortWithOpenAiMessage(c, setupErr.StatusCode, setupErr.Error(), setupErr.GetErrorCode())
+				return
+			}
 		}
+		c.Next()
 	}
 }
 
@@ -616,7 +607,10 @@ func getTaskOriginModelName(c *gin.Context) string {
 	return ""
 }
 
-func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
+// SetupContextForSelectedChannel prepares the context for an attempt on
+// channel with key, which request routing chose (service.RouteChoice) or a
+// caller outside routing took from channel.GetNextEnabledKey.
+func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, key model.ChannelKey, modelName string) *types.NewAPIError {
 	c.Set("original_model", modelName) // for retry
 	expectedPlugin := c.GetString("expected_task_plugin_key")
 	if channel == nil {
@@ -713,19 +707,14 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, channel.GetModelMapping())
 	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
 
-	key, index, newAPIError := channel.GetNextEnabledKey()
-	if newAPIError != nil {
-		return newAPIError
-	}
 	if channel.ChannelInfo.IsMultiKey {
 		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, true)
-		common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, index)
+		common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, key.Index)
 	} else {
 		// 必须设置为 false，否则在重试到单个 key 的时候会导致日志显示错误
 		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, false)
 	}
-	// c.Request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", key))
-	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
+	common.SetContextKey(c, constant.ContextKeyChannelKey, key.Value)
 	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, channel.GetBaseURL())
 
 	common.SetContextKey(c, constant.ContextKeySystemPromptOverride, false)

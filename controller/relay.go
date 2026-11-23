@@ -210,24 +210,20 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = relay.RefundFailedRequestBilling(c, relayInfo, newAPIError)
 	}()
 
-	retryParam := &service.RetryParam{
-		Ctx:         c,
-		TokenGroup:  relayInfo.TokenGroup,
-		ModelName:   relayInfo.OriginModelName,
-		RequestPath: c.Request.URL.Path,
-		Retry:       common.GetPointer(0),
-	}
+	router := service.RouterFor(c)
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	for attempt := 0; ; attempt++ {
 		relayInfo.StreamStatus = nil
 		relayInfo.PerformanceBusinessRejection = false
 		relayInfo.PerformanceOutputTokens = 0
-		relayInfo.RetryIndex = retryParam.GetRetry()
-		channel, channelErr := getChannel(c, relayInfo, retryParam)
+		relayInfo.RetryIndex = attempt
+		channel, channelErr := getChannel(c, relayInfo, attempt)
 		if channelErr != nil {
-			logger.LogError(c, channelErr.Error())
+			if channelErr != relayInfo.LastError {
+				logger.LogError(c, channelErr.Error())
+			}
 			newAPIError = channelErr
 			break
 		}
@@ -273,7 +269,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 
-		decision := service.DecideRelayRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
+		router.Fail(c, channel.Id, newAPIError)
+		decision := service.DecideRelayRetry(c, newAPIError, router.Remaining(c))
 		service.RecordPolicyFailure(c, channel.Id, newAPIError, decision)
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, relayInfo)
 
@@ -339,8 +336,11 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
-	if info.ChannelMeta == nil {
+// getChannel returns the channel of the request's next attempt. The first
+// attempt runs on the channel the distributor prepared; later ones ask the
+// request's router.
+func getChannel(c *gin.Context, info *relaycommon.RelayInfo, attempt int) (*model.Channel, *types.NewAPIError) {
+	if info.ChannelMeta == nil && attempt == 0 {
 		autoBan := c.GetBool("auto_ban")
 		autoBanInt := 1
 		if !autoBan {
@@ -355,22 +355,37 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		service.RequestPolicy(c).BeginAttempt(channel, info.UsingGroup)
 		return channel, nil
 	}
-	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
-	if err != nil {
-		return nil, types.NewError(errors.New(i18n.T(c, i18n.MsgRelayRetryGetChannelFailed, map[string]any{"Group": selectGroup, "Model": info.OriginModelName, "Error": err.Error()})), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
-	}
-	if channel == nil {
-		return nil, types.NewError(errors.New(i18n.T(c, i18n.MsgRelayRetryNoAvailableChannel, map[string]any{"Group": selectGroup, "Model": info.OriginModelName})), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	choice, selectErr := service.RouterFor(c).Next(c, info.OriginModelName)
+	if selectErr != nil {
+		if attempt > 0 && info.LastError != nil {
+			// No candidate is left for a retry: the client gets what the last
+			// attempt's upstream answered.
+			return nil, info.LastError
+		}
+		group := choice.Group
+		if group == "" {
+			group = info.UsingGroup
+		}
+		messageID := i18n.MsgRelayRetryNoAvailableChannel
+		params := map[string]any{"Group": group, "Model": info.OriginModelName}
+		if !selectErr.NoAvailableChannel {
+			messageID = i18n.MsgRelayRetryGetChannelFailed
+			params["Error"] = selectErr.Message
+			if selectErr.MessageID != "" {
+				params["Error"] = i18n.T(c, selectErr.MessageID, selectErr.Params)
+			}
+		}
+		return nil, types.NewError(errors.New(i18n.T(c, messageID, params)), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
 
 	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
 
-	service.RequestPolicy(c).BeginAttempt(channel, selectGroup)
-	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
+	service.RequestPolicy(c).BeginAttempt(choice.Channel, choice.Group)
+	newAPIError := middleware.SetupContextForSelectedChannel(c, choice.Channel, choice.Key, info.OriginModelName)
 	if newAPIError != nil {
 		return nil, newAPIError
 	}
-	return channel, nil
+	return choice.Channel, nil
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo) {
@@ -685,46 +700,56 @@ func executeTaskSubmissionWith(
 		}
 	}
 
-	retryParam := &service.RetryParam{
-		Ctx:         c,
-		TokenGroup:  relayInfo.TokenGroup,
-		ModelName:   relayInfo.OriginModelName,
-		RequestPath: c.Request.URL.Path,
-		Retry:       common.GetPointer(0),
+	router := service.RouterFor(c)
+	lockedCh, locked := relayInfo.LockedChannel.(*model.Channel)
+	locked = locked && lockedCh != nil
+	if locked {
+		router.Lock(lockedCh)
 	}
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
-		relayInfo.RetryIndex = retryParam.GetRetry()
+	for attempt := 0; ; attempt++ {
+		relayInfo.RetryIndex = attempt
 		relayInfo.RuntimeHeadersOverride = nil
 		relayInfo.UseRuntimeHeadersOverride = false
 
 		stage = "select_channel"
 		if requestErr := c.Request.Context().Err(); requestErr != nil {
-			diagnostics.cancelled("before_attempt", retryParam.GetRetry()+1)
+			diagnostics.cancelled("before_attempt", attempt+1)
 			taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 			break
 		}
 		var channel *model.Channel
 
-		if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil {
+		if locked && attempt == 0 {
+			// The origin task's channel and key are already in the context.
 			channel = lockedCh
 			policy.BeginAttempt(channel, relayInfo.UsingGroup)
-			if retryParam.GetRetry() > 0 {
-				if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr != nil {
-					taskErr = service.TaskErrorWrapperLocal(setupErr.Err, "setup_locked_channel_failed", http.StatusInternalServerError)
-					break
-				}
+		} else if locked {
+			choice, selectErr := router.Next(c, relayInfo.OriginModelName)
+			if selectErr != nil {
+				// taskErr keeps the last attempt's failure.
+				break
+			}
+			channel = choice.Channel
+			policy.BeginAttempt(channel, relayInfo.UsingGroup)
+			if setupErr := middleware.SetupContextForSelectedChannel(c, channel, choice.Key, relayInfo.OriginModelName); setupErr != nil {
+				taskErr = service.TaskErrorWrapperLocal(setupErr.Err, "setup_locked_channel_failed", http.StatusInternalServerError)
+				break
 			}
 		} else {
 			var channelErr *types.NewAPIError
-			channel, channelErr = getChannel(c, relayInfo, retryParam)
+			channel, channelErr = getChannel(c, relayInfo, attempt)
 			if channelErr != nil {
+				if attempt > 0 && channelErr == relayInfo.LastError {
+					// No candidate is left; taskErr keeps the last failure.
+					break
+				}
 				logger.LogError(c, channelErr.Error())
 				taskErr = service.TaskErrorWrapperLocal(channelErr.Err, "get_channel_failed", channelErr.StatusCode)
 				break
 			}
 		}
-		diagnostics.attempt(retryParam.GetRetry()+1, channel, relayInfo.LockedChannel != nil)
+		diagnostics.attempt(attempt+1, channel, locked)
 
 		service.AppendUsedChannel(c, channel.Id)
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
@@ -742,18 +767,19 @@ func executeTaskSubmissionWith(
 		stage = "submit"
 		result, taskErr = submit(c, relayInfo)
 		if requestErr := c.Request.Context().Err(); requestErr != nil {
-			diagnostics.cancelled("after_submit", retryParam.GetRetry()+1)
+			diagnostics.cancelled("after_submit", attempt+1)
 			taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 			break
 		}
 		if taskErr == nil {
-			diagnostics.attemptSucceeded(retryParam.GetRetry()+1, result)
+			diagnostics.attemptSucceeded(attempt+1, result)
 			break
 		}
 
 		taskAPIError := taskSubmissionAPIError(taskErr)
 		relayInfo.LastError = taskAPIError
-		decision := decideTaskRetry(c, taskErr, common.RetryTimes-retryParam.GetRetry())
+		router.Fail(c, channel.Id, taskAPIError)
+		decision := decideTaskRetry(c, taskErr, router.Remaining(c))
 		service.RecordPolicyFailure(c, channel.Id, taskAPIError, decision)
 		if !taskErr.LocalError {
 			processChannelError(c,
@@ -768,7 +794,7 @@ func executeTaskSubmissionWith(
 		}
 
 		willRetry := decision.Action == "retry"
-		diagnostics.attemptFailed(retryParam.GetRetry()+1, channel, taskErr, willRetry)
+		diagnostics.attemptFailed(attempt+1, channel, taskErr, willRetry)
 		if !willRetry {
 			break
 		}
@@ -790,7 +816,7 @@ func executeTaskSubmissionWith(
 		return nil, taskErr
 	}
 	if requestErr := c.Request.Context().Err(); requestErr != nil {
-		diagnostics.cancelled("before_reserve", retryParam.GetRetry()+1)
+		diagnostics.cancelled("before_reserve", relayInfo.RetryIndex+1)
 		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 	}
 
@@ -814,7 +840,7 @@ func executeTaskSubmissionWith(
 		}
 	}
 	if requestErr := c.Request.Context().Err(); requestErr != nil {
-		diagnostics.cancelled("before_insert", retryParam.GetRetry()+1)
+		diagnostics.cancelled("before_insert", relayInfo.RetryIndex+1)
 		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 	}
 
@@ -1045,7 +1071,7 @@ func decideTaskRetry(c *gin.Context, taskErr *taskdto.TaskError, retryTimes int)
 		stop.Reason = "task_accepted"
 	case requestplugin.Stopped(taskErr):
 		stop.Reason, stop.Source = "local_rejection", "plugin"
-	case service.ShouldSkipRetryAfterChannelAffinityFailure(c):
+	case service.IsStrictRoute(c):
 		stop.Reason, stop.Source = "strict_session", "session_rule"
 		if source := service.RequestPolicy(c).SessionModeSource; source != "" {
 			stop.Source = source

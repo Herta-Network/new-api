@@ -242,10 +242,11 @@ func TestUpstreamRateLimitCoolsTheFailedChannel(t *testing.T) {
 		channelTest  bool
 		otherChannel bool
 		wantCooling  bool
+		wantKey      bool
 	}{
 		{name: "a 429 cools the channel for the model", status: http.StatusTooManyRequests, wantCooling: true},
 		{name: "other failures leave the channel alone", status: http.StatusInternalServerError},
-		{name: "a multi-key channel is left alone", status: http.StatusTooManyRequests, multiKey: true},
+		{name: "a multi-key channel cools only the key that got the 429", status: http.StatusTooManyRequests, multiKey: true, wantKey: true},
 		{name: "a channel test is left alone", status: http.StatusTooManyRequests, channelTest: true},
 		{name: "a 429 is not attributed to another channel", status: http.StatusTooManyRequests, otherChannel: true},
 	} {
@@ -267,7 +268,7 @@ func TestUpstreamRateLimitCoolsTheFailedChannel(t *testing.T) {
 			require.NoError(t, err)
 			apiErr := service.RelayErrorHandler(ctx, resp, false)
 			require.Equal(t, tc.status, apiErr.StatusCode)
-			failed := types.ChannelError{ChannelId: channelID, IsMultiKey: tc.multiKey}
+			failed := types.ChannelError{ChannelId: channelID, IsMultiKey: tc.multiKey, UsingKey: "key-2"}
 			if tc.otherChannel {
 				failed.ChannelId = channelID + 1
 			}
@@ -277,8 +278,10 @@ func TestUpstreamRateLimitCoolsTheFailedChannel(t *testing.T) {
 			}
 			service.ProcessChannelError(ctx, failed, apiErr, relayInfo)
 
-			assert.Equal(t, tc.wantCooling, model.IsChannelRateLimited(channelID, modelName))
-			assert.False(t, model.IsChannelRateLimited(channelID+1, modelName))
+			assert.Equal(t, tc.wantCooling, model.IsChannelRateLimited(channelID, "", modelName))
+			assert.Equal(t, tc.wantCooling || tc.wantKey, model.IsChannelRateLimited(channelID, model.ChannelKeyFingerprint("key-2"), modelName))
+			assert.Equal(t, tc.wantCooling, model.IsChannelRateLimited(channelID, model.ChannelKeyFingerprint("key-1"), modelName))
+			assert.False(t, model.IsChannelRateLimited(channelID+1, "", modelName))
 		})
 	}
 }

@@ -1,6 +1,8 @@
 package model
 
 import (
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,21 +17,35 @@ import (
 // (https://github.com/Calcium-Ion/AstrLink, Copyright 2026 AstrLink
 // contributors, Apache License 2.0).
 //
-// An upstream 429 pauses one channel for one model. The pause only steers
-// selection toward the other candidates: it never changes the channel's
-// status, and it ends on its own once its deadline passes.
+// An upstream 429 pauses one channel, or one key of a multi-key channel, for
+// one model. The pause only steers selection toward the other candidates: it
+// never changes the channel's status, and it ends on its own once its
+// deadline passes.
 
 const (
-	channelRateLimitCacheNamespace = "new-api:channel_rate_limit:v1"
+	// v2 keys cooldowns by target string so a multi-key channel can pause one
+	// key; v1 entries expire on their own.
+	channelRateLimitCacheNamespace = "new-api:channel_rate_limit:v2"
 	// channelRateLimitCacheCapacity bounds the in-memory store, which holds
 	// one entry per model that has a channel cooling down.
 	channelRateLimitCacheCapacity = 10_000
 )
 
-// channelRateLimits maps a channel ID to the Unix millisecond at which its
-// cooldown for one model ends. A stored map is never modified, so readers of
-// the in-memory cache can share it.
-type channelRateLimits map[int]int64
+// channelRateLimits maps a cooling target to the Unix millisecond at which
+// its cooldown for one model ends. A target is a channel ID, or
+// "<channel ID>/<key fingerprint>" for one key of a multi-key channel. A
+// stored map is never modified, so readers of the in-memory cache can share
+// it.
+type channelRateLimits map[string]int64
+
+// channelRateLimitTarget names what a cooldown pauses: the whole channel when
+// keyFingerprint is empty, else that key alone.
+func channelRateLimitTarget(channelID int, keyFingerprint string) string {
+	if keyFingerprint == "" {
+		return strconv.Itoa(channelID)
+	}
+	return strconv.Itoa(channelID) + "/" + keyFingerprint
+}
 
 var (
 	channelRateLimitCacheOnce sync.Once
@@ -65,9 +81,11 @@ func getChannelRateLimitCache() *cachex.HybridCache[channelRateLimits] {
 	return channelRateLimitCache
 }
 
-// RecordChannelRateLimit keeps channelID out of selection for modelName until
-// cooldown has passed, unless a later deadline is already recorded.
-func RecordChannelRateLimit(channelID int, modelName string, cooldown time.Duration) {
+// RecordChannelRateLimit keeps a channel, or with keyFingerprint
+// (ChannelKeyFingerprint) one key of a multi-key channel, out of selection
+// for modelName until cooldown has passed, unless a later deadline is already
+// recorded.
+func RecordChannelRateLimit(channelID int, keyFingerprint string, modelName string, cooldown time.Duration) {
 	if channelID <= 0 || modelName == "" || cooldown < time.Millisecond {
 		return
 	}
@@ -80,8 +98,9 @@ func RecordChannelRateLimit(channelID int, modelName string, cooldown time.Durat
 	if err != nil {
 		common.SysError(common.LogText("channel rate limit cache get failed: model=%s, err=%v", modelName, err))
 	}
-	limits := channelRateLimits{channelID: now + cooldown.Milliseconds()}
-	latest := limits[channelID]
+	target := channelRateLimitTarget(channelID, keyFingerprint)
+	limits := channelRateLimits{target: now + cooldown.Milliseconds()}
+	latest := limits[target]
 	for id, until := range current {
 		if until <= now {
 			continue
@@ -94,52 +113,56 @@ func RecordChannelRateLimit(channelID int, modelName string, cooldown time.Durat
 	}
 }
 
-// IsChannelRateLimited reports whether channelID is cooling down for modelName.
-func IsChannelRateLimited(channelID int, modelName string) bool {
-	return rateLimitedChannels(modelName)[channelID]
+// ChannelCooldowns is the set of targets cooling down for one model at the
+// moment it was read.
+type ChannelCooldowns struct {
+	targets  map[string]bool
+	channels map[int]bool
 }
 
-// rateLimitedChannels returns the channels cooling down for modelName. It may
-// reach Redis, so selection calls it before taking channelSyncLock.
-func rateLimitedChannels(modelName string) map[int]bool {
+// Cooling reports whether the channel, or with keyFingerprint that key of it,
+// is cooling down. A whole-channel cooldown covers every key.
+func (cooldowns ChannelCooldowns) Cooling(channelID int, keyFingerprint string) bool {
+	if cooldowns.targets[channelRateLimitTarget(channelID, "")] {
+		return true
+	}
+	return keyFingerprint != "" && cooldowns.targets[channelRateLimitTarget(channelID, keyFingerprint)]
+}
+
+// HasChannel reports whether any cooldown names the channel or one of its
+// keys, so a caller can skip fingerprinting the keys of the others.
+func (cooldowns ChannelCooldowns) HasChannel(channelID int) bool {
+	return cooldowns.channels[channelID]
+}
+
+// IsChannelRateLimited reports whether the channel, or with keyFingerprint
+// that key of it, is cooling down for modelName.
+func IsChannelRateLimited(channelID int, keyFingerprint string, modelName string) bool {
+	return ChannelCooldownsFor(modelName).Cooling(channelID, keyFingerprint)
+}
+
+// ChannelCooldownsFor returns the targets cooling down for modelName. It may
+// reach Redis, so callers read it before taking channelSyncLock.
+func ChannelCooldownsFor(modelName string) ChannelCooldowns {
 	limits, found, err := getChannelRateLimitCache().Get(modelName)
 	if err != nil {
 		common.SysError(common.LogText("channel rate limit cache get failed: model=%s, err=%v", modelName, err))
-		return nil
+		return ChannelCooldowns{}
 	}
 	if !found {
-		return nil
+		return ChannelCooldowns{}
 	}
 	now := channelRateLimitNow().UnixMilli()
-	cooling := make(map[int]bool, len(limits))
-	for id, until := range limits {
-		if until > now {
-			cooling[id] = true
+	cooldowns := ChannelCooldowns{targets: make(map[string]bool, len(limits)), channels: make(map[int]bool, len(limits))}
+	for target, until := range limits {
+		if until <= now {
+			continue
+		}
+		cooldowns.targets[target] = true
+		channel, _, _ := strings.Cut(target, "/")
+		if id, err := strconv.Atoi(channel); err == nil {
+			cooldowns.channels[id] = true
 		}
 	}
-	return cooling
-}
-
-// readyPriorityLevel picks the priority level to draw from once cooling
-// channels are set aside. The retry index has already chosen target from all
-// candidates, so the attempt after a 429 still moves down one level as it did
-// before. target is kept when a ready channel sits there; otherwise the
-// nearest lower level with one is used, and failing that the nearest higher
-// level. readyPriorities must not be empty.
-func readyPriorityLevel(target int64, readyPriorities []int64) int64 {
-	var below, above int64
-	foundBelow, foundAbove := false, false
-	for _, priority := range readyPriorities {
-		if priority <= target {
-			if !foundBelow || priority > below {
-				below, foundBelow = priority, true
-			}
-		} else if !foundAbove || priority < above {
-			above, foundAbove = priority, true
-		}
-	}
-	if foundBelow {
-		return below
-	}
-	return above
+	return cooldowns
 }

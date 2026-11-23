@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand"
 	"slices"
 	"strings"
@@ -212,89 +213,102 @@ func (channel *Channel) GetKeys() []string {
 	return keys
 }
 
-func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
-	// If not in multi-key mode, return the original key string directly.
+// ChannelKey is one upstream credential of a channel: its position in the
+// channel's key list and its value.
+type ChannelKey struct {
+	Index int
+	Value string
+}
+
+// EnabledKeys lists the keys an attempt may use: the key of a single-key
+// channel, or the enabled keys of a multi-key channel in list order. It takes
+// no lock: a cached channel's key statuses are never changed in place, since
+// writers publish an updated copy (UpdateChannelStatus,
+// UpdateScheduledChannelLocked), and a channel read from the database belongs
+// to its caller.
+func (channel *Channel) EnabledKeys() []ChannelKey {
 	if !channel.ChannelInfo.IsMultiKey {
-		return channel.Key, 0, nil
+		return []ChannelKey{{Index: 0, Value: channel.Key}}
 	}
-
-	// Obtain all keys (split by \n)
 	keys := channel.GetKeys()
-	if len(keys) == 0 {
-		// No keys available, return error, should disable the channel
-		return "", 0, types.NewError(errors.New("no keys available"), types.ErrorCodeChannelNoAvailableKey)
+	enabled := make([]ChannelKey, 0, len(keys))
+	for i, key := range keys {
+		if status, ok := channel.ChannelInfo.MultiKeyStatusList[i]; ok && status != common.ChannelStatusEnabled {
+			continue
+		}
+		enabled = append(enabled, ChannelKey{Index: i, Value: key})
 	}
+	return enabled
+}
 
+// NextPolledKey returns the first of candidates at or after the channel's
+// polling position and moves the position past it. Polling mode uses it for
+// a request routing has no seed for. candidates must not be empty.
+func (channel *Channel) NextPolledKey(candidates []ChannelKey) (ChannelKey, *types.NewAPIError) {
 	lock := GetChannelPollingLock(channel.Id)
 	lock.Lock()
 	defer lock.Unlock()
 
-	statusList := channel.ChannelInfo.MultiKeyStatusList
-	// helper to get key status, default to enabled when missing
-	getStatus := func(idx int) int {
-		if statusList == nil {
-			return common.ChannelStatusEnabled
-		}
-		if status, ok := statusList[idx]; ok {
-			return status
-		}
-		return common.ChannelStatusEnabled
+	channelInfo, err := CacheGetChannelInfo(channel.Id)
+	if err != nil {
+		return ChannelKey{}, types.NewError(err, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
+	total := len(channel.GetKeys())
+	start := channelInfo.MultiKeyPollingIndex
+	if start < 0 || start >= total {
+		start = 0
+	}
+	allowed := make(map[int]ChannelKey, len(candidates))
+	for _, candidate := range candidates {
+		allowed[candidate.Index] = candidate
+	}
+	selected := candidates[0]
+	for i := range total {
+		if candidate, ok := allowed[(start+i)%total]; ok {
+			selected = candidate
+			break
+		}
+	}
+	// Point at the next position for the following call.
+	channel.ChannelInfo.MultiKeyPollingIndex = (selected.Index + 1) % max(total, 1)
+	if common.DebugEnabled {
+		logger.LogDebug(nil, "channel %d polling index: %d", channel.Id, channel.ChannelInfo.MultiKeyPollingIndex)
+	}
+	if !common.MemoryCacheEnabled {
+		_ = channel.SaveChannelInfo()
+	}
+	return selected, nil
+}
 
-	// Collect indexes of enabled keys
-	enabledIdx := make([]int, 0, len(keys))
-	for i := range keys {
-		if getStatus(i) == common.ChannelStatusEnabled {
-			enabledIdx = append(enabledIdx, i)
-		}
+// GetNextEnabledKey picks a key by the channel's multi-key mode for callers
+// outside request routing, such as channel tests and upstream model sync.
+// Request routing picks keys itself (service.ChannelRouter).
+func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
+	if !channel.ChannelInfo.IsMultiKey {
+		return channel.Key, 0, nil
 	}
-	// If no specific status list or none enabled, return an explicit error so caller can
-	// properly handle a channel with no available keys (e.g. mark channel disabled).
-	// Returning the first key here caused requests to keep using an already-disabled key.
-	if len(enabledIdx) == 0 {
+	if len(channel.GetKeys()) == 0 {
+		// No keys available, return error, should disable the channel
+		return "", 0, types.NewError(errors.New("no keys available"), types.ErrorCodeChannelNoAvailableKey)
+	}
+	enabled := channel.EnabledKeys()
+	// Returning the first key here caused requests to keep using an
+	// already-disabled key, so a channel without an enabled key is an error.
+	if len(enabled) == 0 {
 		return "", 0, types.NewError(errors.New("no enabled keys"), types.ErrorCodeChannelNoAvailableKey)
 	}
-
 	switch channel.ChannelInfo.MultiKeyMode {
 	case constant.MultiKeyModeRandom:
-		// Randomly pick one enabled key
-		selectedIdx := enabledIdx[rand.Intn(len(enabledIdx))]
-		return keys[selectedIdx], selectedIdx, nil
+		key := enabled[rand.Intn(len(enabled))]
+		return key.Value, key.Index, nil
 	case constant.MultiKeyModePolling:
-		// Use channel-specific lock to ensure thread-safe polling
-
-		channelInfo, err := CacheGetChannelInfo(channel.Id)
+		key, err := channel.NextPolledKey(enabled)
 		if err != nil {
-			return "", 0, types.NewError(err, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+			return "", 0, err
 		}
-		defer func() {
-			if common.DebugEnabled {
-				logger.LogDebug(nil, "channel %d polling index: %d", channel.Id, channel.ChannelInfo.MultiKeyPollingIndex)
-			}
-			if !common.MemoryCacheEnabled {
-				_ = channel.SaveChannelInfo()
-			} else {
-				// CacheUpdateChannel(channel)
-			}
-		}()
-		// Start from the saved polling index and look for the next enabled key
-		start := channelInfo.MultiKeyPollingIndex
-		if start < 0 || start >= len(keys) {
-			start = 0
-		}
-		for i := range keys {
-			idx := (start + i) % len(keys)
-			if getStatus(idx) == common.ChannelStatusEnabled {
-				// update polling index for next call (point to the next position)
-				channel.ChannelInfo.MultiKeyPollingIndex = (idx + 1) % len(keys)
-				return keys[idx], idx, nil
-			}
-		}
-		// Fallback – should not happen, but return first enabled key
-		return keys[enabledIdx[0]], enabledIdx[0], nil
+		return key.Value, key.Index, nil
 	default:
-		// Unknown mode, default to first enabled key (or original key string)
-		return keys[enabledIdx[0]], enabledIdx[0], nil
+		return enabled[0].Value, enabled[0].Index, nil
 	}
 }
 
@@ -858,13 +872,22 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 		}
 		if channelCache.ChannelInfo.IsMultiKey {
 			beforeStatus := channelCache.Status
-			// 如果是多Key模式，更新缓存中的状态
-			handlerMultiKeyUpdate(channelCache, usingKey, status, reason)
-			if beforeStatus != channelCache.Status {
-				CacheUpdateChannelStatus(channelId, channelCache.Status)
+			// The cached channel is replaced by an updated copy rather than
+			// changed in place, so request routing reads its key statuses
+			// without this lock (EnabledKeys).
+			updated := *channelCache
+			updated.ChannelInfo.MultiKeyStatusList = maps.Clone(channelCache.ChannelInfo.MultiKeyStatusList)
+			updated.ChannelInfo.MultiKeyDisabledReason = maps.Clone(channelCache.ChannelInfo.MultiKeyDisabledReason)
+			updated.ChannelInfo.MultiKeyDisabledTime = maps.Clone(channelCache.ChannelInfo.MultiKeyDisabledTime)
+			handlerMultiKeyUpdate(&updated, usingKey, status, reason)
+			channelSyncLock.Lock()
+			if channelsIDM[channelId] == channelCache {
+				channelsIDM[channelId] = &updated
 			}
-			//CacheUpdateChannel(channelCache)
-			//return true
+			channelSyncLock.Unlock()
+			if beforeStatus != updated.Status {
+				CacheUpdateChannelStatus(channelId, updated.Status)
+			}
 		} else {
 			// 如果缓存渠道存在，且状态已是目标状态，直接返回
 			if channelCache.Status == status {

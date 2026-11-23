@@ -53,11 +53,6 @@ const (
 	conversationSessionMaxResponseBytes = 4 << 20
 )
 
-// conversationSessionHeaders are conversation identities coding agents send:
-// OpenCode's own header, Claude Code's, and the ones Codex sends. A client that
-// names its session decides membership; history cannot move it elsewhere.
-var conversationSessionHeaders = []string{"X-Opencode-Session", "X-Claude-Code-Session-Id", "Session_id", "Session-Id", "Conversation_id"}
-
 // conversationSessionRuntime is the process-wide recognition state: the clue
 // store and the fingerprint key, both derived from CryptoSecret so every
 // instance of one deployment agrees on them.
@@ -270,7 +265,7 @@ func (session *conversationSession) resolve(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	for _, name := range conversationSessionHeaders {
+	for _, name := range constant.ConversationSessionHeaders {
 		cursor := convo.Cursor{Kind: convo.KindExplicit, Direction: convo.DirectionIn, Value: strings.TrimSpace(c.Request.Header.Get(name))}
 		if cursor.Validate() == nil {
 			summary.SessionCursor = cursor.Value

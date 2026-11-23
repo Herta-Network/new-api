@@ -94,7 +94,7 @@ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		other.SetAdmin("local_count_tokens", true)
 	}
 
-	AppendChannelAffinityAdminInfo(ctx, other)
+	AppendRoutingAdminInfo(ctx, other)
 	if events := RequestPolicy(ctx).Events(); len(events) > 0 {
 		other.SetAdmin("request_policy", events)
 	}

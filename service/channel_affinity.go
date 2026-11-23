@@ -11,7 +11,6 @@ import (
 	"github.com/MoeForge/moego/ojson"
 	"github.com/MoeForge/moego/regexp"
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/cachex"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -20,44 +19,28 @@ import (
 	"github.com/samber/hot"
 )
 
-const (
-	ginKeyChannelAffinityCacheKey    = "channel_affinity_cache_key"
-	ginKeyChannelAffinityTTLSeconds  = "channel_affinity_ttl_seconds"
-	ginKeyChannelAffinityMeta        = "channel_affinity_meta"
-	ginKeyChannelAffinityLogInfo     = "channel_affinity_log_info"
-	ginKeyChannelAffinitySkipRetry   = "channel_affinity_skip_retry_on_failure"
-	ginKeyChannelAffinityRetryOffset = "channel_affinity_retry_offset"
+// Channel affinity rules are seed sources for request routing
+// (route_seed.go): the first rule a request matches supplies its routing key
+// and its parameter override template. Routing keeps no affinity state.
 
-	channelAffinityCacheNamespace           = "new-api:channel_affinity:v1"
+const (
 	channelAffinityUsageCacheStatsNamespace = "new-api:channel_affinity_usage_cache_stats:v1"
+	// channelAffinityUsageCacheStatsWindow is how long the cache statistics of
+	// one routing seed are kept after its last request.
+	channelAffinityUsageCacheStatsWindow   = time.Hour
+	channelAffinityUsageCacheStatsCapacity = 100_000
 )
 
 var (
-	channelAffinityCacheOnce sync.Once
-	channelAffinityCache     *cachex.HybridCache[int]
-
 	channelAffinityUsageCacheStatsOnce  sync.Once
 	channelAffinityUsageCacheStatsCache *cachex.HybridCache[ChannelAffinityUsageCacheCounters]
 
 	channelAffinityRegexCache sync.Map // map[string]*regexp.Regexp
 )
 
-type channelAffinityMeta struct {
-	CacheKey       string
-	TTLSeconds     int
-	RuleName       string
-	SkipRetry      bool
-	ParamTemplate  map[string]any
-	KeySourceType  string
-	KeySourceKey   string
-	KeySourcePath  string
-	KeyHint        string
-	KeyFingerprint string
-	UsingGroup     string
-	ModelName      string
-	RequestPath    string
-}
-
+// ChannelAffinityStatsContext names the routing seed whose upstream cache use
+// a request adds to: the seed source in RuleName, the group the request was
+// routed in, and the seed fingerprint.
 type ChannelAffinityStatsContext struct {
 	RuleName       string
 	UsingGroup     string
@@ -70,182 +53,6 @@ const (
 	cacheTokenRateModeCachedOverPromptPlusCached = "cached_over_prompt_plus_cached"
 	cacheTokenRateModeMixed                      = "mixed"
 )
-
-type ChannelAffinityCacheStats struct {
-	Enabled       bool           `json:"enabled"`
-	Total         int            `json:"total"`
-	Unknown       int            `json:"unknown"`
-	ByRuleName    map[string]int `json:"by_rule_name"`
-	CacheCapacity int            `json:"cache_capacity"`
-	CacheAlgo     string         `json:"cache_algo"`
-}
-
-func getChannelAffinityCache() *cachex.HybridCache[int] {
-	channelAffinityCacheOnce.Do(func() {
-		setting := operation_setting.GetChannelAffinitySetting()
-		capacity := setting.MaxEntries
-		if capacity <= 0 {
-			capacity = 100_000
-		}
-		defaultTTLSeconds := setting.DefaultTTLSeconds
-		if defaultTTLSeconds <= 0 {
-			defaultTTLSeconds = 3600
-		}
-
-		channelAffinityCache = cachex.NewHybridCache[int](cachex.HybridCacheConfig[int]{
-			Namespace: cachex.Namespace(channelAffinityCacheNamespace),
-			Redis:     common.RDB,
-			RedisEnabled: func() bool {
-				return common.RedisEnabled && common.RDB != nil
-			},
-			RedisCodec: cachex.IntCodec{},
-			Memory: func() *hot.HotCache[string, int] {
-				return hot.NewHotCache[string, int](hot.LRU, capacity).
-					WithTTL(time.Duration(defaultTTLSeconds) * time.Second).
-					WithJanitor().
-					Build()
-			},
-		})
-	})
-	return channelAffinityCache
-}
-
-func GetChannelAffinityCacheStats() ChannelAffinityCacheStats {
-	setting := operation_setting.GetChannelAffinitySetting()
-	if setting == nil {
-		return ChannelAffinityCacheStats{
-			Enabled:    false,
-			Total:      0,
-			Unknown:    0,
-			ByRuleName: map[string]int{},
-		}
-	}
-
-	cache := getChannelAffinityCache()
-	mainCap, _ := cache.Capacity()
-	mainAlgo, _ := cache.Algorithm()
-
-	rules := setting.Rules
-	ruleByName := make(map[string]operation_setting.ChannelAffinityRule, len(rules))
-	for _, r := range rules {
-		name := strings.TrimSpace(r.Name)
-		if name == "" {
-			continue
-		}
-		if !r.IncludeRuleName {
-			continue
-		}
-		ruleByName[name] = r
-	}
-
-	byRuleName := make(map[string]int, len(ruleByName))
-	for name := range ruleByName {
-		byRuleName[name] = 0
-	}
-
-	keys, err := cache.Keys()
-	if err != nil {
-		common.SysError(common.LogText("channel affinity cache list keys failed: err=%v", err))
-		keys = nil
-	}
-	total := len(keys)
-	unknown := 0
-	for _, k := range keys {
-		prefix := channelAffinityCacheNamespace + ":"
-		if !strings.HasPrefix(k, prefix) {
-			unknown++
-			continue
-		}
-		rest := strings.TrimPrefix(k, prefix)
-		parts := strings.Split(rest, ":")
-		if len(parts) < 2 {
-			unknown++
-			continue
-		}
-		ruleName := parts[0]
-		rule, ok := ruleByName[ruleName]
-		if !ok {
-			unknown++
-			continue
-		}
-		if rule.IncludeModelName {
-			if len(parts) < 3 {
-				unknown++
-				continue
-			}
-		}
-		if rule.IncludeUsingGroup {
-			minParts := 3
-			if rule.IncludeModelName {
-				minParts = 4
-			}
-			if len(parts) < minParts {
-				unknown++
-				continue
-			}
-		}
-		byRuleName[ruleName]++
-	}
-
-	return ChannelAffinityCacheStats{
-		Enabled:       setting.Enabled,
-		Total:         total,
-		Unknown:       unknown,
-		ByRuleName:    byRuleName,
-		CacheCapacity: mainCap,
-		CacheAlgo:     mainAlgo,
-	}
-}
-
-func ClearChannelAffinityCacheAll() int {
-	cache := getChannelAffinityCache()
-	keys, err := cache.Keys()
-	if err != nil {
-		common.SysError(common.LogText("channel affinity cache list keys failed: err=%v", err))
-		keys = nil
-	}
-	if len(keys) > 0 {
-		if _, err := cache.DeleteMany(keys); err != nil {
-			common.SysError(common.LogText("channel affinity cache delete many failed: err=%v", err))
-		}
-	}
-	return len(keys)
-}
-
-func ClearChannelAffinityCacheByRuleName(ruleName string) (int, error) {
-	ruleName = strings.TrimSpace(ruleName)
-	if ruleName == "" {
-		return 0, common.NewMessage("rule_name cannot be empty")
-	}
-
-	setting := operation_setting.GetChannelAffinitySetting()
-	if setting == nil {
-		return 0, common.NewMessage("Channel affinity settings are not initialized")
-	}
-
-	var matchedRule *operation_setting.ChannelAffinityRule
-	for i := range setting.Rules {
-		r := &setting.Rules[i]
-		if strings.TrimSpace(r.Name) != ruleName {
-			continue
-		}
-		matchedRule = r
-		break
-	}
-	if matchedRule == nil {
-		return 0, common.NewMessage("Unknown rule name")
-	}
-	if !matchedRule.IncludeRuleName {
-		return 0, common.NewMessage("This rule does not have include_rule_name enabled, so its cache cannot be cleared by rule")
-	}
-
-	cache := getChannelAffinityCache()
-	deleted, err := cache.DeleteByPrefix(ruleName)
-	if err != nil {
-		return 0, err
-	}
-	return deleted, nil
-}
 
 func matchAnyRegexCached(patterns []string, s string) bool {
 	if len(patterns) == 0 || s == "" {
@@ -319,6 +126,11 @@ func extractChannelAffinityValue(c *gin.Context, src operation_setting.ChannelAf
 		if err != nil {
 			return ""
 		}
+		// Only a plain member path is read by streaming; any other path loads
+		// the whole body, which routing bounds as it does for its own reads.
+		if storage.Size() > routeInspectMaxBodyBytes && !isPlainJSONPath(src.Path) {
+			return ""
+		}
 		values, err := common.ReadBodyJSONFields(storage, src.Path)
 		if err != nil {
 			return ""
@@ -338,104 +150,24 @@ func extractChannelAffinityValue(c *gin.Context, src operation_setting.ChannelAf
 	}
 }
 
-func buildChannelAffinityCacheKeySuffix(rule operation_setting.ChannelAffinityRule, modelName string, usingGroup string, affinityValue string) string {
-	parts := make([]string, 0, 4)
-	if rule.IncludeRuleName && rule.Name != "" {
-		parts = append(parts, rule.Name)
+// isPlainJSONPath reports a chain of member names and array indexes made of
+// letters, digits, '_' and '-', which common.ReadBodyJSONFields reads from a
+// body on disk without loading all of it.
+func isPlainJSONPath(path string) bool {
+	if path == "" {
+		return false
 	}
-	if rule.IncludeModelName && modelName != "" {
-		parts = append(parts, modelName)
+	for segment := range strings.SplitSeq(path, ".") {
+		if segment == "" {
+			return false
+		}
+		for _, r := range segment {
+			if !(r == '_' || r == '-' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+				return false
+			}
+		}
 	}
-	if rule.IncludeUsingGroup && usingGroup != "" {
-		parts = append(parts, usingGroup)
-	}
-	parts = append(parts, affinityValue)
-	return strings.Join(parts, ":")
-}
-
-func setChannelAffinityContext(c *gin.Context, meta channelAffinityMeta) {
-	c.Set(ginKeyChannelAffinityCacheKey, meta.CacheKey)
-	c.Set(ginKeyChannelAffinityTTLSeconds, meta.TTLSeconds)
-	c.Set(ginKeyChannelAffinityMeta, meta)
-}
-
-func getChannelAffinityContext(c *gin.Context) (string, int, bool) {
-	keyAny, ok := c.Get(ginKeyChannelAffinityCacheKey)
-	if !ok {
-		return "", 0, false
-	}
-	key, ok := keyAny.(string)
-	if !ok || key == "" {
-		return "", 0, false
-	}
-	ttlAny, ok := c.Get(ginKeyChannelAffinityTTLSeconds)
-	if !ok {
-		return key, 0, true
-	}
-	ttlSeconds, _ := ttlAny.(int)
-	return key, ttlSeconds, true
-}
-
-func getChannelAffinityMeta(c *gin.Context) (channelAffinityMeta, bool) {
-	anyMeta, ok := c.Get(ginKeyChannelAffinityMeta)
-	if !ok {
-		return channelAffinityMeta{}, false
-	}
-	meta, ok := anyMeta.(channelAffinityMeta)
-	if !ok {
-		return channelAffinityMeta{}, false
-	}
-	return meta, true
-}
-
-func GetChannelAffinityStatsContext(c *gin.Context) (ChannelAffinityStatsContext, bool) {
-	if c == nil {
-		return ChannelAffinityStatsContext{}, false
-	}
-	meta, ok := getChannelAffinityMeta(c)
-	if !ok {
-		return ChannelAffinityStatsContext{}, false
-	}
-	ruleName := strings.TrimSpace(meta.RuleName)
-	keyFp := strings.TrimSpace(meta.KeyFingerprint)
-	usingGroup := strings.TrimSpace(meta.UsingGroup)
-	if ruleName == "" || keyFp == "" {
-		return ChannelAffinityStatsContext{}, false
-	}
-	ttlSeconds := int64(meta.TTLSeconds)
-	if ttlSeconds <= 0 {
-		return ChannelAffinityStatsContext{}, false
-	}
-	return ChannelAffinityStatsContext{
-		RuleName:       ruleName,
-		UsingGroup:     usingGroup,
-		KeyFingerprint: keyFp,
-		TTLSeconds:     ttlSeconds,
-	}, true
-}
-
-func affinityFingerprint(s string) string {
-	if s == "" {
-		return ""
-	}
-	hex := common.Sha1([]byte(s))
-	if len(hex) >= 8 {
-		return hex[:8]
-	}
-	return hex
-}
-
-func buildChannelAffinityKeyHint(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "\r", " ")
-	if len(s) <= 12 {
-		return s
-	}
-	return s[:4] + "..." + s[len(s)-4:]
+	return true
 }
 
 func cloneStringAnyMap(src map[string]any) map[string]any {
@@ -496,74 +228,10 @@ func extractParamOperations(value any) ([]any, bool) {
 	}
 }
 
-func appendChannelAffinityTemplateAdminInfo(c *gin.Context, meta channelAffinityMeta) {
-	if c == nil {
-		return
-	}
-	if len(meta.ParamTemplate) == 0 {
-		return
-	}
-
-	templateInfo := map[string]any{
-		"applied":             true,
-		"rule_name":           meta.RuleName,
-		"param_override_keys": len(meta.ParamTemplate),
-	}
-	if anyInfo, ok := c.Get(ginKeyChannelAffinityLogInfo); ok {
-		if info, ok := anyInfo.(map[string]any); ok {
-			info["override_template"] = templateInfo
-			c.Set(ginKeyChannelAffinityLogInfo, info)
-			return
-		}
-	}
-	c.Set(ginKeyChannelAffinityLogInfo, map[string]any{
-		"reason":            meta.RuleName,
-		"rule_name":         meta.RuleName,
-		"using_group":       meta.UsingGroup,
-		"model":             meta.ModelName,
-		"request_path":      meta.RequestPath,
-		"key_source":        meta.KeySourceType,
-		"key_key":           meta.KeySourceKey,
-		"key_path":          meta.KeySourcePath,
-		"key_hint":          meta.KeyHint,
-		"key_fp":            meta.KeyFingerprint,
-		"override_template": templateInfo,
-	})
-}
-
-// ApplyChannelAffinityOverrideTemplate merges per-rule channel override templates onto the selected channel override config.
-func ApplyChannelAffinityOverrideTemplate(c *gin.Context, paramOverride map[string]any) (map[string]any, bool) {
-	if c == nil {
-		return paramOverride, false
-	}
-	meta, ok := getChannelAffinityMeta(c)
-	if !ok {
-		return paramOverride, false
-	}
-	if len(meta.ParamTemplate) == 0 {
-		return paramOverride, false
-	}
-
-	mergedParam := mergeChannelOverride(paramOverride, meta.ParamTemplate)
-	appendChannelAffinityTemplateAdminInfo(c, meta)
-	return mergedParam, true
-}
-
-func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup string) (int, bool) {
-	setting := operation_setting.GetChannelAffinitySetting()
-	state := RequestPolicy(c)
-	if setting == nil || !setting.Enabled {
-		return 0, false
-	}
-	path := ""
-	if c != nil && c.Request != nil && c.Request.URL != nil {
-		path = c.Request.URL.Path
-	}
-	userAgent := ""
-	if c != nil && c.Request != nil {
-		userAgent = c.Request.UserAgent()
-	}
-
+// matchChannelAffinityRule returns the first rule that matches the request's
+// model, path and user agent and finds a routing key, with that key.
+func matchChannelAffinityRule(c *gin.Context, setting *operation_setting.ChannelAffinitySetting, modelName, path string) (operation_setting.ChannelAffinityRule, string, bool) {
+	userAgent := c.Request.UserAgent()
 	for _, rule := range setting.Rules {
 		if !matchAnyRegexCached(rule.ModelRegex, modelName) {
 			continue
@@ -574,190 +242,47 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 		if len(rule.UserAgentInclude) > 0 && !matchAnyIncludeFold(rule.UserAgentInclude, userAgent) {
 			continue
 		}
-		var affinityValue string
-		var usedSource operation_setting.ChannelAffinityKeySource
-		for _, src := range rule.KeySources {
-			affinityValue = extractChannelAffinityValue(c, src)
-			if affinityValue != "" {
-				usedSource = src
+		var value string
+		for _, source := range rule.KeySources {
+			if value = extractChannelAffinityValue(c, source); value != "" {
 				break
 			}
 		}
-		if affinityValue == "" {
+		if value == "" {
 			continue
 		}
-		if rule.ValueRegex != "" && !matchAnyRegexCached([]string{rule.ValueRegex}, affinityValue) {
+		if rule.ValueRegex != "" && !matchAnyRegexCached([]string{rule.ValueRegex}, value) {
 			continue
 		}
-
-		ttlSeconds := rule.TTLSeconds
-		if ttlSeconds <= 0 {
-			ttlSeconds = setting.DefaultTTLSeconds
-		}
-		cacheKeySuffix := buildChannelAffinityCacheKeySuffix(rule, modelName, usingGroup, affinityValue)
-		cacheKeyFull := channelAffinityCacheNamespace + ":" + cacheKeySuffix
-		state.SessionMode, state.SessionModeSource = EffectiveSessionMode(setting, rule)
-		state.RuleName = rule.Name
-		setChannelAffinityContext(c, channelAffinityMeta{
-			CacheKey:       cacheKeyFull,
-			TTLSeconds:     ttlSeconds,
-			RuleName:       rule.Name,
-			SkipRetry:      state.SessionMode == "strict",
-			ParamTemplate:  cloneStringAnyMap(rule.ParamOverrideTemplate),
-			KeySourceType:  strings.TrimSpace(usedSource.Type),
-			KeySourceKey:   strings.TrimSpace(usedSource.Key),
-			KeySourcePath:  strings.TrimSpace(usedSource.Path),
-			KeyHint:        buildChannelAffinityKeyHint(affinityValue),
-			KeyFingerprint: affinityFingerprint(affinityValue),
-			UsingGroup:     usingGroup,
-			ModelName:      modelName,
-			RequestPath:    path,
-		})
-
-		state.AddEvent(PolicyEvent{Decision: PolicyDecision{Action: "match", Reason: "session_rule_matched", Source: "session_rule"}})
-		if state.SessionMode == "off" {
-			return 0, false
-		}
-		cache := getChannelAffinityCache()
-		channelID, found, err := cache.Get(cacheKeySuffix)
-		if err != nil {
-			common.SysError(common.LogText("channel affinity cache get failed: key=%s, err=%v", cacheKeyFull, err))
-			return 0, false
-		}
-		if found {
-			return channelID, true
-		}
-		return 0, false
+		return rule, value, true
 	}
-	return 0, false
+	return operation_setting.ChannelAffinityRule{}, "", false
 }
 
-func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
-	if c == nil {
-		return false
+// ApplyChannelAffinityOverrideTemplate merges the parameter override template
+// of the session rule the request matched onto the selected channel's.
+func ApplyChannelAffinityOverrideTemplate(c *gin.Context, paramOverride map[string]any) (map[string]any, bool) {
+	router := currentRouter(c)
+	if router == nil || router.request.rule == nil || len(router.request.rule.template) == 0 {
+		return paramOverride, false
 	}
-	v, ok := c.Get(ginKeyChannelAffinitySkipRetry)
-	if ok {
-		b, ok := v.(bool)
-		if ok {
-			return b
-		}
-	}
-	meta, ok := getChannelAffinityMeta(c)
-	if !ok {
-		return false
-	}
-	return meta.SkipRetry
+	router.templateApplied = true
+	return mergeChannelOverride(paramOverride, router.request.rule.template), true
 }
 
-func ClearCurrentChannelAffinityCache(c *gin.Context) bool {
-	if c == nil {
-		return false
+// GetChannelAffinityStatsContext names the routing seed of the request on c
+// for cache statistics. A request with a random seed has none.
+func GetChannelAffinityStatsContext(c *gin.Context) (ChannelAffinityStatsContext, bool) {
+	router := currentRouter(c)
+	if router == nil || !router.inspected || router.request.seed.random() {
+		return ChannelAffinityStatsContext{}, false
 	}
-	cacheKey, _, ok := getChannelAffinityContext(c)
-	if !ok || cacheKey == "" {
-		return false
-	}
-
-	cache := getChannelAffinityCache()
-	deleted, err := cache.DeleteMany([]string{cacheKey})
-	if err != nil {
-		common.SysError(common.LogText("channel affinity cache delete current failed: err=%v", err))
-		return false
-	}
-	c.Set(ginKeyChannelAffinitySkipRetry, false)
-	for _, ok := range deleted {
-		if ok {
-			return true
-		}
-	}
-	return false
-}
-
-func ShouldKeepChannelAffinityOnChannelDisabled() bool {
-	setting := operation_setting.GetChannelAffinitySetting()
-	if setting == nil {
-		return false
-	}
-	return setting.KeepOnChannelDisabled
-}
-
-func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int) {
-	if c == nil || channelID <= 0 {
-		return
-	}
-	meta, ok := getChannelAffinityMeta(c)
-	if !ok {
-		return
-	}
-	c.Set(ginKeyChannelAffinitySkipRetry, meta.SkipRetry)
-	// Affinity consumes an attempt, but does not visit a normal priority tier.
-	c.Set(ginKeyChannelAffinityRetryOffset, 1)
-	info := map[string]any{
-		"reason":         meta.RuleName,
-		"rule_name":      meta.RuleName,
-		"using_group":    meta.UsingGroup,
-		"selected_group": selectedGroup,
-		"model":          meta.ModelName,
-		"request_path":   meta.RequestPath,
-		"channel_id":     channelID,
-		"key_source":     meta.KeySourceType,
-		"key_key":        meta.KeySourceKey,
-		"key_path":       meta.KeySourcePath,
-		"key_hint":       meta.KeyHint,
-		"key_fp":         meta.KeyFingerprint,
-	}
-	c.Set(ginKeyChannelAffinityLogInfo, info)
-}
-
-func AppendChannelAffinityAdminInfo(c *gin.Context, other *model.LogOther) {
-	if c == nil || other == nil {
-		return
-	}
-	anyInfo, ok := c.Get(ginKeyChannelAffinityLogInfo)
-	if !ok || anyInfo == nil {
-		return
-	}
-	// The hint can be the whole session value for short keys; logs keep only
-	// the fingerprint.
-	if info, ok := anyInfo.(map[string]any); ok {
-		sanitized := cloneStringAnyMap(info)
-		delete(sanitized, "key_hint")
-		anyInfo = sanitized
-	}
-	other.SetAdmin("channel_affinity", anyInfo)
-}
-
-func RecordChannelAffinity(c *gin.Context, channelID int) {
-	if channelID <= 0 {
-		return
-	}
-	setting := operation_setting.GetChannelAffinitySetting()
-	if RequestPolicy(c).SessionMode == "off" {
-		return
-	}
-	if setting == nil || !setting.Enabled {
-		return
-	}
-	if setting.SwitchOnSuccess && c != nil {
-		if successChannelID := c.GetInt("channel_id"); successChannelID > 0 {
-			channelID = successChannelID
-		}
-	}
-	cacheKey, ttlSeconds, ok := getChannelAffinityContext(c)
-	if !ok {
-		return
-	}
-	if ttlSeconds <= 0 {
-		ttlSeconds = setting.DefaultTTLSeconds
-	}
-	if ttlSeconds <= 0 {
-		ttlSeconds = 3600
-	}
-	cache := getChannelAffinityCache()
-	if err := cache.SetWithTTL(cacheKey, channelID, time.Duration(ttlSeconds)*time.Second); err != nil {
-		common.SysError(common.LogText("channel affinity cache set failed: key=%s, err=%v", cacheKey, err))
-	}
+	return ChannelAffinityStatsContext{
+		RuleName:       router.request.seed.source,
+		UsingGroup:     router.selectedGroup(),
+		KeyFingerprint: router.request.seed.fingerprint(),
+		TTLSeconds:     int64(channelAffinityUsageCacheStatsWindow / time.Second),
+	}, true
 }
 
 type ChannelAffinityUsageCacheStats struct {
@@ -986,18 +511,6 @@ func usageTotalTokens(usage *dto.Usage) int {
 
 func getChannelAffinityUsageCacheStatsCache() *cachex.HybridCache[ChannelAffinityUsageCacheCounters] {
 	channelAffinityUsageCacheStatsOnce.Do(func() {
-		setting := operation_setting.GetChannelAffinitySetting()
-		capacity := 100_000
-		defaultTTLSeconds := 3600
-		if setting != nil {
-			if setting.MaxEntries > 0 {
-				capacity = setting.MaxEntries
-			}
-			if setting.DefaultTTLSeconds > 0 {
-				defaultTTLSeconds = setting.DefaultTTLSeconds
-			}
-		}
-
 		channelAffinityUsageCacheStatsCache = cachex.NewHybridCache[ChannelAffinityUsageCacheCounters](cachex.HybridCacheConfig[ChannelAffinityUsageCacheCounters]{
 			Namespace: cachex.Namespace(channelAffinityUsageCacheStatsNamespace),
 			Redis:     common.RDB,
@@ -1006,8 +519,8 @@ func getChannelAffinityUsageCacheStatsCache() *cachex.HybridCache[ChannelAffinit
 			},
 			RedisCodec: cachex.JSONCodec[ChannelAffinityUsageCacheCounters]{},
 			Memory: func() *hot.HotCache[string, ChannelAffinityUsageCacheCounters] {
-				return hot.NewHotCache[string, ChannelAffinityUsageCacheCounters](hot.LRU, capacity).
-					WithTTL(time.Duration(defaultTTLSeconds) * time.Second).
+				return hot.NewHotCache[string, ChannelAffinityUsageCacheCounters](hot.LRU, channelAffinityUsageCacheStatsCapacity).
+					WithTTL(channelAffinityUsageCacheStatsWindow).
 					WithJanitor().
 					Build()
 			},

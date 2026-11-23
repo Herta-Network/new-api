@@ -91,12 +91,18 @@ func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, erro
 		}
 	}
 	maps.Copy(raw, options)
+	// Options of the stateful affinity cache routing no longer reads are
+	// accepted and dropped, so a database or console that still has them
+	// keeps working.
+	for _, field := range operation_setting.LegacyChannelAffinityOptions {
+		delete(raw, "channel_affinity_setting."+field)
+	}
 	snapshot := &RequestPolicySnapshot{Options: raw}
 	affinityFields := map[string]string{}
 	for key, value := range raw {
 		if field, ok := strings.CutPrefix(key, "channel_affinity_setting."); ok {
 			switch field {
-			case "enabled", "session_mode", "switch_on_success", "keep_on_channel_disabled", "max_entries", "default_ttl_seconds", "rules":
+			case "enabled", "session_mode", "derive_from_prompt", "template_spread", "rules":
 			default:
 				return nil, fmt.Errorf("unknown affinity option: %s", key)
 			}
@@ -160,8 +166,8 @@ func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, erro
 		return nil, fmt.Errorf("invalid channel test mode")
 	}
 
-	if snapshot.Affinity.MaxEntries < 0 || snapshot.Affinity.DefaultTTLSeconds < 0 {
-		return nil, fmt.Errorf("invalid affinity cache limits")
+	if snapshot.Affinity.TemplateSpread < 0 {
+		return nil, fmt.Errorf("template spread must not be negative")
 	}
 	switch snapshot.Affinity.SessionMode {
 	case "", "off", "prefer", "strict":
@@ -182,9 +188,6 @@ func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, erro
 			if _, err := regexp.Compile(pattern); err != nil {
 				return nil, fmt.Errorf("rule %q: %w", rule.Name, err)
 			}
-		}
-		if rule.TTLSeconds < 0 {
-			return nil, fmt.Errorf("negative affinity TTL")
 		}
 	}
 	return snapshot, nil

@@ -162,7 +162,7 @@ func TestSharedChannelTypeServesEachDeclaringPlugin(t *testing.T) {
 			c.Set("expected_task_plugin_key", expected)
 
 			assert.True(t, channelMatchesExpectedTaskPlugin(c, channel, expected))
-			require.Nil(t, SetupContextForSelectedChannel(c, channel, testCase.model))
+			require.Nil(t, SetupContextForSelectedChannel(c, channel, model.ChannelKey{Value: channel.Key}, testCase.model))
 			value, exists := c.Get(jsplugin.ContextKeyPinnedEndpoint)
 			require.True(t, exists)
 			assert.Equal(t, testCase.plugin, value.(jsplugin.PinnedEndpoint).Plugin.Meta.Key)
@@ -187,7 +187,7 @@ func TestChannelMatchesExpectedTaskPluginRejectsUnindexedLegacyChannel(t *testin
 	assert.False(t, channelMatchesExpectedTaskPlugin(nil, &model.Channel{Type: constant.ChannelTypeKling}, "legacy-alpha"))
 
 	c.Set("expected_task_plugin_key", "legacy-alpha")
-	setupErr := SetupContextForSelectedChannel(c, &model.Channel{Type: constant.ChannelTypeJimeng}, "task-model")
+	setupErr := SetupContextForSelectedChannel(c, &model.Channel{Type: constant.ChannelTypeJimeng}, model.ChannelKey{}, "task-model")
 	require.NotNil(t, setupErr)
 	assert.Contains(t, setupErr.Error(), "does not match")
 }
@@ -219,7 +219,7 @@ func TestSharedEndpointRebindsToSelectedLegacyProvider(t *testing.T) {
 	assert.True(t, channelMatchesExpectedTaskPlugin(c, vertexChannel, candidates[0].Plugin.Meta.Key))
 	assert.False(t, channelMatchesExpectedTaskPlugin(c, &model.Channel{Type: constant.ChannelTypeKling}, candidates[0].Plugin.Meta.Key))
 
-	require.Nil(t, SetupContextForSelectedChannel(c, vertexChannel, "task-model"))
+	require.Nil(t, SetupContextForSelectedChannel(c, vertexChannel, model.ChannelKey{Value: vertexChannel.Key}, "task-model"))
 	pinnedValue, exists := c.Get(jsplugin.ContextKeyPinnedEndpoint)
 	require.True(t, exists)
 	pinned, ok := pinnedValue.(jsplugin.PinnedEndpoint)
@@ -430,7 +430,7 @@ func TestSharedEndpointRebindsToSelectedType61Plugin(t *testing.T) {
 	channel.SetSetting(dto.ChannelSettings{TaskPluginKey: "unrelated"})
 	assert.False(t, channelMatchesExpectedTaskPlugin(c, channel, "alpha"))
 	channel.SetSetting(dto.ChannelSettings{TaskPluginKey: "beta"})
-	require.Nil(t, SetupContextForSelectedChannel(c, channel, "task-model"))
+	require.Nil(t, SetupContextForSelectedChannel(c, channel, model.ChannelKey{Value: channel.Key}, "task-model"))
 	assert.Equal(t, "beta", c.GetString("task_plugin_key"))
 	assert.Equal(t, "beta", c.GetString("expected_task_plugin_key"))
 	assert.Equal(t, "beta", c.MustGet(jsplugin.ContextKeyPinnedEndpoint).(jsplugin.PinnedEndpoint).Plugin.Meta.Key)
@@ -464,7 +464,7 @@ export function parseTaskResult() { return {}; }
 	assert.False(t, channelMatchesExpectedTaskPlugin(c, channel, "route-alpha"))
 	channel.SetSetting(dto.ChannelSettings{TaskPluginKey: "route-beta"})
 
-	require.Nil(t, SetupContextForSelectedChannel(c, channel, "task-model"))
+	require.Nil(t, SetupContextForSelectedChannel(c, channel, model.ChannelKey{Value: channel.Key}, "task-model"))
 	pinned := c.MustGet(jsplugin.ContextKeyPinnedRoute).(jsplugin.PinnedRoute)
 	assert.Same(t, candidates[1].Plugin, pinned.Plugin)
 	assert.Equal(t, candidates[1].Route, pinned.Route)
@@ -513,14 +513,14 @@ func TestSharedEndpointRebindsToBoundNewAPIExtension(t *testing.T) {
 
 	channel.SetSetting(dto.ChannelSettings{TaskExtendPluginKeys: []string{"beta"}})
 	c := pin("alpha")
-	require.Nil(t, SetupContextForSelectedChannel(c, channel, "task-model"))
+	require.Nil(t, SetupContextForSelectedChannel(c, channel, model.ChannelKey{Value: channel.Key}, "task-model"))
 	assert.Equal(t, "beta", c.GetString("task_plugin_key"), "the only bound candidate executes")
 	assert.Equal(t, "beta", c.GetString("expected_task_plugin_key"))
 	assert.Equal(t, "beta", c.MustGet(jsplugin.ContextKeyPinnedEndpoint).(jsplugin.PinnedEndpoint).Plugin.Meta.Key)
 
 	channel.SetSetting(dto.ChannelSettings{TaskExtendPluginKeys: []string{"alpha", "beta"}})
 	c = pin("beta")
-	require.Nil(t, SetupContextForSelectedChannel(c, channel, "task-model"))
+	require.Nil(t, SetupContextForSelectedChannel(c, channel, model.ChannelKey{Value: channel.Key}, "task-model"))
 	assert.Equal(t, "alpha", c.GetString("task_plugin_key"), "the first bound candidate executes regardless of the earlier pin")
 	assert.Equal(t, "alpha", c.MustGet(jsplugin.ContextKeyPinnedEndpoint).(jsplugin.PinnedEndpoint).Plugin.Meta.Key)
 }

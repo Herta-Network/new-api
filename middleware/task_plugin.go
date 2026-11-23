@@ -36,10 +36,10 @@ const contextKeyTaskPluginEndpointModel = "task_plugin_endpoint_model_request"
 
 const contextKeyTaskPluginEndpointSelection = "task_plugin_endpoint_channel_selection"
 
+// taskPluginEndpointSelection is the routing generation the endpoint was
+// decided with.
 type taskPluginEndpointSelection struct {
 	Generation *pluginruntime.RoutingGeneration
-	Channel    *model.Channel
-	Model      string
 }
 
 var errTaskPluginUnsupportedMediaType = errors.New("unsupported task plugin media type")
@@ -542,14 +542,11 @@ func RouteTaskPluginEndpoint() gin.HandlerFunc {
 		filterIndex := len(constraints.Filters)
 		constraints.AddFilter(filter)
 		constraints.AddFilter(dto.ChannelFilter{Kind: dto.FilterRequestPath, RequestPath: c.Request.URL.Path})
-		group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-		channel, _, selectErr := service.SelectChannelForRequest(c, request.Model, &service.RetryParam{
-			Ctx: c, ModelName: request.Model, TokenGroup: group,
-			RequestPath: c.Request.URL.Path, Retry: common.GetPointer(0),
-		})
-		c.Set(contextKeyTaskPluginEndpointSelection, taskPluginEndpointSelection{
-			Generation: generation, Channel: channel, Model: request.Model,
-		})
+		// The endpoint only decides which handler serves the request; the
+		// distributor routes it once the rest of the middleware has run.
+		choice, selectErr := service.PeekChannelForRequest(c, request.Model)
+		channel := choice.Channel
+		c.Set(contextKeyTaskPluginEndpointSelection, taskPluginEndpointSelection{Generation: generation})
 		if selectErr != nil {
 			// Keep the existing plugin diagnostics and canonical-model lookup
 			// when selection cannot resolve the client's original spelling.

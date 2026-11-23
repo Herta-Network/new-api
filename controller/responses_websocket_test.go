@@ -537,6 +537,9 @@ func TestResponsesWebSocketReusesConnectionAndSettlesEachRequest(t *testing.T) {
 	})
 	client, user, token := fixture.client, fixture.user, fixture.token
 
+	// The first create is routed by its own payload to one key of the
+	// multi-key channel; the connection then stays on that key.
+	lockedKey := ""
 	for index, payload := range []string{
 		`{"type":"response.create","model":"ws-billing","input":"first","service_tier":"default"}`,
 		`{"type":"response.create","model":"ws-billing","input":"second","previous_response_id":"resp_1","service_tier":"priority"}`,
@@ -555,7 +558,11 @@ func TestResponsesWebSocketReusesConnectionAndSettlesEachRequest(t *testing.T) {
 		require.Equal(t, "response.completed", terminal.Type, "unexpected response: %s", data)
 		assert.Equal(t, fmt.Sprintf("resp_%d", index+1), terminal.Response.ID)
 		observed := <-received
-		assert.Equal(t, "Bearer upstream-first", observed.Authorization)
+		if lockedKey == "" {
+			lockedKey = observed.Authorization
+			assert.Contains(t, []string{"Bearer upstream-first", "Bearer upstream-second"}, lockedKey)
+		}
+		assert.Equal(t, lockedKey, observed.Authorization)
 		assert.Equal(t, "gpt-4o", observed.Model)
 		assert.Equal(t, "response.create", observed.Type)
 		if index == 0 {
@@ -670,7 +677,8 @@ func TestResponsesWebSocketDialsNativeResponsesChannelTypes(t *testing.T) {
 
 			require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"ws-billing","input":"hi"}`)))
 			assert.Equal(t, "response.completed", readResponsesWSTestEvent(t, fixture.client)["type"])
-			assert.Equal(t, tc.want("upstream-first"), <-targets)
+			first := <-targets
+			assert.Contains(t, []upstreamTarget{tc.want("upstream-first"), tc.want("upstream-second")}, first)
 
 			request, err := http.NewRequest(http.MethodPost, fixture.gatewayURL+"/v1/responses", strings.NewReader(`{"model":"ws-billing","input":"hi","stream":true}`))
 			require.NoError(t, err)
@@ -688,8 +696,9 @@ func TestResponsesWebSocketDialsNativeResponsesChannelTypes(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("HTTP request did not finish")
 			}
-			// The polling multi-key channel rotates to its second key for the HTTP request.
-			assert.Equal(t, tc.want("upstream-second"), <-targets)
+			// Both requests open the same conversation, so routing seeds them
+			// alike and they reach the same key of the multi-key channel.
+			assert.Equal(t, first, <-targets)
 			fixture.closeAndWait(t)
 			assertResponsesWSAccounting(t, fixture, []int{1000, 1000})
 		})

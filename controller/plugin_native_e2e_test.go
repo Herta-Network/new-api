@@ -179,7 +179,7 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 	require.False(t, submitContext.IsAborted(), submitRecorder.Body.String())
 	require.Equal(t, "kling-v3", submitContext.GetString("resolved_task_model"))
 	require.Equal(t, "text_to_video", submitContext.GetString("task_action"))
-	require.Nil(t, middleware.SetupContextForSelectedChannel(submitContext, &channel, "kling-v3"))
+	require.Nil(t, middleware.SetupContextForSelectedChannel(submitContext, &channel, model.ChannelKey{Value: channel.Key}, "kling-v3"))
 
 	billing := &nativeRouteBilling{userID: 7}
 	relayInfo := &relaycommon.RelayInfo{
@@ -378,7 +378,7 @@ func TestDoubaoRelayedImageStreamSettlement(t *testing.T) {
 			common.SetContextKey(c, constant.ContextKeyUserQuota, 1_000_000)
 			middleware.PrepareTaskPluginRoute()(c)
 			require.False(t, c.IsAborted(), recorder.Body.String())
-			require.Nil(t, middleware.SetupContextForSelectedChannel(c, &channel, seedream))
+			require.Nil(t, middleware.SetupContextForSelectedChannel(c, &channel, model.ChannelKey{Value: channel.Key}, seedream))
 			billing := &nativeRouteBilling{userID: 7}
 			if tc.prompt == "reserve_fails" {
 				billing.reserveErr = errors.New("token quota is not enough")
@@ -489,7 +489,7 @@ export function egress(ctx, req) {
 		common.SetContextKey(c, constant.ContextKeyUserQuota, 1_000_000)
 		middleware.PrepareTaskPluginSubmit()(c)
 		require.False(t, c.IsAborted(), recorder.Body.String())
-		require.Nil(t, middleware.SetupContextForSelectedChannel(c, &channel, "rp-video-1"))
+		require.Nil(t, middleware.SetupContextForSelectedChannel(c, &channel, model.ChannelKey{Value: channel.Key}, "rp-video-1"))
 		billing := &reservingBilling{nativeRouteBilling{userID: 7}}
 		relayInfo := &relaycommon.RelayInfo{
 			UserId: 7, UserGroup: "default", UsingGroup: "default", UserQuota: 1_000_000, TokenGroup: "default",
@@ -617,7 +617,7 @@ export function ingress(ctx, req) {
 	common.SetContextKey(c, constant.ContextKeyUserQuota, 1_000_000)
 	middleware.PrepareTaskPluginRoute()(c)
 	require.False(t, c.IsAborted(), recorder.Body.String())
-	require.Nil(t, middleware.SetupContextForSelectedChannel(c, &channel, "kling-v3"))
+	require.Nil(t, middleware.SetupContextForSelectedChannel(c, &channel, model.ChannelKey{Value: channel.Key}, "kling-v3"))
 	relayInfo := &relaycommon.RelayInfo{
 		UserId: 7, UserGroup: "default", UsingGroup: "default", UserQuota: 1_000_000, TokenGroup: "default",
 		OriginModelName: "kling-v3", Billing: &nativeRouteBilling{userID: 7},

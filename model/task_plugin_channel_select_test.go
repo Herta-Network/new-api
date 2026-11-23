@@ -14,6 +14,8 @@ import (
 
 func TestTaskPluginChannelSelectionFiltersBothCachePaths(t *testing.T) {
 	truncateTables(t)
+	originalMemoryCache := common.MemoryCacheEnabled
+	t.Cleanup(func() { common.MemoryCacheEnabled = originalMemoryCache; InitChannelCache() })
 	priority := int64(0)
 	weight := uint(1)
 	baseURL := "https://example.com"
@@ -30,25 +32,28 @@ func TestTaskPluginChannelSelectionFiltersBothCachePaths(t *testing.T) {
 		require.NoError(t, channels[i].Insert())
 	}
 
-	selected, err := GetChannel("default", "shared", 0, identityFilters("alpha", nil))
+	for _, memoryCache := range []bool{false, true} {
+		common.MemoryCacheEnabled = memoryCache
+		InitChannelCache()
+		assert.Equal(t, []string{"alpha"}, routeCandidateNames(t, "default", "shared", identityFilters("alpha", nil)))
+		assert.Empty(t, routeCandidateNames(t, "default", "shared", identityFilters("", nil)))
+		assert.Equal(t, []string{"ordinary"}, routeCandidateNames(t, "default", "ordinary", identityFilters("", nil)))
+		assert.Equal(t, []string{"legacy-alpha"}, routeCandidateNames(t, "default", "legacy", identityFilters("legacy-alpha", []int{constant.ChannelTypeKling})))
+		assert.ElementsMatch(t, []string{"legacy-alpha", "legacy-beta"}, routeCandidateNames(t, "default", "legacy", identityFilters("legacy-alpha", []int{constant.ChannelTypeKling, constant.ChannelTypeJimeng})))
+	}
+}
+
+// routeCandidateNames lists the channels routing may choose for modelName in
+// group.
+func routeCandidateNames(t *testing.T, group, modelName string, filters []dto.ChannelFilter) []string {
+	t.Helper()
+	candidates, err := ListRouteCandidates(group, modelName, filters)
 	require.NoError(t, err)
-	require.NotNil(t, selected)
-	assert.Equal(t, "alpha", selected.Name)
-	selected, err = GetChannel("default", "shared", 0, identityFilters("", nil))
-	require.NoError(t, err)
-	assert.Nil(t, selected)
-	selected, err = GetChannel("default", "ordinary", 0, identityFilters("", nil))
-	require.NoError(t, err)
-	require.NotNil(t, selected)
-	assert.Equal(t, "ordinary", selected.Name)
-	selected, err = GetChannel("default", "legacy", 0, identityFilters("legacy-alpha", []int{constant.ChannelTypeKling}))
-	require.NoError(t, err)
-	require.NotNil(t, selected)
-	assert.Equal(t, "legacy-alpha", selected.Name)
-	selected, err = GetChannel("default", "legacy", 0, identityFilters("legacy-alpha", []int{constant.ChannelTypeKling, constant.ChannelTypeJimeng}))
-	require.NoError(t, err)
-	require.NotNil(t, selected)
-	assert.Contains(t, []string{"legacy-alpha", "legacy-beta"}, selected.Name)
+	names := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		names = append(names, candidate.Channel.Name)
+	}
+	return names
 }
 
 func identityFilters(key string, channelTypes []int) []dto.ChannelFilter {
@@ -65,16 +70,16 @@ func TestSharedPluginKeysFilterBothChannelSources(t *testing.T) {
 	common.MemoryCacheEnabled = true
 	t.Cleanup(func() { common.MemoryCacheEnabled = originalMemoryCache; InitChannelCache() })
 	filters := []dto.ChannelFilter{{Kind: dto.FilterTaskPluginIdentity, TaskPluginKey: "alpha", TaskPluginKeys: []string{"alpha", "beta"}}}
-	var abilities []Ability
 	for index, key := range []string{"alpha", "beta", "unrelated"} {
 		setting := `{"task_plugin_key":"` + key + `"}`
 		channel := Channel{Id: 910001 + index, Type: constant.ChannelTypeTaskPlugin, Status: common.ChannelStatusEnabled, Name: key, Models: "shared", Group: "default", Setting: &setting}
 		require.NoError(t, channel.Insert())
-		abilities = append(abilities, Ability{ChannelId: channel.Id, Model: "shared", Group: "default", Enabled: true})
 		matches, _ := ChannelSatisfiesFilters(&channel, "shared", filters)
 		assert.Equal(t, index < 2, matches)
 	}
-	assert.Equal(t, abilities[:2], filterAbilitiesByConstraints(abilities, "shared", filters))
+	common.MemoryCacheEnabled = false
+	assert.Equal(t, []string{"alpha", "beta"}, routeCandidateNames(t, "default", "shared", filters))
+	common.MemoryCacheEnabled = true
 	InitChannelCache()
 	channelSyncLock.RLock()
 	kept, emptied := filterCandidateIDs([]int{910001, 910002, 910003}, "shared", filters)
@@ -98,26 +103,12 @@ func TestNewAPIChannelServesExtendedTaskPlugins(t *testing.T) {
 		require.NoError(t, channels[i].Insert())
 	}
 
-	selected, err := GetChannel("default", "shared", 0, identityFilters("alpha", nil))
-	require.NoError(t, err)
-	require.NotNil(t, selected)
-	assert.Equal(t, "gateway", selected.Name)
-	selected, err = GetChannel("default", "shared", 0, identityFilters("delta", nil))
-	require.NoError(t, err)
-	require.NotNil(t, selected)
-	assert.Equal(t, "gateway-single", selected.Name, "a single task_plugin_key still binds a New API channel")
-	selected, err = GetChannel("default", "shared", 0, identityFilters("beta", nil))
-	require.NoError(t, err)
-	assert.Nil(t, selected, "unbound plugins never reach the gateway channel")
+	assert.Equal(t, []string{"gateway"}, routeCandidateNames(t, "default", "shared", identityFilters("alpha", nil)))
+	assert.Equal(t, []string{"gateway-single"}, routeCandidateNames(t, "default", "shared", identityFilters("delta", nil)), "a single task_plugin_key still binds a New API channel")
+	assert.Empty(t, routeCandidateNames(t, "default", "shared", identityFilters("beta", nil)), "unbound plugins never reach the gateway channel")
 	shared := []dto.ChannelFilter{{Kind: dto.FilterTaskPluginIdentity, TaskPluginKey: "beta", TaskPluginKeys: []string{"beta", "gamma"}}}
-	selected, err = GetChannel("default", "shared", 0, shared)
-	require.NoError(t, err)
-	require.NotNil(t, selected)
-	assert.Equal(t, "gateway", selected.Name, "a bound shared-model candidate admits the channel")
-	selected, err = GetChannel("default", "chat", 0, identityFilters("", nil))
-	require.NoError(t, err)
-	require.NotNil(t, selected)
-	assert.Equal(t, "gateway", selected.Name, "requests without a pinned plugin keep using the gateway")
+	assert.Equal(t, []string{"gateway"}, routeCandidateNames(t, "default", "shared", shared), "a bound shared-model candidate admits the channel")
+	assert.Equal(t, []string{"gateway"}, routeCandidateNames(t, "default", "chat", identityFilters("", nil)), "requests without a pinned plugin keep using the gateway")
 }
 
 func TestModelModifierNamesRouteWithAndWithoutMemoryCache(t *testing.T) {
@@ -130,81 +121,108 @@ func TestModelModifierNamesRouteWithAndWithoutMemoryCache(t *testing.T) {
 	for _, memoryCache := range []bool{false, true} {
 		common.MemoryCacheEnabled = memoryCache
 		InitChannelCache()
-		selected, err := GetRandomSatisfiedChannel("default", "deepseek-flash@effort:max", 0, nil)
-		require.NoError(t, err)
-		require.NotNil(t, selected, "memory cache %v", memoryCache)
-		assert.Equal(t, "deepseek", selected.Name)
-		selected, err = GetRandomSatisfiedChannel("default", "deepseek-pro@effort:max", 0, nil)
-		require.NoError(t, err)
-		assert.Nil(t, selected, "memory cache %v", memoryCache)
+		assert.Equal(t, []string{"deepseek"}, routeCandidateNames(t, "default", "deepseek-flash@effort:max", nil), "memory cache %v", memoryCache)
+		assert.Empty(t, routeCandidateNames(t, "default", "deepseek-pro@effort:max", nil), "memory cache %v", memoryCache)
 	}
 }
 
-// A 429 cooldown sets one channel aside for one model on both cache paths.
-// Channels A, B and C sit on priority levels 10, 5 and 0 of the same group.
-func TestRateLimitedChannelsAreSkippedOnBothCachePaths(t *testing.T) {
+// Both cache paths give routing the same candidates: enabled channels only,
+// highest priority first, with the channel's own priority and weight.
+func TestListRouteCandidatesMatchesOnBothCachePaths(t *testing.T) {
 	truncateTables(t)
-	originalMemoryCache, originalNow := common.MemoryCacheEnabled, channelRateLimitNow
-	t.Cleanup(func() {
-		common.MemoryCacheEnabled, channelRateLimitNow = originalMemoryCache, originalNow
-		require.NoError(t, getChannelRateLimitCache().Purge())
-		InitChannelCache()
-	})
-	const a, b, c = 940001, 940002, 940003
+	originalMemoryCache := common.MemoryCacheEnabled
+	t.Cleanup(func() { common.MemoryCacheEnabled = originalMemoryCache; InitChannelCache() })
 	for _, fixture := range []struct {
 		id       int
 		priority int64
-		models   string
+		weight   uint
+		status   int
 	}{
-		{a, 10, "cool-model,other-model"},
-		{b, 5, "cool-model,other-model"},
-		{c, 0, "cool-model"},
+		{950001, 0, 7, common.ChannelStatusEnabled},
+		{950002, 10, 0, common.ChannelStatusEnabled},
+		{950003, 10, 3, common.ChannelStatusManuallyDisabled},
+		{950004, 5, 1, common.ChannelStatusEnabled},
 	} {
-		priority := fixture.priority
-		channel := Channel{Id: fixture.id, Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Name: "rate-limit", Models: fixture.models, Group: "default", Priority: &priority}
+		priority, weight := fixture.priority, fixture.weight
+		channel := Channel{Id: fixture.id, Type: constant.ChannelTypeOpenAI, Status: fixture.status, Name: fmt.Sprint(fixture.id), Models: "listed", Group: "default", Priority: &priority, Weight: &weight}
 		require.NoError(t, channel.Insert())
 	}
+	type listed struct {
+		id       int
+		priority int64
+		weight   int
+	}
+	want := []listed{{950002, 10, 0}, {950004, 5, 1}, {950001, 0, 7}}
+	for _, memoryCache := range []bool{false, true} {
+		common.MemoryCacheEnabled = memoryCache
+		InitChannelCache()
+		candidates, err := ListRouteCandidates("default", "listed", nil)
+		require.NoError(t, err)
+		var got []listed
+		for _, candidate := range candidates {
+			got = append(got, listed{candidate.Channel.Id, candidate.Priority, candidate.Weight})
+		}
+		assert.Equal(t, want, got, "memory cache %v", memoryCache)
+	}
+}
+
+// A 429 cooldown sets aside one channel, or one key of a multi-key channel,
+// for one model until its deadline.
+func TestChannelCooldownsCoverOneTargetForOneModel(t *testing.T) {
+	originalNow := channelRateLimitNow
+	t.Cleanup(func() {
+		channelRateLimitNow = originalNow
+		require.NoError(t, getChannelRateLimitCache().Purge())
+	})
 	type cooldown struct {
 		channel  int
+		key      string
 		duration time.Duration
 	}
+	type probe struct {
+		channel int
+		key     string
+		model   string
+		want    bool
+	}
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-
 	for _, tc := range []struct {
 		name      string
 		cooldowns []cooldown
 		elapsed   time.Duration
-		model     string
-		retry     int
-		want      int
+		probes    []probe
 	}{
-		{name: "no cooldown keeps the top level", model: "cool-model", want: a},
-		{name: "a cooling channel hands over to the next level", cooldowns: []cooldown{{a, 30 * time.Second}}, model: "cool-model", want: b},
-		{name: "the retry after a 429 still moves down one level", cooldowns: []cooldown{{a, 30 * time.Second}}, model: "cool-model", retry: 1, want: b},
-		{name: "a cooling level falls to the nearest lower ready level", cooldowns: []cooldown{{b, 30 * time.Second}}, model: "cool-model", retry: 1, want: c},
-		{name: "without a lower ready level the nearest higher one is used", cooldowns: []cooldown{{c, 30 * time.Second}}, model: "cool-model", retry: 2, want: b},
-		{name: "every candidate cooling keeps the usual choice", cooldowns: []cooldown{{a, 30 * time.Second}, {b, 30 * time.Second}, {c, 30 * time.Second}}, model: "cool-model", want: a},
-		{name: "a cooldown covers only its model", cooldowns: []cooldown{{a, 30 * time.Second}}, model: "other-model", want: a},
-		{name: "the channel returns when the cooldown ends", cooldowns: []cooldown{{a, 30 * time.Second}}, elapsed: 30 * time.Second, model: "cool-model", want: a},
-		{name: "a shorter cooldown does not cut a longer one", cooldowns: []cooldown{{a, time.Minute}, {a, 10 * time.Second}}, elapsed: 30 * time.Second, model: "cool-model", want: b},
+		{name: "a channel cools down for its model only", cooldowns: []cooldown{{channel: 1, duration: 30 * time.Second}}, probes: []probe{
+			{channel: 1, model: "cool-model", want: true},
+			{channel: 1, model: "other-model"},
+			{channel: 2, model: "cool-model"},
+		}},
+		{name: "the channel returns when the cooldown ends", cooldowns: []cooldown{{channel: 1, duration: 30 * time.Second}}, elapsed: 30 * time.Second, probes: []probe{
+			{channel: 1, model: "cool-model"},
+		}},
+		{name: "a shorter cooldown does not cut a longer one", cooldowns: []cooldown{{channel: 1, duration: time.Minute}, {channel: 1, duration: 10 * time.Second}}, elapsed: 30 * time.Second, probes: []probe{
+			{channel: 1, model: "cool-model", want: true},
+		}},
+		{name: "a key cools down alone", cooldowns: []cooldown{{channel: 1, key: "k1", duration: 30 * time.Second}}, probes: []probe{
+			{channel: 1, key: "k1", model: "cool-model", want: true},
+			{channel: 1, key: "k2", model: "cool-model"},
+			{channel: 1, model: "cool-model"},
+		}},
+		{name: "a whole-channel cooldown covers every key", cooldowns: []cooldown{{channel: 1, duration: 30 * time.Second}}, probes: []probe{
+			{channel: 1, key: "k2", model: "cool-model", want: true},
+		}},
 	} {
-		for _, memoryCache := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/memory=%v", tc.name, memoryCache), func(t *testing.T) {
-				common.MemoryCacheEnabled = memoryCache
-				InitChannelCache()
-				require.NoError(t, getChannelRateLimitCache().Purge())
-				now := start
-				channelRateLimitNow = func() time.Time { return now }
-				for _, limit := range tc.cooldowns {
-					RecordChannelRateLimit(limit.channel, "cool-model", limit.duration)
-				}
-				now = now.Add(tc.elapsed)
-
-				selected, err := GetRandomSatisfiedChannel("default", tc.model, tc.retry, nil)
-				require.NoError(t, err)
-				require.NotNil(t, selected)
-				assert.Equal(t, tc.want, selected.Id)
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, getChannelRateLimitCache().Purge())
+			now := start
+			channelRateLimitNow = func() time.Time { return now }
+			for _, limit := range tc.cooldowns {
+				RecordChannelRateLimit(limit.channel, limit.key, "cool-model", limit.duration)
+			}
+			now = now.Add(tc.elapsed)
+			for _, probe := range tc.probes {
+				assert.Equal(t, probe.want, IsChannelRateLimited(probe.channel, probe.key, probe.model), "%+v", probe)
+			}
+		})
 	}
 }

@@ -1175,7 +1175,11 @@ func TestPluginConverterMapsVendorErrors(t *testing.T) {
 			harness := newRelayHarness(t)
 			registerRelayPlugin(t, strings.ReplaceAll(vendorPlugin, "%KEY%", "relay-vendor"))
 			harness.upstream.respond = respondWith(tc.status, "application/json", tc.reply)
-			harness.install(t, harness.pluginChannel("relay-vendor", "sk-static"))
+			// A retry never reuses the key that failed; a 429 belongs to its
+			// key, so the channel's other key takes the retry.
+			channel := harness.pluginChannel("relay-vendor", "sk-static\nsk-static-2")
+			channel.ChannelInfo = model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModePolling}
+			harness.install(t, channel)
 
 			outcome := harness.post(t, "/v1/chat/completions", relayTestBody)
 

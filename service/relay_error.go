@@ -26,7 +26,7 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if err == nil {
 		return PolicyDecision{Action: "stop", Reason: "request_completed", Source: "system"}
 	}
-	if ShouldSkipRetryAfterChannelAffinityFailure(c) {
+	if IsStrictRoute(c) {
 		source := RequestPolicy(c).SessionModeSource
 		if source == "" {
 			source = "session_rule"
@@ -161,11 +161,16 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	logger.LogError(c, common.LogText("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.MaskSensitiveErrorWithStatusCode(upstreamURLs...))))
 	if limit, ok := common.GetContextKeyType[upstreamRateLimit](c, constant.ContextKeyUpstreamRateLimit); ok && limit.channelID != 0 {
 		common.SetContextKey(c, constant.ContextKeyUpstreamRateLimit, upstreamRateLimit{})
-		// Channel tests pass no relay info and stay out of routing. A
-		// multi-key channel is left alone: the 429 belongs to one of its keys,
-		// and the next request already moves to another key.
-		if relayInfo != nil && !channelError.IsMultiKey && limit.channelID == channelError.ChannelId {
-			model.RecordChannelRateLimit(channelError.ChannelId, relayInfo.OriginModelName, limit.cooldown)
+		// Channel tests pass no relay info and stay out of routing. The 429
+		// of a multi-key channel belongs to the key that got it, so only that
+		// key cools down; routing keeps a conversation on one key, which would
+		// otherwise hit the same limit on every turn.
+		if relayInfo != nil && limit.channelID == channelError.ChannelId {
+			fingerprint := ""
+			if channelError.IsMultiKey {
+				fingerprint = model.ChannelKeyFingerprint(channelError.UsingKey)
+			}
+			model.RecordChannelRateLimit(channelError.ChannelId, fingerprint, relayInfo.OriginModelName, limit.cooldown)
 			logger.LogInfo(c, common.LogText("channel #%d is cooling down for model %s for %s after an upstream 429", channelError.ChannelId, relayInfo.OriginModelName, limit.cooldown))
 		}
 	}

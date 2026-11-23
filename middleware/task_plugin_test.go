@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -23,7 +24,9 @@ import (
 	"github.com/QuantumNous/new-api/pkg/pgtest"
 	builtinplugins "github.com/QuantumNous/new-api/plugins"
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -2100,6 +2103,15 @@ func TestRouteTaskPluginEndpointUsesSelectedChannel(t *testing.T) {
 		model.InitChannelCache()
 	})
 
+	// A session rule keyed by the conversation module's recognition must see
+	// it: the endpoint decision runs before that middleware and may not fix
+	// the routing seed.
+	affinity := operation_setting.GetChannelAffinitySetting()
+	previousAffinity := *affinity
+	t.Cleanup(func() { *affinity = previousAffinity })
+	*affinity = operation_setting.ChannelAffinitySetting{Enabled: true, DeriveFromPrompt: true, TemplateSpread: 1, Rules: []operation_setting.ChannelAffinityRule{{
+		Name: "conversation", ModelRegex: []string{".*"}, KeySources: []operation_setting.ChannelAffinityKeySource{{Type: "conversation_session"}},
+	}}}
 	for _, memoryCache := range []bool{false, true} {
 		t.Run(fmt.Sprintf("memory_cache=%t", memoryCache), func(t *testing.T) {
 			common.MemoryCacheEnabled = memoryCache
@@ -2255,8 +2267,28 @@ func TestRouteTaskPluginEndpointUsesSelectedChannel(t *testing.T) {
 							}
 							service.GetChannelConstraints(c).AddPin(dto.ChannelPin{ChannelId: id, Source: dto.PinSourceToken, Rank: dto.PinRankToken})
 						}
-					}, RouteTaskPluginEndpoint(), PrepareTaskPluginEndpoint(), Distribute(), func(c *gin.Context) {
+					}, RouteTaskPluginEndpoint(), PrepareTaskPluginEndpoint(), func(c *gin.Context) {
+						// Stands in for conversationhttp.ConversationSession, which
+						// the Responses chain runs after the endpoint decision.
+						common.SetContextKey(c, constant.ContextKeyConversationSessionID, func(*gin.Context) string { return "conversation-1" })
+					}, Distribute(), func(c *gin.Context) {
 						reached = true
+						logged := model.NewLogOther()
+						service.AppendRoutingAdminInfo(c, logged)
+						encoded, err := common.Marshal(logged.Snapshot()["admin_info"])
+						require.NoError(t, err)
+						var adminInfo struct {
+							Routing struct {
+								Seed     *struct{ Source string } `json:"seed"`
+								Attempts []json.RawMessage        `json:"attempts"`
+							} `json:"routing"`
+						}
+						require.NoError(t, common.Unmarshal(encoded, &adminInfo))
+						assert.Len(t, adminInfo.Routing.Attempts, 1, "the endpoint decision records no attempt of its own")
+						if !tc.pinOrdinary && !tc.pinPlugin && !tc.originPin {
+							require.NotNil(t, adminInfo.Routing.Seed)
+							assert.Equal(t, "rule:conversation", adminInfo.Routing.Seed.Source, "the session rule sees the recognized conversation")
+						}
 						_, pinned := c.Get(jsplugin.ContextKeyPinnedEndpoint)
 						assert.Equal(t, tc.wantPlugin, pinned)
 						_, relayEndpoint := c.Get(jsplugin.ContextKeyRelayEndpoint)
@@ -2292,10 +2324,13 @@ func TestRouteTaskPluginEndpointUsesSelectedChannel(t *testing.T) {
 						assert.Equal(t, expected.Id, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
 						assert.Equal(t, expected.Key, common.GetContextKeyString(c, constant.ContextKeyChannelKey))
 						if tc.retry {
-							next, _, err := service.CacheGetRandomSatisfiedChannel(&service.RetryParam{Ctx: c, TokenGroup: "route-test", ModelName: modelName, Retry: common.GetPointer(1)})
-							require.NoError(t, err)
-							require.NotNil(t, next)
-							assert.Equal(t, channels[len(channels)-1].Id, next.Id)
+							previousRetryTimes := common.RetryTimes
+							common.RetryTimes = 1
+							defer func() { common.RetryTimes = previousRetryTimes }()
+							service.RouterFor(c).Fail(c, expected.Id, types.NewOpenAIError(errors.New("upstream"), types.ErrorCodeBadResponseStatusCode, http.StatusInternalServerError))
+							next, selectErr := service.SelectChannelForRequest(c, modelName)
+							require.Nil(t, selectErr)
+							assert.Equal(t, channels[len(channels)-1].Id, next.Channel.Id, "a retry stays with the same protocol handler")
 						}
 						c.Status(http.StatusNoContent)
 					})

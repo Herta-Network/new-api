@@ -172,8 +172,6 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/option/model_pricing/convert":        accessTokenScopeRule("option:read"),
 	"POST /api/option/model_pricing/convert_legacy": accessTokenScopeRule("option:read"),
 	"POST /api/option/model_pricing/preview":        accessTokenScopeRule("option:read"),
-	"GET /api/option/channel_affinity_cache":        accessTokenScopeRule("option:read"),
-	"DELETE /api/option/channel_affinity_cache":     accessTokenScopeRule("option:write"),
 	"POST /api/option/rest_model_ratio":             accessTokenScopeRule("option:write"),
 
 	// router/api-router.go: /api/email. A test email reaches any address, so

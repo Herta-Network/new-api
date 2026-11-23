@@ -4640,28 +4640,28 @@
                         "AdminAuth": []
                     }
                 ],
-                "description": "返回一条渠道亲和规则下某个亲和键在统计窗口内的命中和令牌用量。",
+                "description": "返回一个路由种子在最近一小时内的上游缓存命中和令牌用量；参数取自日志 admin_info.routing。",
                 "tags": [
                     "日志"
                 ],
-                "summary": "获取渠道亲和用量统计",
+                "summary": "获取路由种子缓存命中统计",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "规则名",
+                        "description": "种子来源（routing.seed.source）",
                         "name": "rule_name",
                         "in": "query",
                         "required": true
                     },
                     {
                         "type": "string",
-                        "description": "使用的分组",
+                        "description": "请求实际使用的分组",
                         "name": "using_group",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "亲和键指纹",
+                        "description": "种子指纹（routing.seed.fp）",
                         "name": "key_fp",
                         "in": "query",
                         "required": true
@@ -6543,91 +6543,6 @@
                                     }
                                 }
                             ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/option/channel_affinity_cache": {
-            "get": {
-                "security": [
-                    {
-                        "RootAuth": []
-                    }
-                ],
-                "tags": [
-                    "系统设置"
-                ],
-                "summary": "获取渠道亲和缓存统计",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/common.ApiResponse"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/service.ChannelAffinityCacheStats"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "security": [
-                    {
-                        "RootAuth": []
-                    }
-                ],
-                "description": "all=true 时清除全部，否则清除 rule_name 规则的缓存；data.deleted 是清除的条数。",
-                "tags": [
-                    "系统设置"
-                ],
-                "summary": "清除渠道亲和缓存",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "为 true 时清除全部",
-                        "name": "all",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "规则名，all 不为 true 时必填",
-                        "name": "rule_name",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/common.ApiResponse"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/controller.channelAffinityCacheCleared"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "缺少 rule_name、规则不存在或规则未开启 include_rule_name",
-                        "schema": {
-                            "$ref": "#/definitions/common.ApiResponse"
                         }
                     }
                 }
@@ -17573,14 +17488,6 @@
                 }
             }
         },
-        "controller.channelAffinityCacheCleared": {
-            "type": "object",
-            "properties": {
-                "deleted": {
-                    "type": "integer"
-                }
-            }
-        },
         "controller.channelBalanceResponse": {
             "type": "object",
             "properties": {
@@ -25169,32 +25076,6 @@
                 },
                 "resource": {
                     "type": "string"
-                }
-            }
-        },
-        "service.ChannelAffinityCacheStats": {
-            "type": "object",
-            "properties": {
-                "by_rule_name": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "integer"
-                    }
-                },
-                "cache_algo": {
-                    "type": "string"
-                },
-                "cache_capacity": {
-                    "type": "integer"
-                },
-                "enabled": {
-                    "type": "boolean"
-                },
-                "total": {
-                    "type": "integer"
-                },
-                "unknown": {
-                    "type": "integer"
                 }
             }
         },

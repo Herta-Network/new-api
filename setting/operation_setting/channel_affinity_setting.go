@@ -8,6 +8,9 @@ type ChannelAffinityKeySource struct {
 	Path string `json:"path,omitempty"`
 }
 
+// ChannelAffinityRule is a seed source for request routing: a request it
+// matches is routed by the first non-empty value of its key sources, and gets
+// its parameter override template. See service.ChannelRouter.
 type ChannelAffinityRule struct {
 	Name             string                     `json:"name"`
 	ModelRegex       []string                   `json:"model_regex"`
@@ -16,30 +19,37 @@ type ChannelAffinityRule struct {
 	KeySources       []ChannelAffinityKeySource `json:"key_sources"`
 
 	ValueRegex string `json:"value_regex"`
-	TTLSeconds int    `json:"ttl_seconds"`
 
 	ParamOverrideTemplate map[string]any `json:"param_override_template,omitempty"`
 
 	SkipRetryOnFailure bool `json:"skip_retry_on_failure"`
 	// "inherit" uses the global default; off/prefer/strict override it.
-	// Empty preserves the legacy SkipRetryOnFailure behavior.
+	// Empty preserves the legacy SkipRetryOnFailure behavior. off supplies no
+	// seed; prefer moves to the next candidate after a failure; strict, for a
+	// request that carries earlier turns, tries the seed's first choice only.
 	SessionMode string `json:"session_mode,omitempty"`
-
-	IncludeUsingGroup bool `json:"include_using_group"`
-	IncludeModelName  bool `json:"include_model_name"`
-	IncludeRuleName   bool `json:"include_rule_name"`
 }
 
+// ChannelAffinitySetting configures the routing seed: which value keeps the
+// turns of one conversation on the same channel and key, so upstream prompt
+// caches and reasoning stay usable. Routing keeps no state; the seed decides.
 type ChannelAffinitySetting struct {
 	Enabled bool `json:"enabled"`
 	// Default for rules with SessionMode "inherit". Empty defaults to "prefer".
-	SessionMode           string                `json:"session_mode"`
-	SwitchOnSuccess       bool                  `json:"switch_on_success"`
-	KeepOnChannelDisabled bool                  `json:"keep_on_channel_disabled"`
-	MaxEntries            int                   `json:"max_entries"`
-	DefaultTTLSeconds     int                   `json:"default_ttl_seconds"`
-	Rules                 []ChannelAffinityRule `json:"rules"`
+	SessionMode string `json:"session_mode"`
+	// DeriveFromPrompt seeds requests without an explicit key from their
+	// system prompt and tools, or from their first user message.
+	DeriveFromPrompt bool `json:"derive_from_prompt"`
+	// TemplateSpread spreads the conversations of one user that share a
+	// system prompt and tools over up to this many buckets; 1 keeps them
+	// together and 0 seeds by the first user message instead.
+	TemplateSpread int                   `json:"template_spread"`
+	Rules          []ChannelAffinityRule `json:"rules"`
 }
+
+// LegacyChannelAffinityOptions are option names of the stateful affinity
+// cache that routing no longer reads. Stored values are accepted and ignored.
+var LegacyChannelAffinityOptions = []string{"switch_on_success", "keep_on_channel_disabled", "max_entries", "default_ttl_seconds"}
 
 // Keep Codex CLI passthrough aligned with upstream. Codex uses lower-case
 // header names, while HTTP matching here is case-insensitive.
@@ -115,11 +125,9 @@ func buildCodexPassHeaderTemplate() map[string]any {
 }
 
 var channelAffinitySetting = ChannelAffinitySetting{
-	Enabled:               true,
-	SwitchOnSuccess:       true,
-	KeepOnChannelDisabled: false,
-	MaxEntries:            100_000,
-	DefaultTTLSeconds:     3600,
+	Enabled:          true,
+	DeriveFromPrompt: true,
+	TemplateSpread:   1,
 	Rules: []ChannelAffinityRule{
 		{
 			Name:       "codex cli trace",
@@ -129,11 +137,8 @@ var channelAffinitySetting = ChannelAffinitySetting{
 				{Type: "gjson", Path: "prompt_cache_key"},
 			},
 			ValueRegex:            "",
-			TTLSeconds:            0,
 			ParamOverrideTemplate: buildCodexPassHeaderTemplate(),
 			SkipRetryOnFailure:    true,
-			IncludeUsingGroup:     true,
-			IncludeRuleName:       true,
 			UserAgentInclude:      nil,
 		},
 		{
@@ -144,11 +149,8 @@ var channelAffinitySetting = ChannelAffinitySetting{
 				{Type: "gjson", Path: "metadata.user_id"},
 			},
 			ValueRegex:            "",
-			TTLSeconds:            0,
 			ParamOverrideTemplate: buildPassHeaderTemplate(claudeCliPassThroughHeaders),
 			SkipRetryOnFailure:    true,
-			IncludeUsingGroup:     true,
-			IncludeRuleName:       true,
 			UserAgentInclude:      nil,
 		},
 	},
