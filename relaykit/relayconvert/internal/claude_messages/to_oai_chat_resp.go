@@ -9,6 +9,7 @@ import (
 	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/reasonmap"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/reasoninghistory"
 	sharedclaude "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/shared/claude"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 )
@@ -128,12 +129,20 @@ type ClaudeToChatStreamState struct {
 	toolIndexByContentBlock map[int]int
 	blockTypeByContentBlock map[int]string
 	nextToolIndex           int
+
+	// thinkingByContentBlock accumulates each streamed thinking block until
+	// it stops. completedThinking holds finished thinking and redacted
+	// thinking blocks until the next emitted chunk carries them in its
+	// conversion-internal ClaudeThinkingBlocks.
+	thinkingByContentBlock map[int]*dto.ClaudeMediaMessage
+	completedThinking      []json.RawMessage
 }
 
 func NewClaudeToChatStreamState() *ClaudeToChatStreamState {
 	return &ClaudeToChatStreamState{
 		toolIndexByContentBlock: make(map[int]int),
 		blockTypeByContentBlock: make(map[int]string),
+		thinkingByContentBlock:  make(map[int]*dto.ClaudeMediaMessage),
 	}
 }
 
@@ -150,6 +159,10 @@ func (s *ClaudeToChatStreamState) ConvertChunk(claudeResponse *dto.ClaudeRespons
 	if s.blockTypeByContentBlock == nil {
 		s.blockTypeByContentBlock = make(map[int]string)
 	}
+	if s.thinkingByContentBlock == nil {
+		s.thinkingByContentBlock = make(map[int]*dto.ClaudeMediaMessage)
+	}
+	s.collectThinking(claudeResponse)
 
 	converted := *claudeResponse
 	switch claudeResponse.Type {
@@ -204,7 +217,63 @@ func (s *ClaudeToChatStreamState) ConvertChunk(claudeResponse *dto.ClaudeRespons
 		}
 	}
 
-	return StreamResponseClaude2OpenAI(&converted), nil
+	chunk := StreamResponseClaude2OpenAI(&converted)
+	if chunk != nil && len(chunk.Choices) > 0 && len(s.completedThinking) > 0 {
+		chunk.Choices[0].Delta.ClaudeThinkingBlocks = s.completedThinking
+		s.completedThinking = nil
+	}
+	return chunk, nil
+}
+
+// collectThinking keeps the replayable form of every thinking and redacted
+// thinking block. The Chat chunk shows only the thinking text; a later
+// Responses step seals these originals so the client can carry them back.
+func (s *ClaudeToChatStreamState) collectThinking(claudeResponse *dto.ClaudeResponse) {
+	if claudeResponse.Index == nil {
+		return
+	}
+	index := *claudeResponse.Index
+	switch claudeResponse.Type {
+	case "content_block_start":
+		block := claudeResponse.ContentBlock
+		if block == nil {
+			return
+		}
+		switch block.Type {
+		case "thinking":
+			thinking := ""
+			if block.Thinking != nil {
+				thinking = *block.Thinking
+			}
+			s.thinkingByContentBlock[index] = &dto.ClaudeMediaMessage{Type: block.Type, Thinking: &thinking, Signature: block.Signature}
+		case "redacted_thinking":
+			if encoded, ok := reasoninghistory.ClaudeBlock(block); ok {
+				s.completedThinking = append(s.completedThinking, encoded)
+			}
+		}
+	case "content_block_delta":
+		pending := s.thinkingByContentBlock[index]
+		if pending == nil || claudeResponse.Delta == nil {
+			return
+		}
+		switch claudeResponse.Delta.Type {
+		case "thinking_delta":
+			if claudeResponse.Delta.Thinking != nil {
+				*pending.Thinking += *claudeResponse.Delta.Thinking
+			}
+		case "signature_delta":
+			pending.Signature += claudeResponse.Delta.Signature
+		}
+	case "content_block_stop":
+		pending := s.thinkingByContentBlock[index]
+		if pending == nil {
+			return
+		}
+		delete(s.thinkingByContentBlock, index)
+		if encoded, ok := reasoninghistory.ClaudeBlock(pending); ok {
+			s.completedThinking = append(s.completedThinking, encoded)
+		}
+	}
 }
 
 func isClaudeHostedToolStreamBlock(blockType string) bool {
@@ -234,6 +303,7 @@ func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextRe
 	tools := make([]dto.ToolCallResponse, 0)
 	thinkingContent := ""
 	annotations := make([]any, 0)
+	var thinkingBlocks []json.RawMessage
 
 	fullTextResponse.Id = claudeResponse.Id
 	for _, message := range claudeResponse.Content {
@@ -251,6 +321,13 @@ func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextRe
 		case "thinking":
 			if message.Thinking != nil {
 				thinkingContent = *message.Thinking
+			}
+			if encoded, ok := reasoninghistory.ClaudeBlock(&message); ok {
+				thinkingBlocks = append(thinkingBlocks, encoded)
+			}
+		case "redacted_thinking":
+			if encoded, ok := reasoninghistory.ClaudeBlock(&message); ok {
+				thinkingBlocks = append(thinkingBlocks, encoded)
 			}
 		case "text":
 			text := message.GetText()
@@ -283,6 +360,7 @@ func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextRe
 	if thinkingContent != "" {
 		choice.Message.ReasoningContent = &thinkingContent
 	}
+	choice.Message.ClaudeThinkingBlocks = thinkingBlocks
 	fullTextResponse.Model = claudeResponse.Model
 	choices = append(choices, choice)
 	fullTextResponse.Choices = choices

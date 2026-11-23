@@ -355,6 +355,93 @@ func TestTextRequestViaResponsesConvertsClaudeDirectly(t *testing.T) {
 	assert.Equal(t, "ok", response.Content[0].GetText())
 }
 
+// When a Responses upstream rejects the reasoning restored from a Messages
+// client's history, the turn is retried once without it, as it was sent
+// before reasoning was carried.
+func TestTextRequestViaResponsesRetriesWithoutRestoredReasoning(t *testing.T) {
+	var upstreamBodies [][]byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		upstreamBodies = append(upstreamBodies, body)
+		w.Header().Set("Content-Type", "application/json")
+		if len(upstreamBodies) == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"Item 'rs_1' of type 'reasoning' was provided without its required following item.","type":"invalid_request_error"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"resp_2","object":"response","status":"completed","model":"gpt-5.6-sol","output":[{"type":"message","id":"msg_2","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}`))
+	}))
+	defer server.Close()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	c.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		RelayMode:              relayconstant.RelayModeChatCompletions,
+		RelayFormat:            relaytypes.RelayFormatClaude,
+		OriginModelName:        "gpt-5.6-sol",
+		UserId:                 5,
+		RequestConversionChain: []relaytypes.RelayFormat{relaytypes.RelayFormatClaude},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId:         9,
+			ChannelType:       constant.ChannelTypeOpenAI,
+			ChannelBaseUrl:    server.URL,
+			ApiKey:            "test-key",
+			UpstreamModelName: "gpt-5.6-sol",
+		},
+	}
+
+	// The previous turn's thinking block, as the client received it.
+	var previous dto.OpenAIResponsesResponse
+	require.NoError(t, common.Unmarshal([]byte(`{"id":"resp_1","object":"response","status":"completed","model":"gpt-5.6-sol","output":[
+		{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"Need the file list."}],"encrypted_content":"openai-encrypted-E"},
+		{"type":"function_call","id":"fc_1","call_id":"call_1","name":"shell","arguments":"{}","status":"completed"}
+	]}`), &previous))
+	converted, err := relayconvert.ConvertResponse(c, info, relaytypes.RelayFormatClaude, &previous)
+	require.NoError(t, err)
+	previousTurn := converted.Value.(*dto.ClaudeResponse).Content
+	require.Equal(t, "thinking", previousTurn[0].Type)
+	require.NotEmpty(t, previousTurn[0].Signature)
+
+	adaptor := &openaichannel.Adaptor{}
+	adaptor.Init(info)
+	request := &dto.ClaudeRequest{
+		Model:    "gpt-5.6-sol",
+		Thinking: &dto.Thinking{Type: "adaptive", Display: "summarized"},
+		Messages: []dto.ClaudeMessage{
+			{Role: "user", Content: "list files"},
+			{Role: "assistant", Content: previousTurn},
+			{Role: "user", Content: []dto.ClaudeMediaMessage{{Type: "tool_result", ToolUseId: "call_1", Content: "a.txt"}}},
+		},
+	}
+
+	usage, apiErr := textRequestViaResponses(c, info, adaptor, request)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	assert.Equal(t, 5, usage.TotalTokens)
+	require.Len(t, upstreamBodies, 2)
+	first, retried := ojson.GetBytes(upstreamBodies[0], "input"), ojson.GetBytes(upstreamBodies[1], "input")
+	assert.False(t, ojson.GetBytes(upstreamBodies[0], "store").Bool())
+	assert.True(t, ojson.GetBytes(upstreamBodies[0], "store").Exists())
+	assert.Equal(t, "reasoning", first.Get("1.type").String())
+	assert.Equal(t, "rs_1", first.Get("1.id").String())
+	assert.Equal(t, "openai-encrypted-E", first.Get("1.encrypted_content").String())
+	assert.Equal(t, first.Get("#").Int()-1, retried.Get("#").Int())
+	assert.NotContains(t, retried.Raw, `"reasoning"`)
+	assert.Equal(t, "function_call", retried.Get("1.type").String())
+
+	var response dto.ClaudeResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, "ok", response.Content[0].GetText())
+}
+
 func TestApplySystemPromptIfNeededSkipsToolLoadingMessages(t *testing.T) {
 	tools := json.RawMessage(`[{"type":"function","function":{"name":"get_current_time","parameters":{"type":"object","properties":{"city":{"type":"string"}}}}}]`)
 	toolLoading := dto.Message{Role: "system", Tools: tools}

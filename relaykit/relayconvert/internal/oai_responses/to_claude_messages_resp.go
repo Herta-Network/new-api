@@ -8,11 +8,17 @@ import (
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/reasonmap"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/reasoninghistory"
 	sharedclaude "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/shared/claude"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 )
 
-func ResponsesResponseToClaudeMessagesResponse(resp *dto.OpenAIResponsesResponse) (*dto.ClaudeResponse, *dto.Usage, error) {
+// ResponsesResponseToClaudeMessagesResponse converts a Responses response to
+// a Claude message. With a sealer, each reasoning item carrying encrypted
+// content becomes a thinking block whose signature seals the original item,
+// so the next request can replay it to the Responses upstream.
+func ResponsesResponseToClaudeMessagesResponse(resp *dto.OpenAIResponsesResponse, sealer convmeta.ReasoningHistorySealer) (*dto.ClaudeResponse, *dto.Usage, error) {
 	if resp == nil {
 		return nil, nil, errors.New("response is nil")
 	}
@@ -33,10 +39,13 @@ func ResponsesResponseToClaudeMessagesResponse(resp *dto.OpenAIResponsesResponse
 		}
 		switch output.Type {
 		case responsesOutputTypeReasoning:
-			if thinking := reasoningOutputText(&output); thinking != "" {
+			thinking := reasoningOutputText(&output)
+			signature := responsesReasoningSignature(sealer, &output)
+			if thinking != "" || signature != "" {
 				claudeResponse.Content = append(claudeResponse.Content, dto.ClaudeMediaMessage{
-					Type:     "thinking",
-					Thinking: kitutil.GetPointer(thinking),
+					Type:      "thinking",
+					Thinking:  kitutil.GetPointer(thinking),
+					Signature: signature,
 				})
 			}
 		case responsesOutputTypeMessage:
@@ -69,6 +78,16 @@ func ResponsesResponseToClaudeMessagesResponse(resp *dto.OpenAIResponsesResponse
 	}
 	claudeResponse.StopReason = responsesClaudeStopReason(resp, sawToolCall)
 	return claudeResponse, usage, nil
+}
+
+// responsesReasoningSignature seals a reasoning item into the signature of the
+// thinking block it becomes, or returns "" when the item cannot be replayed.
+func responsesReasoningSignature(sealer convmeta.ReasoningHistorySealer, output *dto.ResponsesOutput) string {
+	item, ok := reasoninghistory.ResponsesItem(output)
+	if !ok {
+		return ""
+	}
+	return reasoninghistory.Seal(sealer, reasoninghistory.KindResponses, []json.RawMessage{item})
 }
 
 func responsesArgumentsToClaudeInput(arguments string) map[string]any {

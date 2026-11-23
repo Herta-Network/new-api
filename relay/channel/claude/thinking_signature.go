@@ -32,7 +32,9 @@ const thinkingSignatureErrorLimit = 64 * 1024
 // upstream rejects a thinking signature carried in the conversation history,
 // it removes the assistant thinking blocks and the settings that depend on
 // them, then retries once on the same channel. Every other response is
-// returned as received for the normal error handling and channel retry.
+// returned as received for the normal error handling and channel retry. A
+// request that does not qualify for the repair is sent unchanged, so callers
+// with other formats may use it too.
 func DoRequestWithThinkingSignatureRepair(a channel.Adaptor, c *gin.Context, info *relaycommon.RelayInfo, body common.ReplayableBody) (any, error) {
 	resp, err := a.DoRequest(c, info, body)
 	if err != nil || !supportsThinkingSignatureRepair(info) {
@@ -72,8 +74,11 @@ func DoRequestWithThinkingSignatureRepair(a channel.Adaptor, c *gin.Context, inf
 	return a.DoRequest(c, info, bytes.NewReader(repaired))
 }
 
-// supportsThinkingSignatureRepair requires a Messages request sent to a
-// Messages upstream for a Claude model. Model mapping must be resolved first:
+// supportsThinkingSignatureRepair requires a request sent to a Messages
+// upstream for a Claude model, from a Messages client or converted from a
+// Responses client. A converted request carries thinking restored from the
+// client's reasoning history, which the upstream may still reject, or lacks
+// the thinking a dropped history held. Model mapping must be resolved first:
 // Anthropic-compatible providers such as DeepSeek and Kimi require thinking to
 // be passed back unchanged, so other models are excluded even when they are
 // served through the Messages API. A pass-through body is never rewritten.
@@ -81,7 +86,10 @@ func supportsThinkingSignatureRepair(info *relaycommon.RelayInfo) bool {
 	if info == nil || info.ChannelMeta == nil {
 		return false
 	}
-	if info.RelayFormat != types.RelayFormatClaude || info.GetFinalRequestRelayFormat() != types.RelayFormatClaude {
+	if info.RelayFormat != types.RelayFormatClaude && info.RelayFormat != types.RelayFormatOpenAIResponses {
+		return false
+	}
+	if info.GetFinalRequestRelayFormat() != types.RelayFormatClaude {
 		return false
 	}
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {

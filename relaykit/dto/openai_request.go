@@ -511,6 +511,12 @@ type Message struct {
 	Annotations   json.RawMessage `json:"annotations,omitempty"`
 	parsedContent []MediaContent
 	//parsedStringContent *string
+
+	// ClaudeThinkingBlocks is conversion-internal and never serialized: a
+	// Claude response's thinking and redacted_thinking blocks, carried across
+	// a Claude→Chat→Responses conversion so the Responses step can seal them
+	// for the client.
+	ClaudeThinkingBlocks []json.RawMessage `json:"-"`
 }
 
 type MediaContent struct {

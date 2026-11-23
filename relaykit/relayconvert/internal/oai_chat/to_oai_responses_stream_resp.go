@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/reasoninghistory"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 )
 
@@ -29,6 +30,9 @@ type ChatToResponsesStreamState struct {
 	// Tools marks the Chat function calls that encode Responses custom tools;
 	// they are streamed back as custom_tool_call items.
 	Tools *convmeta.ResponsesToolState
+	// History seals the Claude thinking blocks a Claude→Chat step carried in
+	// the chunks into the reasoning item's encrypted_content. Nil ignores them.
+	History convmeta.ReasoningHistorySealer
 
 	status             string
 	incompleteDetails  *dto.IncompleteDetails
@@ -48,6 +52,10 @@ type ChatToResponsesStreamState struct {
 	text               strings.Builder
 	annotations        []any
 	reasoning          strings.Builder
+	// reasoningBlocks are the open reasoning item's Claude originals, sealed
+	// into reasoningEncrypted when the item closes.
+	reasoningBlocks    []json.RawMessage
+	reasoningEncrypted string
 	// usageText collects every text, reasoning, and tool argument delta sent
 	// to the client. It is the missing-usage estimate and tells whether any
 	// output reached the client.
@@ -345,6 +353,9 @@ func ChatCompletionsStreamChunkToResponsesEvents(chunk *dto.ChatCompletionsStrea
 
 	events := state.ensureCreated()
 	for _, choice := range chunk.Choices {
+		if len(choice.Delta.ClaudeThinkingBlocks) > 0 {
+			events = append(events, state.appendReasoningBlocks(choice.Delta.ClaudeThinkingBlocks)...)
+		}
 		if choice.Delta.GetReasoningContent() != "" {
 			events = append(events, state.appendReasoningDelta(choice.Delta.GetReasoningContent())...)
 		}
@@ -475,12 +486,44 @@ func (s *ChatToResponsesStreamState) appendAnnotationDelta(raw []byte) ([]ChatTo
 }
 
 func (s *ChatToResponsesStreamState) appendReasoningDelta(delta string) []ChatToResponsesStreamEvent {
+	events := s.openReasoning()
+	s.reasoning.WriteString(delta)
+	s.usageText.WriteString(delta)
+	events = append(events, s.event(responsesEventReasoningSummaryDelta, dto.ResponsesStreamResponse{
+		Type:         responsesEventReasoningSummaryDelta,
+		OutputIndex:  intPtr(s.reasoningIndex),
+		SummaryIndex: intPtr(0),
+		Delta:        delta,
+		ItemID:       s.reasoningID(),
+	}))
+	return events
+}
+
+// appendReasoningBlocks adds Claude originals to the open reasoning item,
+// opening one when the upstream sent no visible thinking (redacted thinking).
+// The item stays open until the stream finishes, so thinking that follows
+// text in the same response joins it and replays ahead of that text, as in
+// the non-streaming conversion.
+func (s *ChatToResponsesStreamState) appendReasoningBlocks(blocks []json.RawMessage) []ChatToResponsesStreamEvent {
+	if s.History == nil {
+		return nil
+	}
+	events := s.openReasoning()
+	s.reasoningBlocks = append(s.reasoningBlocks, blocks...)
+	return events
+}
+
+// openReasoning starts a reasoning item unless one is open. After a
+// mid-stream finish closed the previous one, it starts the next segment.
+func (s *ChatToResponsesStreamState) openReasoning() []ChatToResponsesStreamEvent {
 	events := make([]ChatToResponsesStreamEvent, 0, 3)
 	if s.reasoningDone {
 		s.reasoningSegment++
 		s.reasoningStarted = false
 		s.reasoningDone = false
 		s.reasoning.Reset()
+		s.reasoningBlocks = nil
+		s.reasoningEncrypted = ""
 	}
 	if !s.reasoningStarted {
 		s.reasoningStarted = true
@@ -503,15 +546,6 @@ func (s *ChatToResponsesStreamState) appendReasoningDelta(delta string) []ChatTo
 			Part:         &dto.ResponsesReasoningSummaryPart{Type: "summary_text"},
 		}))
 	}
-	s.reasoning.WriteString(delta)
-	s.usageText.WriteString(delta)
-	events = append(events, s.event(responsesEventReasoningSummaryDelta, dto.ResponsesStreamResponse{
-		Type:         responsesEventReasoningSummaryDelta,
-		OutputIndex:  intPtr(s.reasoningIndex),
-		SummaryIndex: intPtr(0),
-		Delta:        delta,
-		ItemID:       s.reasoningID(),
-	}))
 	return events
 }
 
@@ -657,6 +691,7 @@ func (s *ChatToResponsesStreamState) doneDeltaEvents() []ChatToResponsesStreamEv
 				Text: s.reasoning.String(),
 			},
 		}))
+		s.reasoningEncrypted = reasoninghistory.Seal(s.History, reasoninghistory.KindClaude, s.reasoningBlocks)
 		closedReasoning := s.reasoningOutput(status)
 		events = append(events, s.event(responsesEventOutputItemDone, dto.ResponsesStreamResponse{
 			Type:        responsesEventOutputItemDone,
@@ -888,6 +923,7 @@ func (s *ChatToResponsesStreamState) reasoningOutput(status string) *dto.Respons
 				Text: s.reasoning.String(),
 			},
 		},
+		EncryptedContent: s.reasoningEncrypted,
 	}
 }
 

@@ -387,6 +387,8 @@ func TestSupportsThinkingSignatureRepair(t *testing.T) {
 		{name: "unknown model", origin: "my-model", upstream: "my-model"},
 		{name: "converted to Chat Completions", origin: "claude-sonnet-4-6", upstream: "claude-sonnet-4-6", chain: []types.RelayFormat{types.RelayFormatClaude, types.RelayFormatOpenAI}},
 		{name: "Chat Completions client", origin: "claude-sonnet-4-6", upstream: "claude-sonnet-4-6", input: types.RelayFormatOpenAI, chain: []types.RelayFormat{types.RelayFormatOpenAI, types.RelayFormatClaude}},
+		{name: "Responses client converted to Messages", origin: "claude-sonnet-4-6", upstream: "claude-sonnet-4-6", input: types.RelayFormatOpenAIResponses, chain: []types.RelayFormat{types.RelayFormatOpenAIResponses, types.RelayFormatClaude}, want: true},
+		{name: "Responses client on a Responses upstream", origin: "claude-sonnet-4-6", upstream: "claude-sonnet-4-6", input: types.RelayFormatOpenAIResponses, chain: []types.RelayFormat{types.RelayFormatOpenAIResponses}},
 		{name: "pass-through body", origin: "claude-sonnet-4-6", upstream: "claude-sonnet-4-6", passThrough: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

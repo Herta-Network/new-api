@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/new-api/relay/channel/claude"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -53,7 +54,9 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	defer closer.Close()
 
 	var httpResp *http.Response
-	resp, err := adaptor.DoRequest(c, info, requestBody)
+	// A Responses request converted for a Claude upstream carries restored
+	// thinking; the repair retries once without it if Claude rejects it.
+	resp, err := claude.DoRequestWithThinkingSignatureRepair(adaptor, c, info, requestBody)
 	if err != nil {
 		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 	}

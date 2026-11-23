@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/reasoninghistory"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 )
 
@@ -40,12 +41,14 @@ const (
 )
 
 func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, id string) (*dto.OpenAIResponsesResponse, *dto.Usage, error) {
-	return ChatCompletionsResponseToResponsesResponseWithTools(resp, id, nil)
+	return ChatCompletionsResponseToResponsesResponseWithTools(resp, id, nil, nil)
 }
 
 // ChatCompletionsResponseToResponsesResponseWithTools also restores function
-// calls that tools marks as Responses custom tools into custom_tool_call items.
-func ChatCompletionsResponseToResponsesResponseWithTools(resp *dto.OpenAITextResponse, id string, tools *convmeta.ResponsesToolState) (*dto.OpenAIResponsesResponse, *dto.Usage, error) {
+// calls that tools marks as Responses custom tools into custom_tool_call items,
+// and seals the Claude thinking blocks a Claude→Chat step carried on the
+// message into the reasoning item's encrypted_content when sealer is set.
+func ChatCompletionsResponseToResponsesResponseWithTools(resp *dto.OpenAITextResponse, id string, tools *convmeta.ResponsesToolState, sealer convmeta.ReasoningHistorySealer) (*dto.OpenAIResponsesResponse, *dto.Usage, error) {
 	if resp == nil {
 		return nil, nil, errors.New("response is nil")
 	}
@@ -71,18 +74,24 @@ func ChatCompletionsResponseToResponsesResponseWithTools(resp *dto.OpenAITextRes
 		out.IncompleteDetails = details
 	}
 
-	if reasoning := choice.Message.GetReasoningContent(); reasoning != "" {
-		out.Output = append(out.Output, dto.ResponsesOutput{
-			Type:   responsesOutputTypeReasoning,
-			ID:     fmt.Sprintf("%s_reasoning_0", id),
-			Status: responseOutputStatus(out),
-			Summary: []dto.ResponsesReasoningSummaryPart{
-				{
-					Type: "summary_text",
-					Text: reasoning,
-				},
-			},
-		})
+	// A Chat message holds one reasoning string ahead of one text, so every
+	// thinking block of the response is sealed into this one reasoning item.
+	// A response that interleaves thinking with text (thinking, text,
+	// thinking) replays as thinking, thinking, text; if Claude rejects the
+	// reordered history, the thinking signature repair retries without it.
+	reasoning := choice.Message.GetReasoningContent()
+	encryptedReasoning := reasoninghistory.Seal(sealer, reasoninghistory.KindClaude, choice.Message.ClaudeThinkingBlocks)
+	if reasoning != "" || encryptedReasoning != "" {
+		item := dto.ResponsesOutput{
+			Type:             responsesOutputTypeReasoning,
+			ID:               fmt.Sprintf("%s_reasoning_0", id),
+			Status:           responseOutputStatus(out),
+			EncryptedContent: encryptedReasoning,
+		}
+		if reasoning != "" {
+			item.Summary = []dto.ResponsesReasoningSummaryPart{{Type: "summary_text", Text: reasoning}}
+		}
+		out.Output = append(out.Output, item)
 	}
 	if text := choice.Message.StringContent(); text != "" {
 		annotations, err := chatAnnotationsToResponses(choice.Message.Annotations)

@@ -96,6 +96,11 @@ type ChatCompletionsStreamResponseChoiceDelta struct {
 	// providers such as OpenRouter. Relaykit uses it to preserve streaming URL
 	// citations, including Claude round-trip metadata.
 	Annotations json.RawMessage `json:"annotations,omitempty"`
+	// ClaudeThinkingBlocks is conversion-internal and never serialized: the
+	// Claude thinking and redacted_thinking blocks completed by this chunk,
+	// carried across a Claude→Chat→Responses conversion so the Responses step
+	// can seal them for the client.
+	ClaudeThinkingBlocks []json.RawMessage `json:"-"`
 }
 
 func (c *ChatCompletionsStreamResponseChoiceDelta) SetContentString(s string) {
@@ -422,6 +427,9 @@ type ResponsesOutput struct {
 	ItemError           json.RawMessage                 `json:"error,omitempty"`
 	ApprovalRequestID   string                          `json:"approval_request_id,omitempty"`
 	MCPTools            json.RawMessage                 `json:"tools,omitempty"`
+	// EncryptedContent is a reasoning item's opaque state, returned when the
+	// request includes reasoning.encrypted_content.
+	EncryptedContent string `json:"encrypted_content,omitempty"`
 }
 
 // MarshalJSON keeps hosted-tool variants within their protocol-specific

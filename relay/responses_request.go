@@ -89,6 +89,18 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
 	if err != nil {
 		return nil, nil, nil, newConvertRequestFailedError(c, info, err)
 	}
+	// A request still in Responses form goes to a Responses upstream, which
+	// cannot read reasoning this gateway sealed for a Claude upstream.
+	switch responsesRequest := convertedRequest.(type) {
+	case *dto.OpenAIResponsesRequest:
+		err = relaycommon.RemoveResponsesReasoningHistory(responsesRequest)
+	case dto.OpenAIResponsesRequest:
+		err = relaycommon.RemoveResponsesReasoningHistory(&responsesRequest)
+		convertedRequest = responsesRequest
+	}
+	if err != nil {
+		return nil, nil, nil, newConvertRequestFailedError(c, info, err)
+	}
 	relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
 	jsonData, err := common.Marshal(convertedRequest)
 	if err != nil {

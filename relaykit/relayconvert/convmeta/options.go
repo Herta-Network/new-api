@@ -37,6 +37,36 @@ type Options struct {
 	// PreserveEffortTail reports real model IDs whose names already end in an
 	// effort-like token (for example qwen-max). Nil means "never preserve".
 	PreserveEffortTail func(modelName string) bool
+
+	// ReasoningHistory seals the provider-native reasoning a client has to
+	// carry back when Claude Messages and OpenAI Responses are converted into
+	// each other: Claude thinking blocks with their signatures, and Responses
+	// reasoning items with their encrypted content. Nil disables continuation,
+	// and such reasoning is dropped from the history as before.
+	ReasoningHistory ReasoningHistorySealer
+	// ResponsesIncludesEncryptedReasoning reports that a Responses client
+	// asked for reasoning.encrypted_content. Reasoning sealed for a Responses
+	// client travels in that field, so it is sealed only when asked for; a
+	// Messages client always gets it in the thinking signature it replays.
+	ResponsesIncludesEncryptedReasoning bool
+}
+
+// ReasoningHistorySealer protects reasoning that relaykit hands to a client in
+// the other protocol's opaque field: a Claude thinking signature or redacted
+// thinking data, or a Responses encrypted_content. The host owns the key and
+// decides what a token is bound to (user, channel, upstream account, model);
+// relaykit decides what is sealed and where it travels.
+type ReasoningHistorySealer interface {
+	// Seal encrypts and authenticates plaintext for the current route.
+	Seal(plaintext []byte) (string, error)
+	// Open returns the plaintext of a token this sealer issued for the
+	// current route. It reports false for a token that is foreign, altered,
+	// or bound to another route; converters then drop what it carried.
+	Open(token string) ([]byte, bool)
+	// Owns reports whether value has the form of a token this sealer issues,
+	// without opening it, so a native path can remove tokens its upstream
+	// cannot read.
+	Owns(value string) bool
 }
 
 type ClaudeOptions struct {

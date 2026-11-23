@@ -1019,6 +1019,8 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
 		if info.ChannelMeta != nil {
 			options.ToolLossPolicy = types.ConversionLossPolicy(info.ChannelOtherSettings.ToolLossPolicy)
 		}
+		options.ReasoningHistory = reasoningHistorySealer{info: info}
+		options.ResponsesIncludesEncryptedReasoning = responsesRequestIncludesEncryptedReasoning(info.Request)
 		info.convOptions = options
 	}
 	return options

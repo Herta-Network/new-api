@@ -1,6 +1,8 @@
 package relay
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -8,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel"
 	openaichannel "github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -123,6 +126,84 @@ func textRequestViaResponses(c *gin.Context, info *relaycommon.RelayInfo, adapto
 	return relayResponsesRequest(c, info, adaptor, responsesReq, outboundApplied)
 }
 
+// responsesReasoningRepairErrorLimit bounds the upstream error read for the
+// log line when a request is retried without its restored reasoning.
+const responsesReasoningRepairErrorLimit = 4 << 10
+
+// doResponsesRequestWithReasoningRepair sends a Responses request converted
+// from a Messages client. When it replays reasoning restored from the client's
+// history and the upstream answers 400, it retries once on the same channel
+// without that reasoning. Whatever the upstream objected to, the turn then
+// goes out as it did before reasoning was carried, and this turn's response
+// starts a fresh chain. Every other response is returned as received.
+func doResponsesRequestWithReasoningRepair(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, body common.ReplayableBody) (any, error) {
+	resp, err := adaptor.DoRequest(c, info, body)
+	if err != nil {
+		return resp, err
+	}
+	httpResp, ok := resp.(*http.Response)
+	if !ok || httpResp == nil || httpResp.StatusCode != http.StatusBadRequest ||
+		c.Writer.Written() || c.Request.Context().Err() != nil {
+		return resp, nil
+	}
+	sentReader, err := body.NewReader()
+	if err != nil {
+		return httpResp, nil
+	}
+	sent, err := io.ReadAll(sentReader)
+	_ = sentReader.Close()
+	if err != nil {
+		return httpResp, nil
+	}
+	repaired, changed := removeReplayedResponsesReasoning(sent)
+	if !changed {
+		return httpResp, nil
+	}
+	upstreamError, _ := io.ReadAll(io.LimitReader(httpResp.Body, responsesReasoningRepairErrorLimit))
+	service.CloseResponseBodyGracefully(httpResp)
+	logger.LogWarn(c, common.LogText("channel #%d rejected the reasoning restored into a Responses request, retrying once without it: %s", info.ChannelId, strings.Join(strings.Fields(string(upstreamError)), " ")))
+	return adaptor.DoRequest(c, info, bytes.NewReader(repaired))
+}
+
+// removeReplayedResponsesReasoning drops the reasoning input items that carry
+// encrypted content from an outbound Responses body. In a request converted
+// from a Messages client these can only be reasoning restored from the
+// client's history. Every other value keeps its bytes.
+func removeReplayedResponsesReasoning(body []byte) ([]byte, bool) {
+	var document map[string]json.RawMessage
+	if common.Unmarshal(body, &document) != nil {
+		return nil, false
+	}
+	var input []json.RawMessage
+	if common.Unmarshal(document["input"], &input) != nil {
+		return nil, false
+	}
+	kept := make([]json.RawMessage, 0, len(input))
+	for _, item := range input {
+		var reasoning struct {
+			Type             string `json:"type"`
+			EncryptedContent string `json:"encrypted_content"`
+		}
+		if common.Unmarshal(item, &reasoning) == nil && reasoning.Type == "reasoning" && reasoning.EncryptedContent != "" {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	if len(kept) == len(input) {
+		return nil, false
+	}
+	encodedInput, err := common.Marshal(kept)
+	if err != nil {
+		return nil, false
+	}
+	document["input"] = encodedInput
+	repaired, err := common.Marshal(document)
+	if err != nil {
+		return nil, false
+	}
+	return repaired, true
+}
+
 func relayResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, responsesReq *dto.OpenAIResponsesRequest, outboundApplied bool) (*dto.Usage, *types.NewAPIError) {
 	savedRelayMode := info.RelayMode
 	savedRequestURLPath := info.RequestURLPath
@@ -175,10 +256,9 @@ func relayResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, adaptor 
 	}
 	defer closer.Close()
 	jsonData = nil
-	var requestBody io.Reader = body
 
 	var httpResp *http.Response
-	resp, err := adaptor.DoRequest(c, info, requestBody)
+	resp, err := doResponsesRequestWithReasoningRepair(c, info, adaptor, body)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 	}

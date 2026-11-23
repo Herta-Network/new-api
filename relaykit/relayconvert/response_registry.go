@@ -14,6 +14,7 @@ import (
 	geminichat "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/gemini_chat"
 	oaichat "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/oai_chat"
 	oairesponses "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/oai_responses"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/reasoninghistory"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/toolconv"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -908,7 +909,7 @@ func convertOAIChatResponseToOAIResponses(_ context.Context, info convmeta.Meta,
 	if id == "" {
 		id = fmt.Sprintf("resp_%s", kitutil.GetUUID())
 	}
-	return oaichat.ChatCompletionsResponseToResponsesResponseWithTools(chatResponse, id, convmeta.ResponsesToolStateOf(info))
+	return oaichat.ChatCompletionsResponseToResponsesResponseWithTools(chatResponse, id, convmeta.ResponsesToolStateOf(info), reasoninghistory.ResponsesClientSealerOf(info))
 }
 
 func convertOAIResponsesResponseToOAIChat(_ context.Context, _ convmeta.Meta, response any) (any, *dto.Usage, error) {
@@ -923,12 +924,12 @@ func convertOAIResponsesResponseToOAIChat(_ context.Context, _ convmeta.Meta, re
 	return ResponsesResponseToChatCompletionsResponse(responsesResponse, id)
 }
 
-func convertOAIResponsesResponseToClaudeMessages(_ context.Context, _ convmeta.Meta, response any) (any, *dto.Usage, error) {
+func convertOAIResponsesResponseToClaudeMessages(_ context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {
 	responsesResponse, err := asOAIResponsesResponse(response)
 	if err != nil {
 		return nil, nil, err
 	}
-	return oairesponses.ResponsesResponseToClaudeMessagesResponse(responsesResponse)
+	return oairesponses.ResponsesResponseToClaudeMessagesResponse(responsesResponse, reasoninghistory.SealerOf(info))
 }
 
 func newOAIChatToOAIResponsesStreamState(options ResponseStreamOptions) any {
@@ -955,6 +956,9 @@ func convertOAIChatStreamResponseToOAIResponses(_ context.Context, info convmeta
 	}
 	if streamState.Tools == nil {
 		streamState.Tools = convmeta.ResponsesToolStateOf(info)
+	}
+	if streamState.History == nil {
+		streamState.History = reasoninghistory.ResponsesClientSealerOf(info)
 	}
 	events, err := ChatCompletionsStreamChunkToResponsesEvents(chatResponse, streamState)
 	if err != nil {
@@ -1019,6 +1023,9 @@ func convertOAIResponsesStreamResponseToClaudeMessages(_ context.Context, info c
 	if !ok || streamState == nil {
 		return nil, nil, errors.New("OAI responses to Claude stream state is required")
 	}
+	if streamState.History == nil {
+		streamState.History = reasoninghistory.SealerOf(info)
+	}
 	estimatedInputTokens := 0
 	if info != nil {
 		estimatedInputTokens = info.GetEstimatePromptTokens()
@@ -1041,6 +1048,9 @@ func finalizeOAIResponsesStreamResponseToClaudeMessages(_ context.Context, info 
 	streamState, ok := state.(*oairesponses.ResponsesToClaudeStreamState)
 	if !ok || streamState == nil {
 		return nil, nil, errors.New("OAI responses to Claude stream state is required")
+	}
+	if streamState.History == nil {
+		streamState.History = reasoninghistory.SealerOf(info)
 	}
 	estimatedInputTokens := 0
 	if info != nil {

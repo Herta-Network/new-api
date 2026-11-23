@@ -98,6 +98,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 		requestBody = common.NewReplayableBodyReader(storage)
 	} else {
+		relaycommon.RemoveClaudeReasoningHistory(request)
 		convertedRequest, err := adaptor.ConvertClaudeRequest(c, info, request)
 		if err != nil {
 			return newConvertRequestFailedError(c, info, err)

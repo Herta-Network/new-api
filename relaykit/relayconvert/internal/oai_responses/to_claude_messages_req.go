@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/convdiag"
 	relaymedia "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/media"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/reasoninghistory"
 	sharedclaude "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/shared/claude"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
@@ -92,11 +93,28 @@ func OpenAIResponsesRequestToClaudeMessages(c context.Context, info convmeta.Met
 	if err != nil {
 		return nil, err
 	}
+	sealer := reasoninghistory.SealerOf(info)
+	// assistantFromReasoning marks a last message that is the assistant turn
+	// restored reasoning opened; the turn's text joins it, because Claude
+	// expects thinking at the start of the assistant message it belongs to.
+	assistantFromReasoning := false
 	for _, item := range inputItems {
 		itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
 		switch itemType {
+		case responsesInputTypeReasoning:
+			// Only reasoning sealed for this route is replayed; a provider's
+			// own encrypted content cannot be read by Claude and is dropped.
+			blocks := responsesReasoningToClaudeBlocks(sealer, item)
+			if len(blocks) == 0 {
+				continue
+			}
+			claudeRequest.Messages = appendClaudeAssistantBlocks(claudeRequest.Messages, blocks)
+			assistantFromReasoning = true
 		case ResponsesInputTypeFunctionCall:
 			claudeRequest.Messages = appendClaudeToolUse(claudeRequest.Messages, responsesFunctionCallItemToClaudeToolUse(item))
+			// Text after a tool call must not land behind its tool_use, which
+			// Claude expects to be answered by the next user message.
+			assistantFromReasoning = false
 		case ResponsesInputTypeCustomToolCall:
 			name := responsesCallName(item)
 			if name == "" {
@@ -110,12 +128,14 @@ func OpenAIResponsesRequestToClaudeMessages(c context.Context, info convmeta.Met
 				Name:  name,
 				Input: map[string]any{convmeta.CustomToolInputArgument: responsesArgumentsString(item["input"])},
 			})
+			assistantFromReasoning = false
 		case ResponsesInputTypeFunctionCallOutput, ResponsesInputTypeCustomToolOutput:
 			claudeRequest.Messages = appendClaudeToolResult(claudeRequest.Messages, dto.ClaudeMediaMessage{
 				Type:      "tool_result",
 				ToolUseId: CallID(item),
 				Content:   responsesToolOutputToClaude(c, item["output"]),
 			})
+			assistantFromReasoning = false
 		default:
 			sourceRole := strings.TrimSpace(kitutil.Interface2String(item["role"]))
 			role := responsesClaudeRole(sourceRole)
@@ -134,6 +154,10 @@ func OpenAIResponsesRequestToClaudeMessages(c context.Context, info convmeta.Met
 				}
 				continue
 			}
+			if role == "assistant" && assistantFromReasoning && len(parts) > 0 {
+				claudeRequest.Messages = appendClaudeAssistantBlocks(claudeRequest.Messages, parts)
+				continue
+			}
 			if len(parts) == 0 {
 				parts = []dto.ClaudeMediaMessage{
 					{
@@ -146,6 +170,7 @@ func OpenAIResponsesRequestToClaudeMessages(c context.Context, info convmeta.Met
 				Role:    role,
 				Content: parts,
 			})
+			assistantFromReasoning = false
 		}
 	}
 	claudeRequest.Messages = omitTrailingAssistantText(c, claudeRequest.Messages,
@@ -279,6 +304,40 @@ func responsesToolOutputToClaude(c context.Context, value any) any {
 		return strings.Join(labels, " ")
 	}
 	return blocks
+}
+
+// responsesReasoningToClaudeBlocks restores the Claude thinking and redacted
+// thinking blocks sealed into a reasoning item's encrypted_content.
+func responsesReasoningToClaudeBlocks(sealer convmeta.ReasoningHistorySealer, item map[string]any) []dto.ClaudeMediaMessage {
+	items, ok := reasoninghistory.Open(sealer, reasoninghistory.KindClaude, kitutil.Interface2String(item["encrypted_content"]))
+	if !ok {
+		return nil
+	}
+	blocks := make([]dto.ClaudeMediaMessage, 0, len(items))
+	for _, raw := range items {
+		var block dto.ClaudeMediaMessage
+		if err := kitutil.Unmarshal(raw, &block); err != nil {
+			return nil
+		}
+		if block.Type != "thinking" && block.Type != "redacted_thinking" {
+			return nil
+		}
+		blocks = append(blocks, block)
+	}
+	return blocks
+}
+
+// appendClaudeAssistantBlocks adds blocks to the assistant message the history
+// ends with, or starts one. Items between two user turns belong to one
+// assistant turn.
+func appendClaudeAssistantBlocks(messages []dto.ClaudeMessage, blocks []dto.ClaudeMediaMessage) []dto.ClaudeMessage {
+	if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
+		last := messages[len(messages)-1]
+		last.Content = append(claudeMessageContentParts(last.Content), blocks...)
+		messages[len(messages)-1] = last
+		return messages
+	}
+	return append(messages, dto.ClaudeMessage{Role: "assistant", Content: blocks})
 }
 
 func appendClaudeToolUse(messages []dto.ClaudeMessage, toolUse dto.ClaudeMediaMessage) []dto.ClaudeMessage {

@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/convdiag"
 	relaymedia "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/media"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/reasoninghistory"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 )
@@ -20,7 +21,8 @@ func ClaudeMessagesRequestToOpenAIResponses(ctx context.Context, claudeRequest d
 		return nil, errors.New("model is required")
 	}
 
-	input, err := claudeMessagesToResponsesInput(claudeRequest.Messages)
+	sealer := reasoninghistory.SealerOf(info)
+	input, restoredReasoning, err := claudeMessagesToResponsesInput(claudeRequest.Messages, sealer)
 	if err != nil {
 		return nil, err
 	}
@@ -40,12 +42,18 @@ func ClaudeMessagesRequestToOpenAIResponses(ctx context.Context, claudeRequest d
 	// Claude context_management is an object containing protocol-specific edit
 	// strategies. Responses expects an array of compaction entries, so copying
 	// the raw Claude value would produce an invalid upstream request.
+	//
+	// A Messages client sends its whole history every turn and has no
+	// previous_response_id, so upstream storage serves it nothing. store false
+	// also makes the replay of restored reasoning stateless, as Codex sends it:
+	// item IDs with encrypted content, never checked against stored items.
 	responsesRequest := &dto.OpenAIResponsesRequest{
 		Model:             claudeRequest.Model,
 		Input:             input,
 		Instructions:      instructions,
 		Metadata:          append(json.RawMessage(nil), claudeRequest.Metadata...),
 		ServiceTier:       claudeRequest.ServiceTier,
+		Store:             json.RawMessage(`false`),
 		Stream:            claudeRequest.Stream,
 		Temperature:       claudeRequest.Temperature,
 		Tools:             tools,
@@ -80,8 +88,27 @@ func ClaudeMessagesRequestToOpenAIResponses(ctx context.Context, claudeRequest d
 	if info != nil && effectiveEffort != "" {
 		info.SetReasoningEffort(string(effectiveEffort))
 	}
+	// Ask for the reasoning's encrypted state so the response can hand it to
+	// the client sealed. A model that has not been asked to reason may reject
+	// the include, unless the history proves it produced reasoning.
+	if sealer != nil && (restoredReasoning || responsesReasoningEnabled(responsesRequest.Reasoning)) {
+		include, err := kitutil.Marshal([]string{responsesIncludeReasoningEncryptedContent})
+		if err != nil {
+			return nil, err
+		}
+		responsesRequest.Include = include
+	}
 
 	return responsesRequest, nil
+}
+
+const responsesIncludeReasoningEncryptedContent = "reasoning.encrypted_content"
+
+func responsesReasoningEnabled(config *dto.Reasoning) bool {
+	if config == nil || config.Effort == "none" {
+		return false
+	}
+	return config.Effort != "" || config.Summary != ""
 }
 
 func claudeRequestReasoningIntent(ctx context.Context, claudeRequest *dto.ClaudeRequest, info convmeta.Meta) (reasoning.Intent, reasoning.Effort, error) {
@@ -129,8 +156,13 @@ func claudeSystemToResponsesInstructions(request *dto.ClaudeRequest) (json.RawMe
 	return kitutil.Marshal(instructions.String())
 }
 
-func claudeMessagesToResponsesInput(messages []dto.ClaudeMessage) (json.RawMessage, error) {
-	input := make([]map[string]any, 0, len(messages))
+// claudeMessagesToResponsesInput also reports whether reasoning items were
+// restored from thinking blocks the client carried back. A thinking block
+// holding anything but a token sealed for this route, such as a native Claude
+// signature, cannot be replayed to a Responses upstream and is dropped.
+func claudeMessagesToResponsesInput(messages []dto.ClaudeMessage, sealer convmeta.ReasoningHistorySealer) (json.RawMessage, bool, error) {
+	input := make([]any, 0, len(messages))
+	restoredReasoning := false
 	for messageIndex := range messages {
 		message := messages[messageIndex]
 		role := strings.TrimSpace(message.Role)
@@ -147,7 +179,7 @@ func claudeMessagesToResponsesInput(messages []dto.ClaudeMessage) (json.RawMessa
 
 		blocks, err := message.ParseContent()
 		if err != nil {
-			return nil, fmt.Errorf("messages[%d].content: %w", messageIndex, err)
+			return nil, false, fmt.Errorf("messages[%d].content: %w", messageIndex, err)
 		}
 		contentParts := make([]map[string]any, 0, len(blocks))
 		flushContent := func() {
@@ -188,11 +220,25 @@ func claudeMessagesToResponsesInput(messages []dto.ClaudeMessage) (json.RawMessa
 						"file_data": source,
 					})
 				}
+			case "thinking", "redacted_thinking":
+				token := block.Signature
+				if block.Type == "redacted_thinking" {
+					token = block.Data
+				}
+				items, ok := reasoninghistory.Open(sealer, reasoninghistory.KindResponses, token)
+				if !ok || role != "assistant" {
+					continue
+				}
+				flushContent()
+				for _, item := range items {
+					input = append(input, item)
+				}
+				restoredReasoning = true
 			case "tool_use":
 				flushContent()
 				arguments, err := kitutil.Marshal(block.Input)
 				if err != nil {
-					return nil, fmt.Errorf("messages[%d].content[%d].input: %w", messageIndex, blockIndex, err)
+					return nil, false, fmt.Errorf("messages[%d].content[%d].input: %w", messageIndex, blockIndex, err)
 				}
 				if block.Input == nil {
 					arguments = []byte("{}")
@@ -207,7 +253,7 @@ func claudeMessagesToResponsesInput(messages []dto.ClaudeMessage) (json.RawMessa
 				flushContent()
 				output, err := claudeToolResultToResponsesOutput(block.Content)
 				if err != nil {
-					return nil, fmt.Errorf("messages[%d].content[%d].content: %w", messageIndex, blockIndex, err)
+					return nil, false, fmt.Errorf("messages[%d].content[%d].content: %w", messageIndex, blockIndex, err)
 				}
 				input = append(input, map[string]any{
 					"type":    "function_call_output",
@@ -218,7 +264,8 @@ func claudeMessagesToResponsesInput(messages []dto.ClaudeMessage) (json.RawMessa
 		}
 		flushContent()
 	}
-	return kitutil.Marshal(input)
+	encoded, err := kitutil.Marshal(input)
+	return encoded, restoredReasoning, err
 }
 
 func claudeToolsToResponsesTools(value any) (json.RawMessage, error) {

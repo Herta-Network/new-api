@@ -375,7 +375,7 @@ func TestChatCompletionsResponseToResponsesRestoresCustomToolCalls(t *testing.T)
 		Choices: []dto.OpenAITextResponseChoice{{Message: message, FinishReason: "tool_calls"}},
 	}
 
-	resp, _, err := ChatCompletionsResponseToResponsesResponseWithTools(chat, "resp_1", execCustomToolState())
+	resp, _, err := ChatCompletionsResponseToResponsesResponseWithTools(chat, "resp_1", execCustomToolState(), nil)
 	require.NoError(t, err)
 	require.Len(t, resp.Output, 2)
 	custom, err := kitutil.Marshal(resp.Output[0])

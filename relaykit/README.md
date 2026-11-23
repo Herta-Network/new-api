@@ -31,6 +31,23 @@ function tool 的定义、调用和结果在四种协议之间互转。Responses
 
 reasoning effort、thinking budget 和是否返回思考内容用 `dto.ReasoningConversionState` 在转换步骤之间传递，多跳路径上的每一步都能读到精确的 budget 和 effort。Claude 的 max_tokens 和 budget 超出模型范围时会调整，Gemini 的 thinkingConfig 按模型归一化，这些改动都以诊断返回，例如 `claude_max_tokens_raised` 和 `claude_budget_adjusted`。
 
+### 推理续接
+
+Claude Messages 和 OpenAI Responses 互相转换时，上游原生的推理默认无法带到下一轮：Claude 的 thinking 签名进不了 Responses，Responses 的 `encrypted_content` 也进不了 Messages。宿主设置 `Options.ReasoningHistory` 后，响应转换把原始推理封进客户端协议里的不透明字段，客户端原样带回时，请求转换再还原给上游：
+
+| 客户端 | 上游 | 响应里放在哪 | 请求里还原成 |
+|---|---|---|---|
+| Responses | Claude Messages | reasoning 项的 `encrypted_content`，`summary` 是可见的思考 | 原始的 `thinking` 和 `redacted_thinking` 块，放在同一轮 assistant 消息开头 |
+| Claude Messages | Responses | `thinking` 块的 `signature`，`thinking` 是摘要 | 原始的 reasoning 输入项（保留上游的 id），并在请求里加上 `include: ["reasoning.encrypted_content"]` |
+
+Messages 转 Responses 的请求总是写 `store: false`：Messages 客户端每轮发送完整历史，没有 `previous_response_id`，上游存储对它没有用，还原的推理也就按无状态的方式回放。
+
+流式和非流式都覆盖，Claude 转 Responses 经 OpenAI Chat 中转时，原始块用不序列化的内部字段穿过中间这一跳，Chat 客户端看到的输出不变。凭据的格式、密钥和绑定范围都由宿主的 `ReasoningHistorySealer` 决定。打不开的凭据、上游自己的签名或密文，以及另一个方向签发的凭据，都和以前一样被丢弃，请求照常转换，也不产生诊断。
+
+Responses 客户端只有在 `include` 里请求了 `reasoning.encrypted_content` 时才会收到凭据，由宿主设置 `Options.ResponsesIncludesEncryptedReasoning` 告知。凭据比它携带的思考文本更大，不会回放的客户端拿到也没有用。
+
+已知限制：Chat 中转的一条消息只有一段思考和一段正文，所以同一个 Claude 响应里的全部 thinking 块会封进同一个 reasoning 项，排在正文之前。thinking、text、thinking 这种交错的响应回放时会变成 thinking、thinking、text。上游拒绝调整过顺序的历史时，new-api 宿主的 thinking 签名修复会去掉 thinking 重试一次。
+
 ### 多模态
 
 图片和文件内容块在协议之间转换。需要下载 URL 或解析 data URL 时，RelayKit 调用宿主用 `SetMediaResolver` 注册的函数，未注册时转换返回错误。
@@ -224,6 +241,7 @@ meta := &convmeta.Values{
 | `OpenRouterDialect` | 上游是 OpenRouter 时打开，转换器会输出它额外接受的字段 |
 | `WebSearch` | 为某个上游改写托管 web search 的编码 |
 | `PreserveThinkingSuffix`、`PreserveEffortTail` | 判断哪些模型名要原样保留尾缀 |
+| `ReasoningHistory` | Messages 与 Responses 互转时封装和还原上游推理，见上文推理续接，nil 时丢弃 |
 
 转 Claude 时请求需要 `max_tokens`。源请求没有时，RelayKit 调用 `Claude.DefaultMaxTokens` 取值，两者都没有时返回错误。
 

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	sharedclaude "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/shared/claude"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 )
@@ -15,6 +16,9 @@ type ResponsesToClaudeStreamState struct {
 	ID    string
 	Model string
 	Usage *dto.Usage
+	// History seals each finished reasoning item into the signature of its
+	// thinking block. Nil drops the reasoning from the next turn as before.
+	History convmeta.ReasoningHistorySealer
 
 	sentMessageStart bool
 	done             bool
@@ -402,6 +406,9 @@ func (s *ResponsesToClaudeStreamState) applyOutputItem(event *dto.ResponsesStrea
 	switch kind {
 	case "thinking":
 		responses = append(responses, s.mergeFinalValue(block, reasoningOutputText(item), estimatedInputTokens)...)
+		if stop {
+			responses = append(responses, s.signThinkingBlock(block, item, estimatedInputTokens)...)
+		}
 	case "text":
 		var text strings.Builder
 		var annotations []any
@@ -421,6 +428,25 @@ func (s *ResponsesToClaudeStreamState) applyOutputItem(event *dto.ResponsesStrea
 		responses = append(responses, s.stopBlock(block, estimatedInputTokens)...)
 	}
 	return responses, nil
+}
+
+// signThinkingBlock sends the signature_delta Claude places right before a
+// thinking block stops, carrying the finished reasoning item sealed.
+func (s *ResponsesToClaudeStreamState) signThinkingBlock(block *responsesClaudeStreamBlock, item *dto.ResponsesOutput, estimatedInputTokens int) []*dto.ClaudeResponse {
+	if block == nil || block.Stopped {
+		return nil
+	}
+	signature := responsesReasoningSignature(s.History, item)
+	if signature == "" {
+		return nil
+	}
+	responses := s.startBlock(block, estimatedInputTokens)
+	index := block.Index
+	return append(responses, &dto.ClaudeResponse{
+		Type:  "content_block_delta",
+		Index: &index,
+		Delta: &dto.ClaudeMediaMessage{Type: "signature_delta", Signature: signature},
+	})
 }
 
 func (s *ResponsesToClaudeStreamState) appendAnnotations(block *responsesClaudeStreamBlock, annotations []any, estimatedInputTokens int, snapshot bool) []*dto.ClaudeResponse {

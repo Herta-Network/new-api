@@ -5972,6 +5972,10 @@
                         "$ref": "#/definitions/dto.ResponsesOutputContent"
                     }
                 },
+                "encrypted_content": {
+                    "description": "EncryptedContent is a reasoning item's opaque state, returned when the\nrequest includes reasoning.encrypted_content.",
+                    "type": "string"
+                },
                 "error": {
                     "type": "object"
                 },
