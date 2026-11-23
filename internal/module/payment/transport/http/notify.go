@@ -18,11 +18,11 @@ const paymentNotifyBodyLimit = 64 << 10
 // platform delivers it and answers the way the platform expects.
 //
 //	@Summary		接收支付网关回调
-//	@Description	由支付网关调用，客户端不调用。EPay 以 GET 查询参数或 POST 表单回调，Stripe（签名在 Stripe-Signature 请求头）、Cryptomus 和 Antom（签名在 Signature 请求头，连同 Client-Id、Request-Time 请求头和请求路径一起验签）以 POST JSON 回调。EPay 和 Cryptomus 收到纯文本 success 或 fail，Stripe 收到 JSON，其 success 为 true 或 false，Antom 收到其要求的 result 对象，resultStatus 为 S 表示已处理；验签通过但无法结算订单的支付记为无法匹配的支付，仍按已处理应答。
+//	@Description	由支付网关调用，客户端不调用。EPay 以 GET 查询参数或 POST 表单回调，Stripe（签名在 Stripe-Signature 请求头）、Cryptomus、Antom（签名在 Signature 请求头，连同 Client-Id、Request-Time 请求头和请求路径一起验签）和 GMPay（签名在 JSON 的 signature 字段）以 POST JSON 回调。EPay、Cryptomus 和 GMPay 收到纯文本 success 或 fail，Stripe 收到 JSON，其 success 为 true 或 false，Antom 收到其要求的 result 对象，resultStatus 为 S 表示已处理；验签通过但无法结算订单的支付记为无法匹配的支付，仍按已处理应答。
 //	@Tags			支付
 //	@Accept			json,x-www-form-urlencoded
 //	@Produce		plain,json
-//	@Param			platform			path		string	true	"网关平台：epay、stripe、cryptomus 或 antom"
+//	@Param			platform			path		string	true	"网关平台：epay、stripe、cryptomus、antom 或 gmpay"
 //	@Param			token				path		string	true	"支付渠道回调地址中的密钥段"
 //	@Param			Stripe-Signature	header		string	false	"Stripe 回调的签名"
 //	@Param			Signature			header		string	false	"Antom 回调的签名"

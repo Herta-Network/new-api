@@ -320,13 +320,13 @@ func init() {
 
 // chargeRatePairs are the pairs a site in currency site converts prices
 // with for gateways that collect another currency: to what an enabled EPay
-// method (CNY) or Antom method collects.
+// method (CNY), Antom method or GMPay method collects.
 func chargeRatePairs(site string) ([]currency.Pair, error) {
 	methods, err := store.ListMethods()
 	if err != nil {
 		return nil, err
 	}
-	uses := map[string]string{gateway.PlatformEPay: currency.RateUseEPay, gateway.PlatformAntom: currency.RateUseAntom}
+	uses := map[string]string{gateway.PlatformEPay: currency.RateUseEPay, gateway.PlatformAntom: currency.RateUseAntom, gateway.PlatformGMPay: currency.RateUseGMPay}
 	var pairs []currency.Pair
 	for _, method := range methods {
 		use := uses[method.Platform]

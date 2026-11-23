@@ -45,6 +45,7 @@ const (
 	RateUseQuota          = "quota"
 	RateUseEPay           = "epay"
 	RateUseAntom          = "antom"
+	RateUseGMPay          = "gmpay"
 	RateUseChannelBalance = "channel_balance"
 )
 
@@ -271,7 +272,7 @@ func RegisterPairSource(source func(site string) ([]Pair, error)) {
 // requiredRatePairs are the pairs a site in currency site converts with:
 // the site currency to USD for quota and displayed amounts, the pairs other
 // modules registered (the site currency to CNY when an enabled EPay method
-// collects CNY, or to what an enabled Antom method collects), and CNY to USD for the balances of Moonshot and DeepSeek
+// collects CNY, or to what an enabled Antom or GMPay method collects), and CNY to USD for the balances of Moonshot and DeepSeek
 // channels.
 func requiredRatePairs(site string) ([]Pair, error) {
 	var pairs []Pair

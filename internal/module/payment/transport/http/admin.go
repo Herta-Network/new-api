@@ -41,7 +41,7 @@ func decodePaymentNote(c *gin.Context) (string, bool) {
 //	@Param		user_id		query		int		false	"用户 ID"
 //	@Param		status		query		int		false	"状态：1 待支付、2 已支付、3 已关闭、5 已完成"
 //	@Param		purpose		query		string	false	"用途：topup 或 subscription"
-//	@Param		platform	query		string	false	"平台：epay、stripe、cryptomus 或 balance"
+//	@Param		platform	query		string	false	"平台：epay、stripe、cryptomus、antom、gmpay 或 balance"
 //	@Param		order_no	query		string	false	"订单号"
 //	@Success	200			{object}	common.ApiResponse{data=common.PageInfo{items=[]entity.PaymentOrder}}
 //	@Security	AdminAuth

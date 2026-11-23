@@ -10,8 +10,8 @@
 //
 // Changed in new-api: one test file with testify; the fake Stripe API it
 // uses lives in gatewaytest; EPay API checkout with its payment forms, EPay
-// V2, telling phones and their systems by their User-Agent, and Antom (with
-// the fake Antom API of gatewaytest) are covered.
+// V2, telling phones and their systems by their User-Agent, Antom (with
+// the fake Antom API of gatewaytest) and GMPay (with its fake) are covered.
 
 package gateway
 
@@ -165,6 +165,7 @@ func TestRegistryDescribesThePlatforms(t *testing.T) {
 		PlatformStripe:    {Body: true, SignatureHeader: "Stripe-Signature"},
 		PlatformCryptomus: {Body: true, TextReply: true},
 		PlatformAntom:     {Body: true, SignatureHeader: "Signature", ResultReply: true},
+		PlatformGMPay:     {Body: true, TextReply: true},
 	} {
 		style, ok := registry.CallbackStyle(platform)
 		assert.True(t, ok, platform)
@@ -194,6 +195,7 @@ func TestRegistryDescribesThePlatforms(t *testing.T) {
 		PlatformStripe:    {"secret_key", "webhook_secret"},
 		PlatformCryptomus: {"api_key"},
 		PlatformAntom:     {"private_key"},
+		PlatformGMPay:     {"secret_key"},
 	}, secrets)
 
 	// Each form offers exactly the choices a save accepts, and a field shown
@@ -2290,4 +2292,352 @@ func TestAntomReconcileQueryAndConfirm(t *testing.T) {
 	assert.ErrorIs(t, err, ErrUnconfirmed)
 	_, err = gw.QueryPayment(ctx, uncancellable)
 	assert.Error(t, err)
+}
+
+// ---- GMPay ----
+
+// openFakeGMPay opens a method collecting currency through the fake as the
+// administrator saved it.
+func openFakeGMPay(t *testing.T, fake *gatewaytest.FakeGMPay, currency, token, network string) Gateway {
+	t.Helper()
+	config, err := NewRegistry().NormalizeConfig(PlatformGMPay, []byte(fake.Config(currency, token, network)))
+	require.NoError(t, err)
+	return mustOpen(t, NewRegistry(), Method{ID: 9, Platform: PlatformGMPay, Token: "tok", Config: config})
+}
+
+// startGMPayPayment starts the checkout of invoice orderNo for 72.42 CNY
+// and returns the invoice with the GMPay trade it claimed.
+func startGMPayPayment(t *testing.T, gw Gateway, orderNo string) *Order {
+	t.Helper()
+	order := &Order{OrderNo: orderNo, PaymentAmount: 7242, PaymentCurrency: "CNY"}
+	_, err := gw.StartPayment(context.Background(), Checkout{
+		Order: order, Charge: Charge{7242, "CNY"}, NotifyURL: "https://www.example.test/api/payment/notify/gmpay/tok",
+		Claim: func(_ context.Context, tradeNo string) (string, error) {
+			order.TradeNo = tradeNo
+			return tradeNo, nil
+		},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, order.TradeNo)
+	return order
+}
+
+func TestGMPayConfig(t *testing.T) {
+	registry := NewRegistry()
+	for raw, want := range map[string]string{
+		`{"url":" https://pay.example/ ","pid":" 1000 ","secret_key":" s ","currency":" cny ","extra":1}`:                        `{"url":"https://pay.example/","pid":"1000","secret_key":"s","currency":"CNY","token":"","network":""}`,
+		`{"url":"http://pay.example/epusdt","pid":"1001","secret_key":"s","currency":"USD","token":" usdt ","network":" TRON "}`: `{"url":"http://pay.example/epusdt","pid":"1001","secret_key":"s","currency":"USD","token":"USDT","network":"tron"}`,
+	} {
+		got, err := registry.NormalizeConfig(PlatformGMPay, []byte(raw))
+		require.NoError(t, err, raw)
+		assert.Equal(t, want, got)
+	}
+	for _, raw := range []string{
+		`"not an object"`,
+		`{"url":"pay.example","pid":"1000","secret_key":"s","currency":"USD"}`,
+		`{"url":"ftp://pay.example","pid":"1000","secret_key":"s","currency":"USD"}`,
+		`{"url":"https://pay.example/?pid=1","pid":"1000","secret_key":"s","currency":"USD"}`,
+		`{"url":"https://user@pay.example","pid":"1000","secret_key":"s","currency":"USD"}`,
+		`{"url":"https://pay.example","pid":" ","secret_key":"s","currency":"USD"}`,
+		`{"url":"https://pay.example","pid":"1000","secret_key":"","currency":"USD"}`,
+		`{"url":"https://pay.example","pid":"1000","secret_key":"s","currency":""}`,
+		`{"url":"https://pay.example","pid":"1000","secret_key":"s","currency":"USDT"}`,
+		`{"url":"https://pay.example","pid":"1000","secret_key":"s","currency":"US1"}`,
+		`{"url":"https://pay.example","pid":"1000","secret_key":"s","currency":"USD","token":"USDT TRC20","network":"tron"}`,
+		`{"url":"https://pay.example","pid":"1000","secret_key":"s","currency":"USD","token":"USDT","network":"tron/../x"}`,
+	} {
+		_, err := registry.NormalizeConfig(PlatformGMPay, []byte(raw))
+		assert.Error(t, err, raw)
+	}
+	// A token without a network is refused in words the administrator reads.
+	for _, raw := range []string{
+		`{"url":"https://pay.example","pid":"1000","secret_key":"s","currency":"USD","token":"USDT"}`,
+		`{"url":"https://pay.example","pid":"1000","secret_key":"s","currency":"USD","network":"tron"}`,
+	} {
+		_, err := registry.NormalizeConfig(PlatformGMPay, []byte(raw))
+		var message *common.Message
+		require.ErrorAs(t, err, &message, raw)
+		assert.Equal(t, "Set both the GMPay token and network, or leave both empty", message.Key)
+	}
+	for _, config := range []string{
+		`{"url":"https://pay.example","pid":"1000","currency":"USD"}`,
+		`{"url":"pay.example","pid":"1000","secret_key":"s","currency":"USD"}`,
+		`{"url":"https://pay.example","pid":"1000","secret_key":"s"}`,
+	} {
+		_, err := registry.Open(Method{Platform: PlatformGMPay, Config: config})
+		assert.Error(t, err, config)
+	}
+}
+
+// The order request and the callback of epusdt's merchant API document
+// (wiki/API.en.md at 78ac7cc97637) are signed with its demonstration key.
+func TestGMPaySignatures(t *testing.T) {
+	ctx := context.Background()
+	config := `{"url":"https://pay.example","pid":"1000","secret_key":"epusdt_secret_key","currency":"CNY"}`
+	gw := mustOpen(t, NewRegistry(), Method{Platform: PlatformGMPay, Config: config}).(*gmpayGateway)
+	assert.Equal(t, "6f874b1919d95081835e2809b620e354a5866f5a6dbb2e432d1627f1eb10059d", gw.sign(map[string]string{
+		"pid": "1000", "order_id": "ORD202605230001", "currency": "cny", "token": "usdt", "network": "tron", "amount": "100",
+		"notify_url": "https://merchant.example/notify", "redirect_url": "https://merchant.example/return", "name": "VIP",
+		"payment_type": "", "signature": "ignored",
+	}))
+
+	documented := `{
+  "pid": "1000",
+  "trade_id": "20260523171652123456001",
+  "order_id": "ORD202605230001",
+  "amount": 100,
+  "actual_amount": 14.29,
+  "receive_address": "TTestTronAddress001",
+  "token": "USDT",
+  "block_transaction_id": "0xabc123...",
+  "signature": "498975a97bc34563bdb14df53fc18054645df9684d6c67d9b9dd90ec62be1018",
+  "status": 2
+}`
+	post := func(body string) Notification {
+		return Notification{HTTPMethod: http.MethodPost, Body: []byte(body)}
+	}
+	notice, err := gw.ParseCallback(ctx, post(documented))
+	require.NoError(t, err)
+	assert.Equal(t, &Notice{
+		OrderNo: "ORD202605230001", TradeNo: "20260523171652123456001", Amount: 10000, Currency: "CNY", Paid: true, Status: "paid",
+		Details: map[string]string{"token": "USDT", "actual_amount": "14.29", "receive_address": "TTestTronAddress001", "block_transaction_id": "0xabc123..."},
+	}, notice)
+	// A member GMPay leaves empty or null is not signed.
+	_, err = gw.ParseCallback(ctx, post(strings.Replace(documented, `"status": 2`, `"status": 2, "memo": "", "extra": null`, 1)))
+	require.NoError(t, err)
+	// A number is signed as GMPay wrote its float64, whatever text carries it.
+	_, err = gw.ParseCallback(ctx, post(strings.Replace(documented, `"amount": 100,`, `"amount": 100.00,`, 1)))
+	require.NoError(t, err)
+
+	for name, body := range map[string]string{
+		"tampered":        strings.Replace(documented, `"amount": 100`, `"amount": 1000`, 1),
+		"unsigned member": strings.Replace(documented, `"status": 2`, `"status": 2, "memo": "x"`, 1),
+		"no signature":    strings.Replace(documented, `"498975a97bc34563bdb14df53fc18054645df9684d6c67d9b9dd90ec62be1018"`, `""`, 1),
+		"upper case":      strings.Replace(documented, "498975a97bc34563bdb14df53fc18054645df9684d6c67d9b9dd90ec62be1018", "498975A97BC34563BDB14DF53FC18054645DF9684D6C67D9B9DD90EC62BE1018", 1),
+		"boolean member":  strings.Replace(documented, `"status": 2`, `"status": 2, "test": true`, 1),
+		"not an object":   `[]`,
+	} {
+		_, err := gw.ParseCallback(ctx, post(body))
+		assert.Error(t, err, name)
+	}
+	_, err = gw.ParseCallback(ctx, Notification{HTTPMethod: http.MethodGet, Body: []byte(documented)})
+	assert.Error(t, err, "GMPay posts its callbacks")
+
+	// What a correctly signed callback says must be a payment of this
+	// merchant in hundredths.
+	resign := func(change func(map[string]any)) Notification {
+		members := map[string]any{}
+		require.NoError(t, common.UnmarshalJsonStr(documented, &members))
+		change(members)
+		members["signature"] = gatewaytest.GMPaySignature(members, "epusdt_secret_key")
+		body, err := common.Marshal(members)
+		require.NoError(t, err)
+		return post(string(body))
+	}
+	notice, err = gw.ParseCallback(ctx, resign(func(m map[string]any) { m["amount"] = 72.4 }))
+	require.NoError(t, err)
+	assert.Equal(t, int64(7240), notice.Amount)
+	for name, change := range map[string]func(map[string]any){
+		"another merchant": func(m map[string]any) { m["pid"] = "1001" },
+		"expired":          func(m map[string]any) { m["status"] = 3 },
+		"third decimal":    func(m map[string]any) { m["amount"] = 72.425 },
+		"no order":         func(m map[string]any) { m["order_id"] = "" },
+		"odd trade":        func(m map[string]any) { m["trade_id"] = "../admin" },
+	} {
+		_, err := gw.ParseCallback(ctx, resign(change))
+		assert.Error(t, err, name)
+	}
+	assert.Error(t, gw.CheckOrder(&Order{OrderNo: "ORD202605230001", TradeNo: "another"}, notice))
+	assert.NoError(t, gw.CheckOrder(&Order{OrderNo: "ORD202605230001", TradeNo: notice.TradeNo}, notice))
+	assert.NoError(t, gw.CheckOrder(&Order{OrderNo: "ORD202605230001"}, notice))
+}
+
+func TestGMPayStartPayment(t *testing.T) {
+	ctx := context.Background()
+	fake := gatewaytest.NewFakeGMPay(t)
+	gw := openFakeGMPay(t, fake, "cny", "", "")
+	assert.Equal(t, "CNY", gw.ChargeCurrency())
+	order := &Order{OrderNo: "P1R1", PaymentAmount: 7242, PaymentCurrency: "CNY"}
+	checkout := Checkout{
+		Order: order, Charge: Charge{7242, "CNY"}, Subject: "Top-up 10",
+		NotifyURL: "https://www.example.test/api/payment/notify/gmpay/tok", ReturnURL: "https://console.example.test/user/wallet?payment_order=P1",
+		Claim: claimAs("", nil),
+	}
+	assert.True(t, gw.NeedsNotifyURL(order))
+	action, err := gw.StartPayment(ctx, checkout)
+	require.NoError(t, err)
+	created := fake.Order("P1R1")
+	require.NotNil(t, created)
+	assert.Equal(t, 4, created.Status, "the buyer chooses the token and network at the cashier")
+	// The cashier is GMPay's at the configured address, not the address
+	// GMPay's unsigned answer names.
+	assert.Equal(t, Action{Type: ActionURL, URL: fake.URL + "/pay/checkout-counter/" + created.TradeID}, *action)
+	assert.Equal(t, url.Values{
+		"pid": {"1000"}, "order_id": {"P1R1"}, "currency": {"CNY"}, "amount": {"72.42"}, "name": {"Top-up 10"},
+		"notify_url": {checkout.NotifyURL}, "redirect_url": {checkout.ReturnURL}, "signature": {fake.Created()[0].Get("signature")},
+	}, fake.Created()[0])
+
+	// A claimed order returns to its cashier and creates nothing.
+	order.TradeNo = created.TradeID
+	assert.False(t, gw.NeedsNotifyURL(order))
+	action, err = gw.StartPayment(ctx, checkout)
+	require.NoError(t, err)
+	assert.Equal(t, fake.URL+"/pay/checkout-counter/"+created.TradeID, action.URL)
+	assert.Len(t, fake.Created(), 1)
+	// Not when the GMPay order expired or prices another amount.
+	order.PaymentAmount = 7200
+	_, err = gw.StartPayment(ctx, checkout)
+	assert.Error(t, err)
+	order.PaymentAmount = 7242
+	fake.SetStatus(created.TradeID, 3)
+	_, err = gw.StartPayment(ctx, checkout)
+	assert.Error(t, err)
+
+	// A method fixing the token and network creates an order awaiting the
+	// transfer.
+	fixed := openFakeGMPay(t, fake, "CNY", "usdt", "TRON")
+	checkout.Order, checkout.Subject = &Order{OrderNo: "P2R1", PaymentAmount: 7242, PaymentCurrency: "CNY"}, ""
+	_, err = fixed.StartPayment(ctx, checkout)
+	require.NoError(t, err)
+	assert.Equal(t, 1, fake.Order("P2R1").Status)
+	form := fake.Created()[1]
+	assert.Equal(t, []string{"USDT", "tron", "P2R1"}, []string{form.Get("token"), form.Get("network"), form.Get("name")})
+
+	// A concurrent checkout claimed its GMPay order first: the buyer gets the
+	// winner's cashier.
+	checkout.Order = &Order{OrderNo: "P3R1", PaymentAmount: 7242, PaymentCurrency: "CNY"}
+	checkout.Claim = claimAs(fake.Order("P2R1").TradeID, nil)
+	action, err = fixed.StartPayment(ctx, checkout)
+	require.NoError(t, err)
+	assert.Equal(t, fake.URL+"/pay/checkout-counter/"+fake.Order("P2R1").TradeID, action.URL)
+	checkout.Order = &Order{OrderNo: "P4R1", PaymentAmount: 7242, PaymentCurrency: "CNY"}
+	checkout.Claim = claimAs("", errors.New("database down"))
+	_, err = fixed.StartPayment(ctx, checkout)
+	assert.Error(t, err)
+
+	// GMPay takes an order number once, and turns down what it cannot
+	// collect; neither counts against the channel.
+	checkout.Claim = claimAs("", nil)
+	_, err = fixed.StartPayment(ctx, checkout)
+	assert.ErrorIs(t, err, ErrRefused, "the order number was taken")
+	fake.Refuse(10003)
+	checkout.Order = &Order{OrderNo: "P5R1", PaymentAmount: 7242, PaymentCurrency: "CNY"}
+	_, err = fixed.StartPayment(ctx, checkout)
+	assert.ErrorIs(t, err, ErrRefused, "no wallet address is free")
+	// A system error, a GMPay that cannot be reached and a charge in another
+	// currency are failures.
+	fake.Refuse(400)
+	_, err = fixed.StartPayment(ctx, checkout)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrRefused)
+	fake.Refuse(0)
+	unreachable := mustOpen(t, NewRegistry(), Method{Platform: PlatformGMPay,
+		Config: `{"url":"http://127.0.0.1:1","pid":"1000","secret_key":"s","currency":"CNY"}`})
+	_, err = unreachable.StartPayment(ctx, checkout)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrRefused)
+	checkout.Charge = Charge{1000, "USD"}
+	_, err = fixed.StartPayment(ctx, checkout)
+	assert.Error(t, err)
+	assert.Nil(t, fake.Order("P5R1"))
+
+	// GMPay's queries name no order number, so the creation answer is where
+	// a trade is bound to its order: one naming another order, for the same
+	// amount and currency, is never claimed.
+	misnamed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status_code":200,"message":"success","data":{"trade_id":"T-other","order_id":"P9R1","amount":72.42,"currency":"CNY","status":4}}`))
+	}))
+	defer misnamed.Close()
+	other := mustOpen(t, NewRegistry(), Method{Platform: PlatformGMPay,
+		Config: `{"url":"` + misnamed.URL + `","pid":"1000","secret_key":"s","currency":"CNY"}`})
+	claimed := ""
+	checkout = Checkout{
+		Order: &Order{OrderNo: "P6R1", PaymentAmount: 7242, PaymentCurrency: "CNY"}, Charge: Charge{7242, "CNY"},
+		NotifyURL: "https://www.example.test/api/payment/notify/gmpay/tok",
+		Claim: func(_ context.Context, tradeNo string) (string, error) {
+			claimed = tradeNo
+			return tradeNo, nil
+		},
+	}
+	_, err = other.StartPayment(ctx, checkout)
+	assert.Error(t, err)
+	assert.Empty(t, claimed)
+}
+
+func TestGMPayReconcileQueryAndConfirm(t *testing.T) {
+	ctx := context.Background()
+	fake := gatewaytest.NewFakeGMPay(t)
+	gw := openFakeGMPay(t, fake, "CNY", "", "")
+
+	// An invoice that bound no GMPay order closes if no checkout binds one
+	// meanwhile; there is nothing to ask GMPay.
+	verdict, err := gw.Reconcile(ctx, CloseRequest{Order: &Order{OrderNo: "P0R1"}})
+	require.NoError(t, err)
+	assert.Equal(t, Reconciliation{RequireStableCheckout: true}, verdict)
+	verdict, err = gw.Reconcile(ctx, CloseRequest{Order: &Order{OrderNo: "P0R1", PaymentAmount: 7242, PaymentCurrency: "CNY"}})
+	require.NoError(t, err)
+	assert.True(t, verdict.RequireStableCheckout)
+	assert.Empty(t, verdict.TradeNo)
+	tradeNo, err := gw.QueryPayment(ctx, &Order{OrderNo: "P0R1", PaymentAmount: 7242, PaymentCurrency: "CNY"})
+	require.NoError(t, err)
+	assert.Empty(t, tradeNo)
+
+	order := startGMPayPayment(t, gw, "P1R1")
+	notice := &Notice{OrderNo: "P1R1", TradeNo: order.TradeNo, Amount: 7242, Currency: "CNY", Paid: true}
+	// GMPay cannot cancel an order: one awaiting the buyer stays pending
+	// until it expires there, unless a person gives it up.
+	for _, status := range []int{1, 4} {
+		fake.SetStatus(order.TradeNo, status)
+		_, err = gw.Reconcile(ctx, CloseRequest{Order: order})
+		assert.ErrorIs(t, err, ErrUnconfirmed, "status %d", status)
+		verdict, err = gw.Reconcile(ctx, CloseRequest{Order: order, Explicit: true})
+		require.NoError(t, err, "status %d", status)
+		assert.Empty(t, verdict.TradeNo)
+		assert.NotEmpty(t, verdict.Note)
+		tradeNo, err = gw.QueryPayment(ctx, order)
+		require.NoError(t, err)
+		assert.Empty(t, tradeNo)
+		assert.Error(t, gw.ConfirmPayment(ctx, order, notice))
+	}
+	// A transfer being confirmed or held for review keeps it pending in any
+	// case.
+	for _, status := range []int{5, 6} {
+		fake.SetStatus(order.TradeNo, status)
+		for _, explicit := range []bool{false, true} {
+			_, err = gw.Reconcile(ctx, CloseRequest{Order: order, Explicit: explicit})
+			assert.ErrorIs(t, err, ErrUnconfirmed, "status %d", status)
+		}
+		assert.Error(t, gw.ConfirmPayment(ctx, order, notice))
+	}
+	fake.SetStatus(order.TradeNo, 3)
+	verdict, err = gw.Reconcile(ctx, CloseRequest{Order: order})
+	require.NoError(t, err)
+	assert.Equal(t, Reconciliation{RequireStableCheckout: true}, verdict)
+
+	fake.SetStatus(order.TradeNo, 2)
+	require.NoError(t, gw.ConfirmPayment(ctx, order, notice))
+	tradeNo, err = gw.QueryPayment(ctx, order)
+	require.NoError(t, err)
+	assert.Equal(t, order.TradeNo, tradeNo)
+	verdict, err = gw.Reconcile(ctx, CloseRequest{Order: order})
+	require.NoError(t, err)
+	assert.Equal(t, Reconciliation{TradeNo: order.TradeNo}, verdict)
+
+	// GMPay's order must price exactly the payment expectation, and a trade
+	// GMPay does not know leaves the payment unknown.
+	for name, o := range map[string]*Order{
+		"another amount":   {OrderNo: "P1R1", PaymentAmount: 7243, PaymentCurrency: "CNY", TradeNo: order.TradeNo},
+		"another currency": {OrderNo: "P1R1", PaymentAmount: 7242, PaymentCurrency: "USD", TradeNo: order.TradeNo},
+		"unknown trade":    {OrderNo: "P1R1", PaymentAmount: 7242, PaymentCurrency: "CNY", TradeNo: "unknown"},
+	} {
+		assert.Error(t, gw.ConfirmPayment(ctx, o, &Notice{TradeNo: o.TradeNo}), name)
+		_, err = gw.QueryPayment(ctx, o)
+		assert.Error(t, err, name)
+		_, err = gw.Reconcile(ctx, CloseRequest{Order: o})
+		assert.ErrorIs(t, err, ErrUnconfirmed, name)
+		verdict, err = gw.Reconcile(ctx, CloseRequest{Order: o, Explicit: true})
+		require.NoError(t, err, name)
+		assert.Equal(t, "", verdict.TradeNo, name)
+		assert.NotEmpty(t, verdict.Note, name)
+	}
 }

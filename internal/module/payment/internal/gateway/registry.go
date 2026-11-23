@@ -5,7 +5,7 @@
 // The original is licensed under GPL-3.0 and is redistributed here under the
 // AGPL-3.0 of new-api, as GPL-3.0 section 13 permits.
 //
-// Changed in new-api: only EPay, Stripe, Cryptomus and Antom are served; platforms
+// Changed in new-api: only EPay, Stripe, Cryptomus, Antom and GMPay are served; platforms
 // are lowercase names; NormalizeConfig validates the configuration a
 // method is saved with (EPay endpoint and credentials, Stripe key prefixes
 // and mode, Cryptomus credentials) instead of only re-encoding it; the
@@ -15,7 +15,8 @@
 // apply only under a choice of another field (the credentials of each EPay
 // version, the payment form of EPay API orders); an injected HTTP client also
 // carries Stripe traffic; Antom (antom.go) is registered with its region,
-// wallet and currency choices.
+// wallet and currency choices, and GMPay (gmpay.go) with its address,
+// merchant key, order currency and optional token and network.
 
 package gateway
 
@@ -34,6 +35,7 @@ const (
 	PlatformStripe    = "stripe"
 	PlatformCryptomus = "cryptomus"
 	PlatformAntom     = "antom"
+	PlatformGMPay     = "gmpay"
 	PlatformBalance   = "balance"
 )
 
@@ -126,6 +128,7 @@ var platforms = map[string]platformSpec{
 	PlatformStripe:    {open: openStripe, normalize: normalizeStripe, style: CallbackStyle{Body: true, SignatureHeader: "Stripe-Signature"}},
 	PlatformCryptomus: {open: openCryptomus, normalize: normalizeCryptomus, style: CallbackStyle{Body: true, TextReply: true}},
 	PlatformAntom:     {open: openAntom, normalize: normalizeAntom, style: CallbackStyle{Body: true, SignatureHeader: "Signature", ResultReply: true}},
+	PlatformGMPay:     {open: openGMPay, normalize: normalizeGMPay, style: CallbackStyle{Body: true, TextReply: true}},
 }
 
 // Open returns the gateway of the payment method.
@@ -290,6 +293,25 @@ func Platforms() []PlatformInfo {
 					Options:     antomCurrencyOptions},
 				{Key: "settlement_currency", Label: "Settlement currency", Required: true,
 					Description: "The currency Antom settles to you in, as in your contract, such as USD."},
+			},
+		},
+		{
+			Platform: PlatformGMPay,
+			Name:     "GMPay",
+			URL:      "https://github.com/GMWalletApp/epusdt",
+			Fields: []Field{
+				{Key: "url", Label: "GMPay URL", Required: true,
+					Description: "The address of your GMPay (epusdt) site, which this site calls and buyers pay at."},
+				{Key: "pid", Label: "Merchant PID", Required: true,
+					Description: "The PID of an API key in GMPay's admin, API keys. A new GMPay has the key 1000."},
+				{Key: "secret_key", Label: "Secret key", Required: true, Secret: true,
+					Description: "The secret key of that API key."},
+				{Key: "currency", Label: "Order currency", Required: true,
+					Description: "The fiat currency GMPay orders are priced in, such as USD or CNY. Prices are converted into it, and GMPay converts it into the token at its own rate."},
+				{Key: "token", Label: "Token",
+					Description: "Such as USDT. Leave the token and the network empty to let the buyer choose them at GMPay's cashier."},
+				{Key: "network", Label: "Network",
+					Description: "Such as tron, as GMPay names its networks. Set it together with the token."},
 			},
 		},
 	}

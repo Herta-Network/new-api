@@ -47,6 +47,7 @@ const (
 	testEPayMethod   = 10
 	testStripeMethod = 11
 	testAntomOption  = 12
+	testGMPayOption  = 13
 	testUser         = 1
 	testPlan         = 7
 	testFreePlan     = 8
@@ -1216,6 +1217,103 @@ func TestAntomCheckoutAndNotification(t *testing.T) {
 	}
 	assert.Equal(t, credited, userQuota(t))
 	assert.Equal(t, map[string]any{"terminalType": "WAP", "osType": "IOS", "clientIp": "203.0.113.7"}, f.antom.Requests("pay")[1]["env"])
+}
+
+// A GMPay channel keeps its secret key on the server, sends the buyer to
+// GMPay's cashier for the converted price, and settles on a callback only
+// once GMPay reports the order paid. A callback of another amount is
+// recorded for an operator, and an order its owner gave up, which GMPay
+// cannot cancel, still settles on a payment GMPay takes afterwards.
+func TestGMPayCheckoutAndCallback(t *testing.T) {
+	setupPayment(t)
+	ctx := context.Background()
+	fake := gatewaytest.NewFakeGMPay(t)
+	require.NoError(t, model.DB.Create(&entity.PaymentOption{Id: testGMPayOption, Name: "USDT", Enabled: true}).Error)
+	config := map[string]any{}
+	require.NoError(t, common.UnmarshalJsonStr(fake.Config("CNY", "", ""), &config))
+	input := MethodInput{Name: "GMPay", Platform: gateway.PlatformGMPay, OptionId: testGMPayOption, Enabled: true, Weight: 1, Config: config}
+	detail, err := CreateMethod(ctx, input)
+	require.NoError(t, err)
+	assert.Equal(t, "", detail.Config["secret_key"])
+	assert.True(t, detail.SecretsSet["secret_key"])
+	assert.Equal(t, "https://www.example.test/api/payment/notify/gmpay/"+detail.Token, detail.NotifyURL)
+	input.Config["secret_key"] = ""
+	_, err = UpdateMethod(ctx, detail.Id, input)
+	require.NoError(t, err)
+	assert.Equal(t, fake.SecretKey, storedConfig(t, detail.Id)["secret_key"])
+	// The daily rate task refreshes the pair GMPay's prices convert with.
+	pairs, err := chargeRatePairs("USD")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []currency.Pair{{From: "USD", To: "CNY", Use: currency.RateUseEPay}, {From: "USD", To: "CNY", Use: currency.RateUseGMPay}}, pairs)
+
+	newOrder := func() (*entity.PaymentOrder, *entity.PaymentInvoice, *gatewaytest.GMPayOrder) {
+		order, checkout, err := CreateOrder(ctx, testUser, topup("10", testGMPayOption), Buyer{IP: "203.0.113.7", UserAgent: desktopUserAgent})
+		require.NoError(t, err)
+		invoices, err := store.ListInvoices(order.Id)
+		require.NoError(t, err)
+		held := fake.Order(invoices[0].InvoiceNo)
+		require.NotNil(t, held)
+		assert.Equal(t, Checkout{Type: gateway.ActionURL, URL: fake.URL + "/pay/checkout-counter/" + held.TradeID, OrderNo: order.OrderNo}, *checkout)
+		assert.Equal(t, held.TradeID, invoices[0].TradeNo)
+		return order, invoices[0], held
+	}
+	order, invoice, held := newOrder()
+	assert.Equal(t, "CNY", invoice.PaymentCurrency)
+	form := fake.Created()[0]
+	assert.Equal(t, gateway.FormatAmount(invoice.PaymentAmount), form.Get("amount"))
+	assert.Equal(t, detail.NotifyURL, form.Get("notify_url"))
+	assert.Equal(t, order.Subject, form.Get("name"))
+
+	notify := func(notification map[string]any) error {
+		body, err := common.Marshal(notification)
+		require.NoError(t, err)
+		return HandleNotify(ctx, gateway.PlatformGMPay, detail.Token, gateway.Notification{HTTPMethod: http.MethodPost, Body: body}, "203.0.113.9")
+	}
+	quota := userQuota(t)
+	forged := fake.Notification(invoice.InvoiceNo)
+	fake.Sign(forged, "another-secret")
+	assert.ErrorIs(t, notify(forged), gateway.ErrInvalidCallback)
+	// A callback GMPay's order does not confirm yet settles nothing and is
+	// answered so that GMPay sends it again.
+	err = notify(fake.Notification(invoice.InvoiceNo))
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, gateway.ErrInvalidCallback)
+	assert.Equal(t, quota, userQuota(t))
+
+	fake.SetStatus(held.TradeID, 2)
+	for range 2 {
+		require.NoError(t, notify(fake.Notification(invoice.InvoiceNo)))
+	}
+	stored, err := store.GetOrderByNo(order.OrderNo)
+	require.NoError(t, err)
+	assert.Equal(t, entity.PaymentOrderFinished, stored.Status)
+	assert.Equal(t, held.TradeID, stored.TradeNo)
+	credited := userQuota(t)
+	assert.Greater(t, credited, quota)
+
+	other, otherInvoice, otherHeld := newOrder()
+	wrong := fake.Notification(otherInvoice.InvoiceNo)
+	wrong["amount"] = 1.0
+	fake.Sign(wrong, fake.SecretKey)
+	require.NoError(t, notify(wrong))
+	var unmatched []entity.PaymentUnmatched
+	require.NoError(t, model.DB.Where("order_no = ?", other.OrderNo).Find(&unmatched).Error)
+	require.Len(t, unmatched, 1)
+	assert.Equal(t, []any{int64(100), "CNY", otherHeld.TradeID}, []any{unmatched[0].Amount, unmatched[0].Currency, unmatched[0].TradeNo})
+	stored, err = store.GetOrderByNo(other.OrderNo)
+	require.NoError(t, err)
+	assert.Equal(t, entity.PaymentOrderPending, stored.Status)
+
+	closed, err := CloseOrder(ctx, stored, CloseByOwner)
+	require.NoError(t, err)
+	assert.Equal(t, entity.PaymentOrderClosed, closed.Status)
+	assert.Equal(t, credited, userQuota(t))
+	fake.SetStatus(otherHeld.TradeID, 2)
+	require.NoError(t, notify(fake.Notification(otherInvoice.InvoiceNo)))
+	stored, err = store.GetOrderByNo(other.OrderNo)
+	require.NoError(t, err)
+	assert.Equal(t, entity.PaymentOrderFinished, stored.Status)
+	assert.Greater(t, userQuota(t), credited)
 }
 
 func TestCloseAndSyncAskTheGateway(t *testing.T) {
