@@ -99,6 +99,48 @@ func TestTokenCountMetaCountsAgentLoopContent(t *testing.T) {
 	}
 }
 
+// A plain-text document is text the model reads, and a PDF is a file, in
+// Claude message content as in a tool result; a Responses file sent inline
+// is a file too.
+func TestTokenCountMetaCountsDocuments(t *testing.T) {
+	const pdf = "JVBERi0xLjQK"
+	for _, tc := range []struct {
+		name    string
+		raw     string
+		request interface{ GetTokenCountMeta() *types.TokenCountMeta }
+		text    string
+		files   int
+	}{
+		{
+			name: "claude",
+			raw: `{"model":"m","max_tokens":1,"messages":[{"role":"user","content":[
+				{"type":"document","source":{"type":"text","media_type":"text/plain","data":"release notes"}},
+				{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"` + pdf + `"}},
+				{"type":"tool_result","tool_use_id":"t","content":[
+					{"type":"document","source":{"type":"text","media_type":"text/plain","data":"changelog"}},
+					{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"` + pdf + `"}}]}]}]}`,
+			request: &ClaudeRequest{},
+			text:    "release notes\nchangelog",
+			files:   2,
+		},
+		{
+			name:    "responses",
+			raw:     `{"model":"m","input":[{"role":"user","content":[{"type":"input_file","filename":"a.pdf","file_data":"data:application/pdf;base64,` + pdf + `"}]}]}`,
+			request: &OpenAIResponsesRequest{},
+			files:   1,
+		},
+	} {
+		require.NoError(t, kitutil.Unmarshal([]byte(tc.raw), tc.request), tc.name)
+		meta := tc.request.GetTokenCountMeta()
+		assert.Contains(t, meta.CombineText, tc.text, tc.name)
+		assert.NotContains(t, meta.CombineText, pdf, tc.name)
+		require.Len(t, meta.Files, tc.files, tc.name)
+		for _, file := range meta.Files {
+			assert.Equal(t, types.FileTypeFile, file.FileType, tc.name)
+		}
+	}
+}
+
 // Embedding input can mix bare strings with chat-style parts; text parts count
 // as text and image and video parts as files, like chat message content.
 func TestEmbeddingTokenCountMetaCountsChatStyleParts(t *testing.T) {

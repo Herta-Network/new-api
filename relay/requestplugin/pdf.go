@@ -3,6 +3,7 @@ package requestplugin
 import (
 	"bytes"
 	"compress/zlib"
+	"context"
 	"errors"
 	"io"
 	"strconv"
@@ -46,6 +47,9 @@ const (
 	maxPDFFormDepth       = 4
 	maxPDFOperands        = 16
 	maxPDFArrayItems      = 8192
+	// maxPDFCountChars bounds the text ReadPDF reads, in UTF-16 code units:
+	// more than a million-token context holds.
+	maxPDFCountChars = 4 << 20
 )
 
 var (
@@ -56,9 +60,16 @@ var (
 
 // pdfText reads the text of a PDF: its first maxPDFPages pages, at most
 // maxChars UTF-16 code units, until deadline. Encrypted files are unreadable.
-func pdfText(data []byte, maxChars int, deadline time.Time) (result extractedText) {
+func pdfText(data []byte, maxChars int, deadline time.Time) extractedText {
+	result, _ := pdfPages(data, maxChars, deadline)
+	return result
+}
+
+// pdfPages reads the text of a PDF as pdfText does, and its page count, zero
+// where the file could not be opened.
+func pdfPages(data []byte, maxChars int, deadline time.Time) (result extractedText, pages int) {
 	if reason := checkPDF(data, deadline); reason != "" {
-		return extractedText{unchecked: reason}
+		return extractedText{unchecked: reason}, 0
 	}
 	source := &pdfSource{data: data, deadline: deadline}
 	extractor := &pdfExtractor{source: source, sink: textSink{max: maxChars}, contentLeft: maxPDFContentTotal}
@@ -71,9 +82,9 @@ func pdfText(data []byte, maxChars int, deadline time.Time) (result extractedTex
 	reader, err := pdf.NewReader(source, int64(len(data)))
 	if err != nil {
 		extractor.failed = true
-		return extractor.result()
+		return extractor.result(), 0
 	}
-	pages := reader.NumPage()
+	pages = reader.NumPage()
 	if pages > maxPDFPages {
 		extractor.cut = true
 	}
@@ -85,7 +96,42 @@ func pdfText(data []byte, maxChars int, deadline time.Time) (result extractedTex
 		extractor.sink.newline()
 		extractor.readContent(page.V.Key("Contents"), page.Resources(), 0)
 	}
-	return extractor.result()
+	return extractor.result(), pages
+}
+
+// PDFContent is what a model is given of a PDF: its pages, and the text of
+// the first ReadPages of them.
+type PDFContent struct {
+	Pages     int
+	ReadPages int
+	Text      string
+}
+
+// errPDFUnreadable is a PDF whose pages could not be read.
+var errPDFUnreadable = errors.New("the PDF could not be read")
+
+// ReadPDF reads the page count and text of a PDF, for counting the tokens a
+// model reads of it, under the bounds of attachment text: maxDocumentBytes,
+// two files at once and documentTimeout each, and the page and content
+// bounds, past which the text is that of the pages read. A scan has pages and
+// no text. A file that could not be read, or not in time, is an error.
+func ReadPDF(ctx context.Context, data []byte) (PDFContent, error) {
+	if len(data) > maxDocumentBytes {
+		return PDFContent{}, errPDFLimit
+	}
+	wait, cancel := context.WithTimeout(ctx, documentWait)
+	defer cancel()
+	select {
+	case documentSlots <- struct{}{}:
+	case <-wait.Done():
+		return PDFContent{}, errPDFTime
+	}
+	defer func() { <-documentSlots }()
+	result, pages := pdfPages(data, maxPDFCountChars, time.Now().Add(documentTimeout))
+	if pages <= 0 || result.unchecked != "" && result.unchecked != uncheckedNoText {
+		return PDFContent{}, errPDFUnreadable
+	}
+	return PDFContent{Pages: pages, ReadPages: min(pages, maxPDFPages), Text: result.text}, nil
 }
 
 // pdfSource is the file as the library reads it: every read past the

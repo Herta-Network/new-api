@@ -347,6 +347,14 @@ func (c *ClaudeRequest) GetTokenCountMeta() *types.TokenCountMeta {
 						Source:   source,
 					})
 				}
+			case "document":
+				// A plain-text document is text the model reads; a PDF counts as
+				// a file, as it does in a tool result.
+				if media.Source != nil && media.Source.Type == "text" {
+					texts = append(texts, kitutil.Interface2String(media.Source.Data))
+				} else if source := media.ToFileSource(); source != nil {
+					fileMeta = append(fileMeta, &types.FileMeta{FileType: types.FileTypeFile, Source: source})
+				}
 			case "tool_use":
 				if media.Name != "" {
 					texts = append(texts, media.Name)
@@ -363,7 +371,9 @@ func (c *ClaudeRequest) GetTokenCountMeta() *types.TokenCountMeta {
 					break
 				}
 				for _, part := range media.ParseMediaContent() {
-					if source := part.ToFileSource(); source != nil {
+					if part.Type == "document" && part.Source != nil && part.Source.Type == "text" {
+						texts = append(texts, kitutil.Interface2String(part.Source.Data))
+					} else if source := part.ToFileSource(); source != nil {
 						fileType := types.FileTypeFile
 						if part.Type == "image" {
 							fileType = types.FileTypeImage

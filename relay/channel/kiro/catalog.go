@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -26,10 +27,23 @@ type Model struct {
 	Limits struct {
 		Output int64 `json:"maxOutputTokens"`
 	} `json:"tokenLimits"`
+	// Inputs are the kinds of input the model reads: TEXT, and IMAGE for a
+	// model that also reads images and PDF pages.
+	Inputs []string `json:"supportedInputTypes"`
 	// SystemPrompt reports whether the profile may send a system prompt of its
 	// own (GenerateAssistantResponse systemPrompt, CreateResponse instructions).
 	SystemPrompt bool `json:"-"`
 }
+
+// ReadsImages reports whether the model takes images and PDF documents,
+// whose pages it reads as images. Kiro refuses both for a text-only model.
+func (m Model) ReadsImages() bool { return slices.Contains(m.Inputs, "IMAGE") }
+
+// NeedsToolDeclarations reports whether Kiro serves the model through Bedrock
+// Converse, which refuses tool calls in the history of a request that declares
+// no tools. Those models have no request schema; the Messages-based models
+// (Claude 4.6 and later, GPT, Grok, Kimi) have one.
+func (m Model) NeedsToolDeclarations() bool { return len(m.Schema) == 0 }
 
 // TakesOption reports whether the model's request schema lists a top-level
 // option, such as max_tokens or temperature.

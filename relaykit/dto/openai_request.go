@@ -1355,6 +1355,10 @@ func (r *OpenAIResponsesRequest) ParseInput() []MediaInput {
 								fileUrl = url
 							}
 						}
+						// A file sent inline is a data URL in file_data.
+						if fileUrl == "" {
+							fileUrl, _ = item["file_data"].(string)
+						}
 						mediaInputs = append(mediaInputs, MediaInput{Type: "input_file", FileUrl: fileUrl})
 					}
 				}

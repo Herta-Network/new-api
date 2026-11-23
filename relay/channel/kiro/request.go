@@ -69,24 +69,55 @@ func createResponse(fields map[string]json.RawMessage, profile, scope string, mo
 			if !input.IsArray() {
 				return nil, fieldError{"input"}
 			}
+			var items []any
 			for _, item := range input.Array() {
 				if !item.IsObject() || item.Get("type").Str == "item_reference" {
 					return nil, fieldError{"stored input references"}
 				}
-				if kind := item.Get("type").Str; kind != "" && kind != "message" {
-					continue
-				}
-				content := item.Get("content")
-				if !content.IsArray() {
-					continue
-				}
-				for _, part := range content.Array() {
-					if kind := part.Get("type").Str; kind != "input_text" && kind != "output_text" && kind != "text" && kind != "refusal" {
-						return nil, fieldError{"non-text input"}
+				switch item.Get("type").Str {
+				case "", "message":
+					if content := item.Get("content"); content.IsArray() {
+						for _, part := range content.Array() {
+							if _, err := responsesPart(part, model); err != nil {
+								return nil, err
+							}
+						}
 					}
+				case "function_call_output":
+					// Kiro reads a function's output as text, images and
+					// files included, so they follow in a user message.
+					output := item.Get("output")
+					if !output.IsArray() {
+						break
+					}
+					var text []string
+					var media []any
+					for _, part := range output.Array() {
+						isMedia, err := responsesPart(part, model)
+						if err != nil {
+							return nil, err
+						}
+						if isMedia {
+							media = append(media, json.RawMessage(part.Raw))
+							text = append(text, "[The "+strings.TrimPrefix(part.Get("type").Str, "input_")+" this call returned follows in the next message.]")
+						} else {
+							text = append(text, part.Get("text").Str)
+						}
+					}
+					var rewritten map[string]json.RawMessage
+					if err := common.UnmarshalJsonStr(item.Raw, &rewritten); err != nil {
+						return nil, fieldError{"input"}
+					}
+					rewritten["output"] = marshalRaw(strings.Join(text, "\n"))
+					items = append(items, rewritten)
+					if media != nil {
+						items = append(items, map[string]any{"role": "user", "content": media})
+					}
+					continue
 				}
+				items = append(items, json.RawMessage(item.Raw))
 			}
-			result[key] = v
+			result[key] = items
 		case "metadata":
 			if common.Unmarshal(v, &meta) != nil || meta == nil {
 				return nil, fieldError{"metadata"}
@@ -158,6 +189,32 @@ func createResponse(fields map[string]json.RawMessage, profile, scope string, mo
 		result["input"] = items
 	}
 	return result, nil
+}
+
+// responsesPart checks one content part of a Responses input and reports
+// whether it is an image or a file. Kiro takes images and PDF files as data
+// URLs, as the Kiro IDE sends them, on a model that reads images.
+func responsesPart(part gjson.Result, model Model) (bool, error) {
+	switch kind := part.Get("type").Str; kind {
+	case "input_text", "output_text", "text", "refusal":
+		return false, nil
+	case "input_image":
+		media, _, _ := strings.Cut(strings.TrimPrefix(part.Get("image_url").Str, "data:"), ";base64,")
+		format, isImage := strings.CutPrefix(media, "image/")
+		if !strings.HasPrefix(part.Get("image_url").Str, "data:") || !isImage || !slices.Contains(imageFormats, format) {
+			return false, fieldError{"input_image: Kiro takes JPEG, PNG, GIF and WebP images as base64 data URLs"}
+		}
+	case "input_file":
+		if !strings.HasPrefix(part.Get("file_data").Str, "data:application/pdf;base64,") {
+			return false, fieldError{"input_file: Kiro takes PDF files as base64 file_data"}
+		}
+	default:
+		return false, fieldError{"input content " + strconv.Quote(kind)}
+	}
+	if !model.ReadsImages() {
+		return false, fieldError{"image or PDF input: the model " + model.ID + " reads text only"}
+	}
+	return true, nil
 }
 
 // responsesReasoning fits an OpenAI reasoning summary request to the model's
@@ -349,6 +406,8 @@ type turn struct {
 	Content   string           `json:"content"`
 	Model     string           `json:"modelId,omitempty"`
 	Origin    string           `json:"origin,omitempty"`
+	Images    []any            `json:"images,omitempty"`
+	Documents []map[string]any `json:"documents,omitempty"`
 	Context   *userContext     `json:"userInputMessageContext,omitempty"`
 	Tools     []map[string]any `json:"toolUses,omitempty"`
 	Reasoning any              `json:"reasoningContent,omitempty"`
@@ -361,6 +420,78 @@ type turn struct {
 type userContext struct {
 	Tools   []any `json:"tools,omitempty"`
 	Results []any `json:"toolResults,omitempty"`
+}
+
+// imageFormats are the image types Anthropic and Kiro both take.
+var imageFormats = []string{"jpeg", "png", "gif", "webp"}
+
+// attachMedia puts an Anthropic image or document block on the user turn, as
+// one of its images or documents, and returns the text that stands for it
+// instead: a plain-text document's text. Kiro reads a PDF document's pages
+// as images, so a model reads PDFs only where it reads images.
+func (t *turn) attachMedia(b gjson.Result) (text string, attached bool, err error) {
+	source := b.Get("source")
+	kind, sourceType := b.Get("type").Str, source.Get("type").Str
+	switch {
+	case sourceType == "url":
+		return "", false, fieldError{kind + " URL source: Kiro takes the data inline, so send it as base64"}
+	case sourceType == "file":
+		return "", false, fieldError{kind + " file source: Kiro cannot read Anthropic Files API uploads"}
+	case kind == "document" && sourceType == "text":
+		if source.Get("data").Type != gjson.String {
+			return "", false, fieldError{"document"}
+		}
+		return strings.Join(slices.DeleteFunc([]string{b.Get("title").Str, b.Get("context").Str, source.Get("data").Str}, func(s string) bool { return s == "" }), "\n\n"), false, nil
+	case sourceType != "base64" || source.Get("data").Str == "":
+		return "", false, fieldError{kind + " source " + strconv.Quote(sourceType)}
+	case kind == "document":
+		if source.Get("media_type").Str != "application/pdf" {
+			return "", false, fieldError{"document media type: Kiro takes PDF and plain-text documents"}
+		}
+		// Named in request order once the history is built.
+		t.Documents = append(t.Documents, map[string]any{"format": "pdf", "source": map[string]string{"bytes": source.Get("data").Str}})
+		return "", true, nil
+	}
+	format, _ := strings.CutPrefix(source.Get("media_type").Str, "image/")
+	if !slices.Contains(imageFormats, format) {
+		return "", false, fieldError{"image media type: Kiro takes JPEG, PNG, GIF and WebP images"}
+	}
+	t.Images = append(t.Images, map[string]any{"format": format, "source": map[string]string{"bytes": source.Get("data").Str}})
+	return "", true, nil
+}
+
+// toolResultText is the content of a tool result. Kiro ignores images and
+// documents inside a tool result, so they go on the turn that carries the
+// result, and the result says where they are.
+func (t *turn) toolResultText(content gjson.Result) (string, error) {
+	if content.Type == gjson.String {
+		return content.Str, nil
+	}
+	if !content.IsArray() {
+		return "", fieldError{"tool_result content"}
+	}
+	var parts []string
+	for _, b := range content.Array() {
+		switch b.Get("type").Str {
+		case "text":
+			if b.Get("text").Type != gjson.String {
+				return "", fieldError{"text block"}
+			}
+			parts = append(parts, b.Get("text").Str)
+		case "image", "document":
+			text, attached, err := t.attachMedia(b)
+			if err != nil {
+				return "", err
+			}
+			if attached {
+				text = "[The " + b.Get("type").Str + " this result returned is attached to this message.]"
+			}
+			parts = append(parts, text)
+		default:
+			return "", fieldError{"tool_result content block " + strconv.Quote(b.Get("type").Str)}
+		}
+	}
+	return strings.Join(parts, "\n"), nil
 }
 
 // messageTurn converts one Messages message. A system message, which GAR has
@@ -405,6 +536,17 @@ func messageTurn(m gjson.Result, model string) (string, *turn, error) {
 				return "", nil, fieldError{"tool_use"}
 			}
 			t.Tools = append(t.Tools, map[string]any{"toolUseId": b.Get("id").Str, "name": b.Get("name").Str, "input": json.RawMessage(b.Get("input").Raw)})
+		case "image", "document":
+			if role != "user" {
+				return "", nil, fieldError{b.Get("type").Str + " in a " + role + " message"}
+			}
+			text, _, err := t.attachMedia(b)
+			if err != nil {
+				return "", nil, err
+			}
+			if text != "" {
+				parts = append(parts, text)
+			}
 		case "tool_result":
 			if role != "user" || b.Get("tool_use_id").Str == "" {
 				return "", nil, fieldError{"tool_result"}
@@ -413,7 +555,7 @@ func messageTurn(m gjson.Result, model string) (string, *turn, error) {
 			// Anthropic lets a tool result omit its content.
 			if content := b.Get("content"); content.Exists() && content.Type != gjson.Null {
 				var err error
-				if text, err = textBlocks(content); err != nil {
+				if text, err = t.toolResultText(content); err != nil {
 					return "", nil, err
 				}
 			}
@@ -426,8 +568,17 @@ func messageTurn(m gjson.Result, model string) (string, *turn, error) {
 			}
 			t.Context.Results = append(t.Context.Results, map[string]any{"toolUseId": b.Get("tool_use_id").Str, "status": status, "content": []any{map[string]string{"text": text}}})
 		case "thinking", "redacted_thinking":
-			if role != "assistant" || t.Reasoning != nil {
+			if role != "assistant" {
 				return "", nil, fieldError{"thinking history"}
+			}
+			// Kiro replays one reasoning block per assistant turn. The first
+			// is kept: it was produced on the conversation as it stands before
+			// this message, so its signature still verifies. Later ones (a
+			// response that thought again between tool calls) were produced
+			// on content Kiro cannot replay around them; leaving a block out
+			// is valid and only drops that reasoning.
+			if t.Reasoning != nil {
+				continue
 			}
 			if b.Get("type").Str == "thinking" {
 				t.Reasoning = map[string]any{"reasoningText": map[string]string{"text": b.Get("thinking").Str, "signature": b.Get("signature").Str}}
@@ -449,6 +600,7 @@ func generateAssistantResponse(fields map[string]json.RawMessage, profile, scope
 	amrf := map[string]any{}
 	system := ""
 	outputConfig := map[string]json.RawMessage{}
+	withoutTools := false
 	for k, raw := range fields {
 		switch k {
 		// Kiro caches prompt prefixes on its own, whatever the cache markers say,
@@ -476,8 +628,31 @@ func generateAssistantResponse(fields map[string]json.RawMessage, profile, scope
 				return nil, fieldError{k}
 			}
 		case "tool_choice":
-			if v := gjson.ParseBytes(raw); v.Get("type").Str != "auto" || v.Get("disable_parallel_tool_use").Bool() {
+			// GenerateAssistantResponse has no tool choice. With "auto" the
+			// model chooses, as it does on Kiro, and the relay ends the
+			// response after the first call when parallel calls are disabled.
+			// "none" declares no tools. Nothing makes the model call a tool,
+			// and Anthropic itself refuses forced choices on Claude 5.5.
+			switch kind := gjson.ParseBytes(raw).Get("type").Str; kind {
+			case "auto":
+			case "none":
+				withoutTools = true
+			case "any", "tool":
+				return nil, fieldError{"tool_choice " + strconv.Quote(kind) + `: Kiro cannot force a tool call; use "auto" and name the tool in the prompt`}
+			default:
 				return nil, fieldError{k}
+			}
+		case "stop_sequences":
+			// Kiro has no stop sequences; the relay ends the response at the
+			// first one in its text.
+			sequences := gjson.ParseBytes(raw)
+			if !sequences.IsArray() {
+				return nil, fieldError{k}
+			}
+			for _, sequence := range sequences.Array() {
+				if sequence.Type != gjson.String || sequence.Str == "" {
+					return nil, fieldError{k}
+				}
 			}
 		case "max_tokens":
 			// A model that takes no cap runs to its ceiling.
@@ -545,10 +720,10 @@ func generateAssistantResponse(fields map[string]json.RawMessage, profile, scope
 				}
 				previous.Content += t.Content
 				previous.Tools = append(previous.Tools, t.Tools...)
-				if t.Reasoning != nil {
-					if previous.Reasoning != nil {
-						return nil, fieldError{"multiple reasoning blocks in one turn"}
-					}
+				previous.Images = append(previous.Images, t.Images...)
+				previous.Documents = append(previous.Documents, t.Documents...)
+				// The first reasoning block of the turn stays, as within a message.
+				if previous.Reasoning == nil {
 					previous.Reasoning = t.Reasoning
 				}
 				if t.Context != nil {
@@ -568,6 +743,20 @@ func generateAssistantResponse(fields map[string]json.RawMessage, profile, scope
 	current := history[len(history)-1]["userInputMessage"]
 	if current == nil {
 		return nil, fieldError{"assistant prefill"}
+	}
+	// Documents are named in request order; the name is all Kiro asks.
+	documents, toolHistory := 0, false
+	for _, entry := range history {
+		for _, t := range entry {
+			if (len(t.Images) > 0 || len(t.Documents) > 0) && !model.ReadsImages() {
+				return nil, fieldError{"image or PDF input: the model " + model.ID + " reads text only"}
+			}
+			for _, document := range t.Documents {
+				documents++
+				document["name"] = "document-" + strconv.Itoa(documents)
+			}
+			toolHistory = toolHistory || len(t.Tools) > 0 || t.Context != nil && len(t.Context.Results) > 0
+		}
 	}
 	history = history[:len(history)-1]
 	if system != "" && model.SystemPrompt {
@@ -618,8 +807,18 @@ func generateAssistantResponse(fields map[string]json.RawMessage, profile, scope
 			declared = append(declared, tools[from])
 		}
 	}
+	if withoutTools {
+		if toolHistory && model.NeedsToolDeclarations() {
+			return nil, fieldError{`tool_choice "none" for ` + model.ID + `: Kiro needs this model's tools declared once the conversation has tool calls`}
+		}
+		declared = nil
+	}
 	for _, tool := range declared {
 		if tool.Get("name").Str == "" || !tool.Get("input_schema").IsObject() {
+			if kind := tool.Get("type").Str; kind != "" && kind != "custom" {
+				// A server tool runs on Anthropic's side; Kiro has none of them.
+				return nil, fieldError{"server tool " + strconv.Quote(kind) + ": Kiro runs only tools the client declares with an input_schema and executes itself"}
+			}
 			return nil, fieldError{"tool declaration"}
 		}
 		if current.Context == nil {

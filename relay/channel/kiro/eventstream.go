@@ -40,6 +40,12 @@ type garMeter struct {
 	// none; count measures streamed output against it.
 	limit int
 	count func(text string) int
+	// stops are the client's stop sequences, which Kiro has none of: the
+	// response ends before the first one in its text.
+	stops []string
+	// oneTool ends the response after its first tool call, for a client that
+	// disabled parallel tool use.
+	oneTool bool
 }
 
 type garBlock struct {
@@ -78,6 +84,10 @@ type garStream struct {
 	// response the relay ended at that cap.
 	used      int
 	truncated bool
+	// held is text of the open text block not sent yet because it may begin
+	// a stop sequence; stopSequence is the one the response ended at.
+	held         string
+	stopSequence string
 }
 
 func newGARStream(source io.ReadCloser, model string, streaming bool, meter garMeter, maxBytes int) *garStream {
@@ -139,7 +149,15 @@ func (r *garStream) message() ([]byte, error) {
 			content = append(content, map[string]any{"type": "text", "text": block.text.String()})
 		}
 	}
-	return common.Marshal(map[string]any{"id": r.id, "type": "message", "role": "assistant", "model": r.model, "content": content, "stop_reason": r.stopReason, "stop_sequence": nil, "usage": r.usage})
+	return common.Marshal(map[string]any{"id": r.id, "type": "message", "role": "assistant", "model": r.model, "content": content, "stop_reason": r.stopReason, "stop_sequence": r.matchedStop(), "usage": r.usage})
+}
+
+// matchedStop is the stop sequence the response ended at, or null.
+func (r *garStream) matchedStop() any {
+	if r.stopReason != "stop_sequence" {
+		return nil
+	}
+	return r.stopSequence
 }
 
 func (r *garStream) emit(event string, value any) {
@@ -282,12 +300,65 @@ func (r *garStream) truncate() error {
 	return r.finish()
 }
 
+// end ends the response before Kiro does, for a reason Kiro could not act on
+// (a stop sequence, a single tool call): the upstream is closed and the
+// response stops as Anthropic's would.
+func (r *garStream) end(reason string) error {
+	r.terminal, r.stopReason = true, reason
+	_ = r.source.Close()
+	return r.finish()
+}
+
 func (r *garStream) text(kind, text string) error {
 	if text == "" {
 		return nil
 	}
 	if !r.fits(text, 0) {
 		return r.truncate()
+	}
+	if kind == "text" && len(r.meter.stops) > 0 {
+		// Text that may begin a stop sequence waits for the next delta; a
+		// sequence only ends the text block it is in.
+		pending := r.held + text
+		r.held = ""
+		at, stop := -1, ""
+		for _, sequence := range r.meter.stops {
+			if i := strings.Index(pending, sequence); i >= 0 && (at < 0 || i < at) {
+				at, stop = i, sequence
+			}
+		}
+		if at >= 0 {
+			if err := r.send(kind, pending[:at]); err != nil {
+				return err
+			}
+			r.stopSequence = stop
+			return r.end("stop_sequence")
+		}
+		keep := 0
+		for _, sequence := range r.meter.stops {
+			for n := min(len(sequence)-1, len(pending)); n > keep; n-- {
+				if strings.HasSuffix(pending, sequence[:n]) {
+					keep = n
+					break
+				}
+			}
+		}
+		held := pending[len(pending)-keep:]
+		text = pending[:len(pending)-keep]
+		if held != "" {
+			// Held text belongs to the open text block, which sends it when
+			// it ends without the sequence.
+			r.openText(kind)
+		}
+		r.held = held
+	}
+	return r.send(kind, text)
+}
+
+// send adds text to the open text or thinking block, opening one as needed.
+func (r *garStream) send(kind, text string) error {
+	if text == "" {
+		return nil
 	}
 	if r.textIndex >= 0 && r.blocks[r.textIndex].signature.Len() > 0 {
 		r.closeText()
@@ -351,9 +422,22 @@ func (r *garStream) closeBlock(index int) {
 
 func (r *garStream) closeText() {
 	if r.textIndex >= 0 {
+		r.flushHeld()
 		r.closeBlock(r.textIndex)
 		r.textIndex = -1
 	}
+}
+
+// flushHeld sends the text held for a stop sequence once its block ends
+// without one.
+func (r *garStream) flushHeld() {
+	held := r.held
+	r.held = ""
+	if held == "" || r.textIndex < 0 || r.blocks[r.textIndex].kind != "text" {
+		return
+	}
+	r.blocks[r.textIndex].text.WriteString(held)
+	r.emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": r.textIndex, "delta": map[string]string{"type": "text_delta", "text": held}})
 }
 
 func (r *garStream) tool(event gjson.Result) error {
@@ -375,6 +459,9 @@ func (r *garStream) tool(event gjson.Result) error {
 	if !exists {
 		if id == "" || name == "" {
 			return errIncomplete
+		}
+		if r.meter.oneTool && len(r.toolIndex) > 0 {
+			return r.end("tool_use")
 		}
 		if !r.fits(name, claudeToolUseTokens) {
 			return r.truncate()
@@ -404,6 +491,9 @@ func (r *garStream) tool(event gjson.Result) error {
 			return err
 		}
 		r.closeBlock(index)
+		if r.meter.oneTool {
+			return r.end("tool_use")
+		}
 	}
 	return nil
 }
@@ -427,6 +517,7 @@ func (r *garStream) finish() error {
 		return errIncomplete
 	}
 	r.start()
+	r.flushHeld()
 	var text []string
 	for i, block := range r.blocks {
 		switch block.kind {
@@ -455,7 +546,7 @@ func (r *garStream) finish() error {
 		output = min(output, r.meter.limit)
 	}
 	r.usage = map[string]int{"input_tokens": r.meter.prompt, "output_tokens": output}
-	r.emit("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": r.stopReason, "stop_sequence": nil}, "usage": r.usage})
+	r.emit("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": r.stopReason, "stop_sequence": r.matchedStop()}, "usage": r.usage})
 	r.emit("message_stop", map[string]string{"type": "message_stop"})
 	r.done = true
 	return nil

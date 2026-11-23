@@ -3,6 +3,7 @@ package kiro
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"math"
 	"mime"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +24,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -30,6 +33,7 @@ import (
 	"github.com/QuantumNous/new-api/tokenkit"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 // ChannelName names the adaptor.
@@ -56,6 +60,14 @@ const claudeToolUseTokens = 40
 // prepareTimeout bounds the catalog and profile lookups of one attempt.
 const prepareTimeout = 15 * time.Second
 
+// estimatedFileTokens is what the request estimate counts for a file that is
+// not an image (service.CountRequestToken).
+const estimatedFileTokens = 4096
+
+// maxCountedPages bounds the pages counted for one PDF, whose page count the
+// file states; Anthropic reads at most 600.
+const maxCountedPages = 1000
+
 // Adaptor serves one attempt on a Kiro channel. It renews the channel's
 // credential and reads the account's catalog before converting, because the
 // model's request schema and the account's features decide how a request is
@@ -70,6 +82,9 @@ type Adaptor struct {
 	runtime    string
 	model      Model
 	prompt     int
+	// pdfInput is what the request's PDFs cost beyond the estimate's flat
+	// file count.
+	pdfInput int
 
 	// generate reports GenerateAssistantResponse; otherwise the attempt goes
 	// to CreateResponse.
@@ -77,6 +92,10 @@ type Adaptor struct {
 	// outputCap is the client's output cap where Kiro cannot enforce it; the
 	// relay then ends the response at it. Zero is no cap.
 	outputCap int
+	// stops and oneTool end a GenerateAssistantResponse where the client's
+	// stop sequences and tool choice ask, which Kiro cannot.
+	stops   []string
+	oneTool bool
 	// renewedAfterRefusal reports an attempt that already renewed its access
 	// token after the Runtime refused it.
 	renewedAfterRefusal bool
@@ -166,9 +185,13 @@ func (a *Adaptor) prepare(c *gin.Context, info *relaycommon.RelayInfo) *types.Ne
 	a.prompt = info.GetEstimatePromptTokens()
 	if a.prompt == 0 && info.Request != nil {
 		if meta := info.Request.GetTokenCountMeta(); meta != nil {
-			if n, err := service.CountRequestToken(c, meta, info); err == nil {
-				a.prompt = n
+			// Settled on this count, so a request it cannot count fails
+			// rather than going unbilled.
+			n, err := service.CountRequestToken(c, meta, info)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeCountTokenFailed, types.ErrOptionWithSkipRetry())
 			}
+			a.prompt = n
 		}
 	}
 	return nil
@@ -254,16 +277,104 @@ func clientError(err error) error {
 	return err
 }
 
-func (a *Adaptor) generateBody(info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {
+// standardService takes out the options that choose a speed, a service tier
+// or where inference runs, of which Kiro offers one each and says nothing
+// about the region. Like any channel, Kiro drops them unless the channel lets
+// them through (allow_speed, allow_service_tier, allow_inference_geo), and
+// drops a value it gives anyway (standard speed, the auto, default or
+// standard tier, global inference). Any other is refused rather than served
+// and billed as a service Kiro did not give.
+func standardService(members map[string]json.RawMessage, settings dto.ChannelOtherSettings) error {
+	for _, option := range []struct {
+		name, reason string
+		allowed      bool
+		given        []string
+	}{
+		{"speed", "Kiro has no fast mode", settings.AllowSpeed, []string{"standard"}},
+		{"service_tier", "Kiro has one service tier", settings.AllowServiceTier, []string{"auto", "default", "standard_only"}},
+		{"inference_geo", "Kiro does not say where inference runs", settings.AllowInferenceGeo, []string{"global"}},
+	} {
+		raw, ok := members[option.name]
+		if !ok {
+			continue
+		}
+		if value := gjson.ParseBytes(raw); option.allowed && value.Type != gjson.Null && !slices.Contains(option.given, value.Str) {
+			return fieldError{option.name + " " + strconv.Quote(value.Str) + ": " + option.reason}
+		}
+		delete(members, option.name)
+	}
+	return nil
+}
+
+// pdfData lists the base64 PDFs of a request, as Anthropic document blocks
+// or Responses input files, wherever they are.
+func pdfData(value gjson.Result, found []string) []string {
+	switch {
+	case value.IsArray():
+		for _, item := range value.Array() {
+			found = pdfData(item, found)
+		}
+	case value.IsObject():
+		source := value.Get("source")
+		if value.Get("type").Str == "document" && source.Get("type").Str == "base64" && source.Get("media_type").Str == "application/pdf" {
+			return append(found, source.Get("data").Str)
+		}
+		if data, ok := strings.CutPrefix(value.Get("file_data").Str, "data:application/pdf;base64,"); ok && value.Get("type").Str == "input_file" {
+			return append(found, data)
+		}
+		value.ForEach(func(_, member gjson.Result) bool {
+			found = pdfData(member, found)
+			return true
+		})
+	}
+	return found
+}
+
+// countPDFInput counts what the PDFs of a request's messages or input cost
+// beyond the flat file count of the request estimate, which is the input a
+// Kiro request settles on. The model reads a page as its text and as an
+// image (Kiro answers about drawings on a page): a page counts its text and
+// one image of unknown size. A PDF counts no less than the flat estimate, and
+// one that cannot be read cannot be billed, so the request fails.
+func (a *Adaptor) countPDFInput(c *gin.Context, info *relaycommon.RelayInfo, value gjson.Result) error {
+	a.pdfInput = 0
+	for _, data := range pdfData(value, nil) {
+		raw, err := base64.StdEncoding.DecodeString(data)
+		if err != nil {
+			return clientError(fieldError{"PDF data: it is not base64"})
+		}
+		content, err := requestplugin.ReadPDF(c.Request.Context(), raw)
+		if err != nil {
+			return types.NewErrorWithStatusCode(fmt.Errorf("Kiro channel could not read a PDF to count its tokens: %w", err), types.ErrorCodeCountTokenFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		pages := min(content.Pages, maxCountedPages)
+		text := tokenkit.Count(info.UpstreamModelName, content.Text)
+		if content.ReadPages < pages {
+			text = text / content.ReadPages * pages
+		}
+		a.pdfInput += max(0, text+pages*tokenkit.ImageTokens(info.UpstreamModelName, tokenkit.Image{})-estimatedFileTokens)
+	}
+	return nil
+}
+
+func (a *Adaptor) generateBody(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {
 	members, err := fields(request)
 	if err != nil {
 		return nil, err
+	}
+	if err := standardService(members, info.ChannelOtherSettings); err != nil {
+		return nil, clientError(err)
 	}
 	body, err := generateAssistantResponse(members, a.credential.ProfileArn, a.scope(info), a.model)
 	if err != nil {
 		return nil, clientError(err)
 	}
+	if err := a.countPDFInput(c, info, gjson.ParseBytes(members["messages"])); err != nil {
+		return nil, err
+	}
 	a.generate = true
+	a.stops = request.StopSequences
+	a.oneTool = gjson.GetBytes(members["tool_choice"], "disable_parallel_tool_use").Bool()
 	// Kiro caps output only for a model whose schema takes max_tokens, and
 	// never below the schema's minimum; the relay ends the response at any
 	// smaller cap the client asked for.
@@ -277,14 +388,20 @@ func (a *Adaptor) generateBody(info *relaycommon.RelayInfo, request *dto.ClaudeR
 	return body, nil
 }
 
-func (a *Adaptor) responseBody(info *relaycommon.RelayInfo, request *dto.OpenAIResponsesRequest) (any, error) {
+func (a *Adaptor) responseBody(c *gin.Context, info *relaycommon.RelayInfo, request *dto.OpenAIResponsesRequest) (any, error) {
 	members, err := fields(request)
 	if err != nil {
 		return nil, err
 	}
+	if err := standardService(members, info.ChannelOtherSettings); err != nil {
+		return nil, clientError(err)
+	}
 	body, err := createResponse(members, a.credential.ProfileArn, a.scope(info), a.model)
 	if err != nil {
 		return nil, clientError(err)
+	}
+	if err := a.countPDFInput(c, info, gjson.ParseBytes(members["input"])); err != nil {
+		return nil, err
 	}
 	a.generate = false
 	// CreateResponse has no output cap; the relay ends the response at the
@@ -303,13 +420,15 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if err := a.PrepareAttempt(c, info); err != nil {
 		return nil, err
 	}
-	if request.Stop != nil {
-		return nil, clientError(fieldError{"stop"})
-	}
 	if request.ResponseFormat != nil && request.ResponseFormat.Type != "" && request.ResponseFormat.Type != "text" {
 		return nil, clientError(fieldError{"response_format"})
 	}
 	if !a.model.TakesOutputLimit() {
+		// The relay ends a GenerateAssistantResponse at a stop sequence; a
+		// CreateResponse has no stop at all.
+		if request.Stop != nil {
+			return nil, clientError(fieldError{"stop: Kiro serves " + a.model.ID + " through CreateResponse, which cannot stop at a sequence"})
+		}
 		result, err := service.ConvertRequestByID(c, info, relayconvert.ConverterOpenAIChatToOpenAIResponses, request)
 		if err != nil {
 			return nil, err
@@ -318,7 +437,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		if !ok {
 			return nil, fmt.Errorf("expected OpenAI Responses request, got %T", result.Value)
 		}
-		return a.responseBody(info, responsesRequest)
+		return a.responseBody(c, info, responsesRequest)
 	}
 	// Kiro has no sampling controls, and the Messages conversion would refuse
 	// them next to the model's thinking.
@@ -345,14 +464,14 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		// ceiling applies.
 		claudeRequest.MaxTokens = nil
 	}
-	return a.generateBody(info, claudeRequest)
+	return a.generateBody(c, info, claudeRequest)
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {
 	if err := a.PrepareAttempt(c, info); err != nil {
 		return nil, err
 	}
-	return a.generateBody(info, request)
+	return a.generateBody(c, info, request)
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
@@ -372,7 +491,7 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 			request.Instructions = marshalRaw(prompt + "\n" + existing)
 		}
 	}
-	return a.responseBody(info, &request)
+	return a.responseBody(c, info, &request)
 }
 
 func (a *Adaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dto.GeminiChatRequest) (any, error) {
@@ -500,7 +619,7 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 	}
 	var body []byte
 	if a.generate {
-		meter := garMeter{prompt: a.prompt, limit: a.outputCap, output: func(text string, toolUses int) int {
+		meter := garMeter{prompt: a.prompt + a.pdfInput, limit: a.outputCap, stops: a.stops, oneTool: a.oneTool, output: func(text string, toolUses int) int {
 			return service.ResponseText2Usage(c, text, info.UpstreamModelName, a.prompt).CompletionTokens + toolUses*claudeToolUseTokens
 		}, count: func(text string) int {
 			return tokenkit.Estimate(info.UpstreamModelName, text)
@@ -512,7 +631,7 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 		}
 		body, err = newGARStream(resp.Body, info.UpstreamModelName, false, meter, maxBytes).message()
 	} else {
-		meter := responsesMeter{prompt: a.prompt, limit: a.outputCap, output: func(text string) int {
+		meter := responsesMeter{prompt: a.prompt + a.pdfInput, limit: a.outputCap, output: func(text string) int {
 			common.SetContextKey(c, constant.ContextKeyLocalCountTokens, true)
 			return tokenkit.Count(info.UpstreamModelName, text)
 		}, count: func(text string) int {

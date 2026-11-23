@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"hash/crc32"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +28,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/tokenkit"
 
 	"github.com/gin-gonic/gin"
 
@@ -282,7 +286,7 @@ func TestClaudeCodeSystemMessages(t *testing.T) {
 }
 
 func TestRefusedOptions(t *testing.T) {
-	for _, extra := range []string{`"stop_sequences":["x"]`, `"output_format":{"type":"json_schema"}`} {
+	for _, extra := range []string{`"stop_sequences":[""]`, `"output_format":{"type":"json_schema"}`} {
 		fields := members(t, `{"model":"m","messages":[{"role":"user","content":"hi"}],`+extra+`}`)
 		_, err := generateAssistantResponse(fields, testProfile, "scope", Model{})
 		assert.Error(t, err, extra)
@@ -1170,4 +1174,251 @@ func TestChannelUsage(t *testing.T) {
 		assert.Equal(t, tc.want, message(err), tc.name)
 	}
 	assert.Equal(t, "usage-live", storedKey(t, channel.Id).AccessToken, "a refusal of the account keeps the token")
+}
+
+// testPDF is a base64 PDF of pages pages, each with one line of text.
+func testPDF(pages int) string {
+	objects := []string{"<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"}
+	var kids []string
+	for page := range pages {
+		content := fmt.Sprintf("BT /F1 12 Tf 72 720 Td (Page %d says hello) Tj ET", page+1)
+		kids = append(kids, fmt.Sprintf("%d 0 R", len(objects)+1))
+		objects = append(objects,
+			fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents %d 0 R /Resources << /Font << /F1 3 0 R >> >> >>", len(objects)+2),
+			fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content))
+	}
+	objects[1] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), pages)
+	var file strings.Builder
+	file.WriteString("%PDF-1.4\n")
+	var offsets []int
+	for i, object := range objects {
+		offsets = append(offsets, file.Len())
+		fmt.Fprintf(&file, "%d 0 obj\n%s\nendobj\n", i+1, object)
+	}
+	xref := file.Len()
+	fmt.Fprintf(&file, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
+	for _, offset := range offsets {
+		fmt.Fprintf(&file, "%010d 00000 n \n", offset)
+	}
+	fmt.Fprintf(&file, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
+	return base64.StdEncoding.EncodeToString([]byte(file.String()))
+}
+
+// visionModel is a Kiro Claude model that reads images, as the catalog lists
+// claude-haiku-5.5.
+var visionModel = Model{ID: "claude-haiku-5.5", Inputs: []string{"TEXT", "IMAGE"}, Schema: json.RawMessage(`{"properties":{"max_tokens":{"minimum":1024}}}`)}
+
+// Claude Code reads image and PDF files into tool results, the user pastes
+// screenshots, and a response that thought again between its tool calls
+// comes back with two thinking blocks. Kiro ignores media inside a tool
+// result, so it goes on the turn that carries the result, and it replays one
+// reasoning block per turn, so the first one stays.
+func TestClaudeCodeMediaAndThinking(t *testing.T) {
+	png, jpeg := `{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}`, `{"type":"base64","media_type":"image/jpeg","data":"/9j/4AAQ"}`
+	pdf := `{"type":"base64","media_type":"application/pdf","data":"` + testPDF(1) + `"}`
+	conversation := `{"model":"m","messages":[
+		{"role":"user","content":[{"type":"image","source":` + png + `},{"type":"text","text":"what is wrong here?"}]},
+		{"role":"assistant","content":[{"type":"thinking","thinking":"t1","signature":"s1"},{"type":"text","text":"Reading both."},
+			{"type":"thinking","thinking":"t2","signature":"s2"},
+			{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"a.jpg"}},{"type":"tool_use","id":"toolu_2","name":"Read","input":{"file_path":"b.pdf"}}]},
+		{"role":"user","content":[
+			{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"Read image"},{"type":"image","source":` + jpeg + `}]},
+			{"type":"tool_result","tool_use_id":"toolu_2","content":[{"type":"document","source":` + pdf + `}]},
+			{"type":"document","title":"Notes","source":{"type":"text","media_type":"text/plain","data":"my notes"}}]}],
+		"tools":[{"name":"Read","input_schema":{"type":"object"}}]}`
+	body, err := generateAssistantResponse(members(t, conversation), testProfile, "scope", visionModel)
+	require.NoError(t, err)
+	state := marshalJSON(t, body).Get("conversationState")
+	first := state.Get("history.0.userInputMessage")
+	assert.Equal(t, "what is wrong here?", first.Get("content").Str)
+	assert.JSONEq(t, `[{"format":"png","source":{"bytes":"iVBORw0KGgo="}}]`, first.Get("images").Raw)
+	assistant := state.Get("history.1.assistantResponseMessage")
+	assert.JSONEq(t, `{"reasoningText":{"text":"t1","signature":"s1"}}`, assistant.Get("reasoningContent").Raw)
+	assert.Len(t, assistant.Get("toolUses").Array(), 2)
+	current := state.Get("currentMessage.userInputMessage")
+	assert.Equal(t, "Notes\n\nmy notes", current.Get("content").Str)
+	assert.JSONEq(t, `[{"format":"jpeg","source":{"bytes":"/9j/4AAQ"}}]`, current.Get("images").Raw)
+	assert.Equal(t, "document-1", current.Get("documents.0.name").Str)
+	assert.Equal(t, "pdf", current.Get("documents.0.format").Str)
+	assert.Equal(t, "Read image\n[The image this result returned is attached to this message.]", current.Get("userInputMessageContext.toolResults.0.content.0.text").Str)
+	assert.Equal(t, "[The document this result returned is attached to this message.]", current.Get("userInputMessageContext.toolResults.1.content.0.text").Str)
+
+	textOnly := visionModel
+	textOnly.Inputs = []string{"TEXT"}
+	_, err = generateAssistantResponse(members(t, conversation), testProfile, "scope", textOnly)
+	assert.ErrorContains(t, err, "reads text only")
+	for refused, reason := range map[string]string{
+		`{"type":"url","url":"https://example.com/a.png"}`:          "send it as base64",
+		`{"type":"file","file_id":"file_1"}`:                        "Files API",
+		`{"type":"base64","media_type":"image/heic","data":"AA=="}`: "JPEG, PNG, GIF and WebP",
+	} {
+		_, err := generateAssistantResponse(members(t, `{"model":"m","messages":[{"role":"user","content":[{"type":"image","source":`+refused+`}]}]}`), testProfile, "scope", visionModel)
+		assert.ErrorContains(t, err, reason, refused)
+	}
+
+	// Responses: images and PDF files go as data URLs; what a function call
+	// returned follows the call's output in a user message.
+	image := `{"type":"input_image","image_url":"data:image/png;base64,iVBORw0KGgo="}`
+	request, err := createResponse(members(t, `{"model":"m","input":[
+		{"role":"user","content":[{"type":"input_text","text":"compare"},`+image+`,{"type":"input_file","filename":"a.pdf","file_data":"data:application/pdf;base64,`+testPDF(1)+`"}]},
+		{"type":"function_call","call_id":"c1","name":"screenshot","arguments":"{}"},
+		{"type":"function_call_output","call_id":"c1","output":[{"type":"input_text","text":"shot"},`+image+`]}]}`), testProfile, "scope", visionModel)
+	require.NoError(t, err)
+	input := marshalJSON(t, request["input"])
+	assert.Equal(t, "shot\n[The image this call returned follows in the next message.]", input.Get("2.output").Str)
+	assert.Equal(t, "user", input.Get("3.role").Str)
+	assert.JSONEq(t, `[`+image+`]`, input.Get("3.content").Raw)
+	_, err = createResponse(members(t, `{"model":"m","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/a.png"}]}]}`), testProfile, "scope", visionModel)
+	assert.ErrorContains(t, err, "data URLs")
+}
+
+// Kiro has no tool choice or stop sequences. What the relay can carry out
+// passes (auto with one call at most, none, stop sequences); a forced call,
+// which nothing can make happen, is refused with the reason, as are server
+// tools such as web_search.
+func TestClaudeCodeToolChoiceAndStops(t *testing.T) {
+	ask := `{"role":"user","content":"read it"}`
+	history := ask + `,{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]}`
+	legacy := Model{ID: "claude-haiku-4.5", Inputs: []string{"TEXT", "IMAGE"}}
+	cases := []struct {
+		name, extra, messages string
+		model                 Model
+		tools                 int
+		refused               string
+	}{
+		{name: "auto without parallel calls", extra: `"tool_choice":{"type":"auto","disable_parallel_tool_use":true}`, messages: ask, model: visionModel, tools: 1},
+		{name: "none", extra: `"tool_choice":{"type":"none"}`, messages: history, model: visionModel},
+		{name: "none on a model that needs its tools", extra: `"tool_choice":{"type":"none"}`, messages: history, model: legacy, refused: "needs this model's tools declared"},
+		{name: "none before any tool call", extra: `"tool_choice":{"type":"none"}`, messages: ask, model: legacy},
+		{name: "any", extra: `"tool_choice":{"type":"any"}`, messages: ask, model: visionModel, refused: "cannot force a tool call"},
+		{name: "a named tool", extra: `"tool_choice":{"type":"tool","name":"Read"}`, messages: ask, model: visionModel, refused: "cannot force a tool call"},
+		{name: "stop sequences", extra: `"stop_sequences":["</block>","</severity>"]`, messages: ask, model: visionModel, tools: 1},
+		{name: "web search", extra: `"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":8}]`, messages: ask, model: visionModel, refused: `server tool "web_search_20250305"`},
+	}
+	for _, tc := range cases {
+		raw := `{"model":"m","messages":[` + tc.messages + `],` + tc.extra
+		if !strings.Contains(tc.extra, `"tools"`) {
+			raw += `,"tools":[{"name":"Read","input_schema":{"type":"object"}}]`
+		}
+		body, err := generateAssistantResponse(members(t, raw+`}`), testProfile, "scope", tc.model)
+		if tc.refused != "" {
+			assert.ErrorContains(t, err, tc.refused, tc.name)
+			continue
+		}
+		require.NoError(t, err, tc.name)
+		assert.Len(t, marshalJSON(t, body).Get("conversationState.currentMessage.userInputMessage.userInputMessageContext.tools").Array(), tc.tools, tc.name)
+	}
+
+	// speed, service_tier and inference_geo: dropped where the channel filters
+	// them, as on any channel, or where Kiro gives the value anyway.
+	for _, tc := range []struct {
+		option   string
+		settings dto.ChannelOtherSettings
+		refused  bool
+	}{
+		{`"speed":"fast"`, dto.ChannelOtherSettings{}, false},
+		{`"speed":"fast"`, dto.ChannelOtherSettings{AllowSpeed: true}, true},
+		{`"speed":"standard"`, dto.ChannelOtherSettings{AllowSpeed: true}, false},
+		{`"service_tier":"auto"`, dto.ChannelOtherSettings{AllowServiceTier: true}, false},
+		{`"service_tier":"priority"`, dto.ChannelOtherSettings{AllowServiceTier: true}, true},
+		{`"inference_geo":"us"`, dto.ChannelOtherSettings{}, false},
+		{`"inference_geo":"us"`, dto.ChannelOtherSettings{AllowInferenceGeo: true}, true},
+		{`"inference_geo":"global"`, dto.ChannelOtherSettings{AllowInferenceGeo: true}, false},
+	} {
+		fields := members(t, `{"model":"m","messages":[`+ask+`],`+tc.option+`}`)
+		err := standardService(fields, tc.settings)
+		if tc.refused {
+			assert.Error(t, err, tc.option)
+			continue
+		}
+		require.NoError(t, err, tc.option)
+		_, err = generateAssistantResponse(fields, testProfile, "scope", visionModel)
+		assert.NoError(t, err, tc.option)
+	}
+}
+
+// The relay ends the response at the first stop sequence in its text, which
+// may span deltas, and after the first tool call when parallel calls are
+// disabled. Output is counted on what the client received.
+func TestGenerateAssistantResponseLocalStops(t *testing.T) {
+	events := func(frames ...[2]string) []byte {
+		var body bytes.Buffer
+		body.Write(eventFrame(t, "event", "initial-response", `{"conversationId":""}`))
+		for _, frame := range frames {
+			body.Write(eventFrame(t, "event", frame[0], frame[1]))
+		}
+		body.Write(eventFrame(t, "event", "metadataEvent", `{"stopReason":"END_TURN"}`))
+		return body.Bytes()
+	}
+	text := func(s string) [2]string {
+		return [2]string{"assistantResponseEvent", `{"content":` + strconv.Quote(s) + `}`}
+	}
+	tool := func(id, frame string) [2]string {
+		return [2]string{"toolUseEvent", `{"name":"Read","toolUseId":"` + id + `"` + frame + `}`}
+	}
+	cases := []struct {
+		name   string
+		events []byte
+		stops  []string
+		one    bool
+		// content, stop_reason and stop_sequence of the message
+		content, reason string
+		sequence        any
+		output          int64
+	}{
+		{"a sequence across deltas", events(text("safe <bl"), text("ock>no")), []string{"<block>", "</severity>"}, false,
+			`[{"type":"text","text":"safe "}]`, "stop_sequence", "<block>", 1},
+		{"a prefix that does not complete", events(text("a </b"), text("x done")), []string{"</block>"}, false,
+			`[{"type":"text","text":"a </bx done"}]`, "end_turn", nil, 3},
+		{"a held prefix at the end", events(text("<"), text("b")), []string{"<block>"}, false,
+			`[{"type":"text","text":"<b"}]`, "end_turn", nil, 1},
+		{"one tool call", events(tool("t1", ``), tool("t1", `,"input":"{}"`), tool("t1", `,"stop":true`), tool("t2", ``), tool("t2", `,"stop":true`)), nil, true,
+			`[{"type":"tool_use","id":"t1","name":"Read","input":{}}]`, "tool_use", nil, 42},
+	}
+	for _, tc := range cases {
+		meter := garTestMeter
+		meter.stops, meter.oneTool = tc.stops, tc.one
+		raw, err := newGARStream(io.NopCloser(bytes.NewReader(tc.events)), "m", false, meter, 1<<20).message()
+		require.NoError(t, err, tc.name)
+		message := gjson.ParseBytes(raw)
+		assert.JSONEq(t, tc.content, message.Get("content").Raw, tc.name)
+		assert.Equal(t, tc.reason, message.Get("stop_reason").Str, tc.name)
+		assert.Equal(t, tc.sequence, message.Get("stop_sequence").Value(), tc.name)
+		assert.Equal(t, tc.output, message.Get("usage.output_tokens").Int(), tc.name)
+
+		stream, err := io.ReadAll(newGARStream(io.NopCloser(bytes.NewReader(tc.events)), "m", true, meter, 0))
+		require.NoError(t, err, tc.name)
+		var sent strings.Builder
+		for line := range strings.SplitSeq(string(stream), "\n") {
+			if data, ok := strings.CutPrefix(line, "data: "); ok {
+				sent.WriteString(gjson.Get(data, "delta.text").Str)
+			}
+		}
+		assert.Equal(t, message.Get("content.0.text").Str, sent.String(), tc.name)
+		final := gjson.Parse(strings.TrimPrefix(strings.Split(strings.SplitAfter(string(stream), "event: message_delta\n")[1], "\n")[0], "data: "))
+		assert.Equal(t, tc.sequence, final.Get("delta.stop_sequence").Value(), tc.name)
+	}
+}
+
+// A Kiro request settles on its input estimate, which counts every file as a
+// flat 4,096 tokens. A PDF counts its pages as images and its text instead,
+// never less than the flat count; one that cannot be read cannot be billed.
+func TestPDFInputCount(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "claude-haiku-5.5"}}
+	page := tokenkit.ImageTokens(info.UpstreamModelName, tokenkit.Image{})
+	document := func(data string) gjson.Result {
+		return gjson.Parse(`[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"` + data + `"}}]}]}]`)
+	}
+	a := &Adaptor{}
+	require.NoError(t, a.countPDFInput(c, info, document(testPDF(1))))
+	assert.Zero(t, a.pdfInput, "one page stays within the flat count")
+	require.NoError(t, a.countPDFInput(c, info, document(testPDF(8))))
+	assert.Greater(t, a.pdfInput, 8*page-estimatedFileTokens)
+	assert.Less(t, a.pdfInput, 8*page-estimatedFileTokens+100)
+	err := a.countPDFInput(c, info, document(base64.StdEncoding.EncodeToString([]byte("not a pdf"))))
+	var apiErr *types.NewAPIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, types.ErrorCodeCountTokenFailed, apiErr.GetErrorCode())
 }
