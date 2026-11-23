@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/kiro"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -637,9 +638,13 @@ func GetChannelKey(c *gin.Context) {
 	})
 
 	// 返回渠道密钥
-	// A plugin credential shows as its summary, never its secrets.
+	// A plugin or Kiro credential shows as its summary, never its secrets.
+	key := jsplugin.RedactCredentialLines(channel.Key)
+	if channel.Type == constant.ChannelTypeKiro {
+		key = kiro.KeySummary(channel.Key)
+	}
 	common.ApiSuccessT(c, "Fetched successfully", channelKeyResponse{
-		Key: jsplugin.RedactCredentialLines(channel.Key),
+		Key: key,
 	})
 }
 
@@ -805,6 +810,24 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		case "", "v1", "v1beta1":
 		default:
 			return common.NewMessage("Vertex AI API version must be v1 or v1beta1")
+		}
+	}
+
+	// A Kiro channel holds one credential, which its refresh renews in place.
+	if channel.Type == constant.ChannelTypeKiro {
+		if channel.ChannelInfo.IsMultiKey {
+			return common.NewMessage("A Kiro channel holds one credential; add more credentials as separate channels")
+		}
+		if isAdd || strings.TrimSpace(channel.Key) != "" {
+			key, err := kiro.NormalizeKey(channel.Key)
+			if err != nil {
+				return common.NewMessage("The Kiro credential must be a JSON object with a method and the fields that method needs")
+			}
+			// Only a batch creation takes one credential per line.
+			if !isAdd && strings.Contains(key, "\n") {
+				return common.NewMessage("A Kiro channel holds one credential; add more credentials as separate channels")
+			}
+			channel.Key = key
 		}
 	}
 
@@ -981,6 +1004,12 @@ func AddChannel(c *gin.Context) {
 	keyless := strings.TrimSpace(addChannelRequest.Channel.Key) == "" && service.ChannelSupportsPluginLogin(addChannelRequest.Channel)
 	if keyless && addChannelRequest.Mode == "batch" {
 		common.ApiError(c, fmt.Errorf("channel cannot be empty"))
+		return
+	}
+
+	if addChannelRequest.Channel.Type == constant.ChannelTypeKiro &&
+		(addChannelRequest.Mode == "multi_to_single" || addChannelRequest.Mode != "batch" && strings.Contains(addChannelRequest.Channel.Key, "\n")) {
+		common.ApiErrorT(c, "A Kiro channel holds one credential; add more credentials as separate channels")
 		return
 	}
 
@@ -1537,6 +1566,33 @@ func UpdateChannel(c *gin.Context) {
 	if keptType == 0 {
 		keptType = originChannel.Type
 	}
+	// A Kiro channel holds one Kiro credential, also when an edit makes a
+	// channel one, and validateChannel saw no type when the edit sent none.
+	if keptType == constant.ChannelTypeKiro {
+		if originChannel.ChannelInfo.IsMultiKey {
+			common.ApiErrorT(c, "A Kiro channel holds one credential; add more credentials as separate channels")
+			return
+		}
+		if keyChanged {
+			key, err := kiro.NormalizeKey(requestedKey)
+			if err != nil {
+				common.ApiErrorT(c, "The Kiro credential must be a JSON object with a method and the fields that method needs")
+				return
+			}
+			if strings.Contains(key, "\n") {
+				common.ApiErrorT(c, "A Kiro channel holds one credential; add more credentials as separate channels")
+				return
+			}
+			channel.Key, requestedKey, keptKey = key, key, key
+			keyChanged = key != originChannel.Key
+			if !keyChanged {
+				keptKey = originChannel.Key
+			}
+		} else if _, err := kiro.ParseCredential(originChannel.Key); err != nil {
+			common.ApiErrorT(c, "The Kiro credential must be a JSON object with a method and the fields that method needs")
+			return
+		}
+	}
 	if !settingProvided {
 		keptPluginKey = originChannel.GetSetting().TaskPluginKey
 	}
@@ -1601,6 +1657,10 @@ func UpdateChannel(c *gin.Context) {
 	}
 	if keyChanged {
 		service.RevokeRemovedChannelCredentials(originChannel, keyBefore, keyAfter)
+	}
+	if keyChanged && keptType == constant.ChannelTypeKiro {
+		// The cooldowns of the replaced credential do not hold for the new one.
+		model.ClearChannelRateLimits(channel.Id, slices.Concat(originChannel.GetModels(), channel.GetModels()))
 	}
 	// 记录变更的字段名（语言无关的字段标识），密钥仅记录"已更换"绝不记录内容。
 	changedFields := make([]string, 0)
@@ -1881,7 +1941,7 @@ func FetchModels(c *gin.Context) {
 		}
 
 		key := strings.TrimSpace(req.Key)
-		if req.Type != constant.ChannelTypeCodex {
+		if req.Type != constant.ChannelTypeCodex && req.Type != constant.ChannelTypeKiro {
 			key = strings.Split(key, "\n")[0]
 		}
 		channel = &model.Channel{

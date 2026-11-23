@@ -34,6 +34,15 @@ type Adaptor interface {
 	ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error)
 }
 
+// AttemptPreparer is an adaptor that must reach its provider before it can
+// convert a request, such as to renew its channel's credential or read the
+// account's model catalog. The relay calls it before the conversion, and its
+// error fails the attempt as it is, so routing can move on to another
+// channel; a conversion error would end the request instead.
+type AttemptPreparer interface {
+	PrepareAttempt(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError
+}
+
 // ResponsesRequestFinalizer applies provider-specific rules to the effective
 // JSON request after channel parameter overrides. Passthrough bypasses this hook.
 type ResponsesRequestFinalizer interface {

@@ -3,8 +3,10 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -230,4 +232,67 @@ func TestAddChannelPanicRollsBackWithoutSuccess(t *testing.T) {
 	require.NoError(t, database.Model(&model.Ability{}).Count(&abilities).Error)
 	assert.Zero(t, channels)
 	assert.Zero(t, abilities)
+}
+
+// A Kiro channel holds one credential, which its refresh renews in place: no
+// creation or edit makes one hold several, or a credential of another kind,
+// and saving a new credential ends the cooldowns of the old one.
+func TestKiroChannelHoldsOneCredential(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	const credential = `{"method":"social","refreshToken":"r"}`
+	const other = `{"method":"social","refreshToken":"s"}`
+	succeeded := func(t *testing.T, recorder *httptest.ResponseRecorder) bool {
+		t.Helper()
+		require.Equal(t, http.StatusOK, recorder.Code)
+		var result struct {
+			Success bool `json:"success"`
+		}
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &result))
+		return result.Success
+	}
+	add := func(t *testing.T, mode, key string) bool {
+		t.Helper()
+		request, err := common.Marshal(AddChannelRequest{Mode: mode, Channel: &model.Channel{Name: "kiro-" + mode, Type: constant.ChannelTypeKiro, Key: key, Models: "claude-haiku-5.5", Group: "default"}})
+		require.NoError(t, err)
+		return succeeded(t, postAddChannel(t, rootID, common.RoleRootUser, string(request)))
+	}
+	update := func(t *testing.T, patch map[string]any) bool {
+		t.Helper()
+		request, err := common.Marshal(patch)
+		require.NoError(t, err)
+		return succeeded(t, putUpdateChannel(t, rootID, common.RoleRootUser, string(request)))
+	}
+
+	assert.False(t, add(t, "multi_to_single", credential), "one credential as a multi-key channel")
+	assert.False(t, add(t, "single", credential+"\n"+other))
+	require.True(t, add(t, "batch", credential+"\n\n"+other))
+	var created []model.Channel
+	require.NoError(t, model.DB.Where("type = ?", constant.ChannelTypeKiro).Order("id").Find(&created).Error)
+	require.Len(t, created, 2)
+	for _, channel := range created {
+		assert.False(t, channel.ChannelInfo.IsMultiKey)
+	}
+	assert.Equal(t, credential, created[0].Key)
+
+	kiro := created[0]
+	assert.False(t, update(t, map[string]any{"id": kiro.Id, "type": constant.ChannelTypeKiro, "key": credential + "\n" + other}))
+	assert.False(t, update(t, map[string]any{"id": kiro.Id, "key": other + "\n" + credential}), "an edit that sends no type")
+
+	multi := &model.Channel{Name: "multi", Type: constant.ChannelTypeOpenAI, Key: "sk-a\nsk-b", Models: "claude-haiku-5.5", Group: "default",
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2}}
+	require.NoError(t, multi.Insert())
+	assert.False(t, update(t, map[string]any{"id": multi.Id, "type": constant.ChannelTypeKiro, "key": credential}))
+	plain := &model.Channel{Name: "plain", Type: constant.ChannelTypeOpenAI, Key: "sk-a", Models: "claude-haiku-5.5", Group: "default"}
+	require.NoError(t, plain.Insert())
+	assert.False(t, update(t, map[string]any{"id": plain.Id, "type": constant.ChannelTypeKiro}), "a Kiro channel needs a Kiro credential")
+
+	model.RecordChannelRateLimit(kiro.Id, "", "claude-haiku-5.5", time.Minute)
+	model.RecordChannelRateLimit(plain.Id, "", "claude-haiku-5.5", time.Minute)
+	require.True(t, model.IsChannelRateLimited(kiro.Id, "", "claude-haiku-5.5"))
+	require.True(t, update(t, map[string]any{"id": kiro.Id, "key": "{\n \"method\": \"social\",\n \"refreshToken\": \"t\"\n}"}))
+	stored, err := model.GetChannelById(kiro.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, `{"method":"social","refreshToken":"t"}`, stored.Key)
+	assert.False(t, model.IsChannelRateLimited(kiro.Id, "", "claude-haiku-5.5"), "the new credential starts clean")
+	assert.True(t, model.IsChannelRateLimited(plain.Id, "", "claude-haiku-5.5"), "other channels keep their cooldowns")
 }

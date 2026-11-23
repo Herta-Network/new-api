@@ -73,6 +73,11 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
 		return nil, nil, nil, types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
 	}
 	adaptor.Init(info)
+	if preparer, ok := adaptor.(relaychannel.AttemptPreparer); ok {
+		if apiErr := preparer.PrepareAttempt(c, info); apiErr != nil {
+			return nil, nil, nil, apiErr
+		}
+	}
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {

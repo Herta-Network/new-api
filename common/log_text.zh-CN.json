@@ -515,6 +515,8 @@
   "json decode failed from %s: %s": "解析 %s 返回的 JSON 失败: %s",
   "json marshal failed: %s": "JSON 序列化失败: %s",
   "keeping objects that the baseline schema does not have: %s": "保留基线结构中没有的对象: %s",
+  "kiro credential renewal failed: channel_id=%d reason=%s": "Kiro 凭证续期失败: channel_id=%d reason=%s",
+  "kiro refresh token was rotated but could not be saved: channel_id=%d; sign in to Kiro again and save a new credential": "Kiro 的 refresh token 已轮换但没能保存: channel_id=%d。原 token 已失效，请重新登录 Kiro 并保存新凭证",
   "legacy Uptime Kuma options were not migrated: %v": "旧的 Uptime Kuma 配置迁移失败: %v",
   "legacy Uptime Kuma options were not migrated: both URL and slug are required": "旧的 Uptime Kuma 配置没有迁移: URL 和 slug 都需要填写",
   "legacy option %s was not migrated: %v": "旧配置项 %s 迁移失败: %v",

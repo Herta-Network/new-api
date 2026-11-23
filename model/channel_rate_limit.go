@@ -113,6 +113,51 @@ func RecordChannelRateLimit(channelID int, keyFingerprint string, modelName stri
 	}
 }
 
+// ClearChannelRateLimits ends the cooldowns of a channel, and of its keys,
+// for modelNames: its credentials were replaced, and the new ones have not
+// failed.
+func ClearChannelRateLimits(channelID int, modelNames []string) {
+	if channelID <= 0 {
+		return
+	}
+	channelRateLimitLock.Lock()
+	defer channelRateLimitLock.Unlock()
+
+	cache := getChannelRateLimitCache()
+	now := channelRateLimitNow().UnixMilli()
+	channel := channelRateLimitTarget(channelID, "")
+	for _, modelName := range modelNames {
+		current, found, err := cache.Get(modelName)
+		if err != nil {
+			common.SysError(common.LogText("channel rate limit cache get failed: model=%s, err=%v", modelName, err))
+			continue
+		}
+		if !found {
+			continue
+		}
+		kept := channelRateLimits{}
+		latest := now
+		for target, until := range current {
+			if until <= now || target == channel || strings.HasPrefix(target, channel+"/") {
+				continue
+			}
+			kept[target] = until
+			latest = max(latest, until)
+		}
+		if len(kept) == len(current) {
+			continue
+		}
+		if len(kept) == 0 {
+			_, err = cache.DeleteMany([]string{modelName})
+		} else {
+			err = cache.SetWithTTL(modelName, kept, time.Duration(latest-now)*time.Millisecond)
+		}
+		if err != nil {
+			common.SysError(common.LogText("channel rate limit cache set failed: model=%s, err=%v", modelName, err))
+		}
+	}
+}
+
 // ChannelCooldowns is the set of targets cooling down for one model at the
 // moment it was read.
 type ChannelCooldowns struct {
