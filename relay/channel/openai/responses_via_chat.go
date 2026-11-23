@@ -2,7 +2,6 @@ package openai
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
@@ -22,7 +21,7 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 	defer service.CloseResponseBodyGracefully(resp)
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := service.ReadUpstreamBody(resp.Body)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
 	}
@@ -156,6 +155,11 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		}
 
 		info.ObserveResponseModel(chunk.Model)
+		for _, choice := range chunk.Choices {
+			if choice.FinishReason != nil && *choice.FinishReason != "" {
+				info.StreamStatus.MarkCompleted()
+			}
+		}
 		results, err := service.ConvertStreamResponseChunk(c, info, state, &chunk)
 		if err != nil {
 			if failResponsesStream(err) {
@@ -180,9 +184,17 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			}
 		}
 	})
+	info.StreamStatus.RequireTerminal()
 
 	if streamErr != nil {
 		return nil, streamErr
+	}
+	// Without a finish_reason or [DONE] the upstream did not finish:
+	// finalizing would send response.completed. The client gets
+	// response.failed instead, and is charged as for any other upstream
+	// failure: for the output it already received, if any.
+	if upstreamFailure == nil && helper.UpstreamEndedEarly(info) && failResponsesStream(helper.ErrUpstreamEndedEarly) {
+		upstreamFailure = types.NewOpenAIError(helper.ErrUpstreamEndedEarly, types.ErrorCodeBadResponse, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
 	}
 
 	usage := state.Usage()

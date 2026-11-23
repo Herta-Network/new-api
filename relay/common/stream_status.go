@@ -110,6 +110,28 @@ func (s *StreamStatus) RequireTerminal() {
 	s.expectsTerminal = true
 }
 
+// EndedBeforeTerminal reports whether a stream whose protocol ends with an
+// explicit terminal event (see RequireTerminal) stopped without one: the
+// upstream closed the stream, stalled past the timeout, or failed to read
+// before any terminal outcome was marked. A client that went away or a handler
+// that stopped reading is not the upstream ending early, and a [DONE] sentinel
+// is the upstream's own end of stream.
+func (s *StreamStatus) EndedBeforeTerminal() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.expectsTerminal || s.response != ResponseOutcomeUnknown {
+		return false
+	}
+	switch s.EndReason {
+	case StreamEndReasonEOF, StreamEndReasonTimeout, StreamEndReasonScannerErr:
+		return true
+	}
+	return false
+}
+
 // MarkCompleted, MarkIncomplete and MarkCancelled keep the first terminal seen;
 // MarkFailed always wins because an error after completion is still a failure.
 func (s *StreamStatus) MarkCompleted() {

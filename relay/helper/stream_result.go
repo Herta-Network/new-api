@@ -57,3 +57,21 @@ func (r *StreamResult) IsStopped() bool {
 func (r *StreamResult) reset() {
 	r.stopped = false
 }
+
+// ErrUpstreamEndedEarly is the failure a converted stream reports to its
+// client when the upstream stream stopped before its terminal event.
+var ErrUpstreamEndedEarly = errors.New("upstream stream ended before the response completed")
+
+// UpstreamEndedEarly reports whether the upstream stream of info stopped
+// before the terminal event its protocol ends with (message_stop, a
+// finish_reason, a Responses terminal event). A converted stream then tells
+// its client the response failed instead of synthesizing a successful end,
+// and the stop is recorded as a stream error, so the consume log shows the
+// failure the client saw.
+func UpstreamEndedEarly(info *relaycommon.RelayInfo) bool {
+	if info == nil || !info.StreamStatus.EndedBeforeTerminal() {
+		return false
+	}
+	info.StreamStatus.RecordError(ErrUpstreamEndedEarly.Error())
+	return true
+}

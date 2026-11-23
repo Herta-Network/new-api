@@ -357,6 +357,12 @@ func ConvertStreamResponseChunk(c context.Context, info convmeta.Meta, state *Re
 	return responseStreamResults(state, values, usage, state.takeDiagnostics(len(values) > 0)), nil
 }
 
+// FinalizeStreamResponse emits the target's closing events for a stream whose
+// upstream finished. When the source never carried a finish reason the stream
+// closes as a normal stop, because the converter cannot see how the transport
+// ended. A caller whose upstream stopped before its own terminal event must not
+// finalize: for an OpenAI Responses target it calls FailResponsesStream, so the
+// client receives response.failed instead of response.completed.
 func FinalizeStreamResponse(c context.Context, info convmeta.Meta, state *ResponseStreamState) ([]ResponseResult, error) {
 	if state == nil {
 		return nil, errors.New("response stream state is required")

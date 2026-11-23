@@ -36,7 +36,10 @@ func TestGeminiToOpenAIStatefulStreamTerminal(t *testing.T) {
 			wantFinishReason: types.FinishReasonLength,
 		},
 		{
-			name:                 "truncated stream",
+			// The converter cannot tell a finished stream from one cut short;
+			// the host fails a stream that stopped before its terminal event
+			// instead of finalizing it.
+			name:                 "finalized without finish reason",
 			chunk:                terminalTestGeminiChunk("partial", "", false),
 			wantFinishReason:     types.FinishReasonStop,
 			wantFinishOnFinalize: true,

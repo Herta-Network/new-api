@@ -296,6 +296,19 @@ func Done(c *gin.Context) {
 	_ = StringData(c, "[DONE]")
 }
 
+// StreamErrorData ends a stream response the client has already started
+// reading with the error in the client's protocol: a Claude error event, or
+// for every other format an OpenAI error object followed by [DONE].
+func StreamErrorData(c *gin.Context, format types.RelayFormat, apiError *types.NewAPIError) {
+	upstreamURLs := common.UpstreamAddresses(c)
+	if format == types.RelayFormatClaude {
+		_ = ClaudeData(c, dto.ClaudeResponse{Type: "error", Error: apiError.ToClaudeError(upstreamURLs...)})
+		return
+	}
+	_ = ObjectData(c, gin.H{"error": apiError.ToOpenAIError(upstreamURLs...)})
+	Done(c)
+}
+
 func WssString(c *gin.Context, ws *websocket.Conn, str string) error {
 	if ws == nil {
 		logger.LogError(c, common.LogText("websocket connection is nil"))

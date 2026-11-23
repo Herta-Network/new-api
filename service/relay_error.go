@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"math"
 	"net/http"
 	"strconv"
@@ -38,7 +39,11 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if types.IsChannelError(err) {
 		return PolicyDecision{Action: "retry", Reason: "channel_error", Source: "system"}
 	}
-	if types.IsSkipRetryError(err) {
+	// Another channel would send a body past the same limit again, and the
+	// gateway would read it again. ReadUpstreamBody marks its error skip-retry;
+	// this also covers a handler that wrapped it in a new error.
+	var tooLarge *UpstreamBodyTooLargeError
+	if types.IsSkipRetryError(err) || errors.As(err, &tooLarge) {
 		return PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "system"}
 	}
 	if retryTimes <= 0 {

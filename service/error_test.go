@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -91,6 +92,29 @@ func TestRelayErrorHandlerTruncatesInvalidJSONBodyInLog(t *testing.T) {
 	require.Contains(t, logBuffer.String(), "[truncated")
 	require.Contains(t, logBuffer.String(), fmt.Sprintf("original_length=%d", len(body)))
 	require.NotContains(t, logBuffer.String(), strings.Repeat("b", common.LocalLogContentLimit+1))
+}
+
+// An upstream error body is read up to 1 MiB, so a larger one gives an error
+// that names the limit. The body is closed whether or not the read succeeds.
+func TestRelayErrorHandlerBoundsErrorBody(t *testing.T) {
+	body := &closeRecordingBody{Reader: bytes.NewReader(bytes.Repeat([]byte("x"), 1<<20+1))}
+
+	newAPIError := RelayErrorHandler(context.Background(), &http.Response{StatusCode: http.StatusBadGateway, Body: body}, false)
+
+	require.NotNil(t, newAPIError)
+	assert.Equal(t, http.StatusBadGateway, newAPIError.StatusCode)
+	assert.Equal(t, "bad response status code 502: upstream response body exceeds the 1 MiB limit", newAPIError.Error())
+	assert.True(t, body.closed)
+}
+
+type closeRecordingBody struct {
+	io.Reader
+	closed bool
+}
+
+func (b *closeRecordingBody) Close() error {
+	b.closed = true
+	return nil
 }
 
 func TestRelayErrorHandlerKeepsStructuredErrorMessage(t *testing.T) {

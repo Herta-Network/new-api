@@ -2,7 +2,6 @@ package ollama
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -316,7 +315,7 @@ func requestOpenAI2Embeddings(r dto.EmbeddingRequest) *OllamaEmbeddingRequest {
 
 func ollamaEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	var oResp OllamaEmbeddingResponse
-	body, err := io.ReadAll(resp.Body)
+	body, err := service.ReadUpstreamBody(resp.Body)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
@@ -359,12 +358,12 @@ func FetchOllamaModels(baseURL, apiKey string) ([]OllamaModel, error) {
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(response.Body)
+		body, _ := service.ReadUpstreamBody(response.Body)
 		return nil, fmt.Errorf("server returned error %d: %s", response.StatusCode, string(body))
 	}
 
 	var tagsResponse OllamaTagsResponse
-	body, err := io.ReadAll(response.Body)
+	body, err := service.ReadUpstreamBody(response.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %v", err)
 	}
@@ -411,7 +410,7 @@ func PullOllamaModel(baseURL, apiKey, modelName string) error {
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(response.Body)
+		body, _ := service.ReadUpstreamBody(response.Body)
 		return fmt.Errorf("failed to pull model, status %d: %s", response.StatusCode, string(body))
 	}
 
@@ -452,7 +451,7 @@ func PullOllamaModelStream(baseURL, apiKey, modelName string, progressCallback f
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(response.Body)
+		body, _ := service.ReadUpstreamBody(response.Body)
 		return fmt.Errorf("failed to pull model, status %d: %s", response.StatusCode, string(body))
 	}
 
@@ -526,7 +525,7 @@ func DeleteOllamaModel(baseURL, apiKey, modelName string) error {
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(response.Body)
+		body, _ := service.ReadUpstreamBody(response.Body)
 		return fmt.Errorf("failed to delete model, status %d: %s", response.StatusCode, string(body))
 	}
 
@@ -557,7 +556,7 @@ func FetchOllamaVersion(baseURL, apiKey string) (string, error) {
 	}
 	defer response.Body.Close()
 
-	body, err := io.ReadAll(response.Body)
+	body, err := service.ReadUpstreamBody(response.Body)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %v", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -184,6 +185,11 @@ func TestDecideRelayRetryReasons(t *testing.T) {
 	upstream := func(status int) *types.NewAPIError {
 		return types.NewOpenAIError(errors.New("upstream"), types.ErrorCodeBadResponseStatusCode, status)
 	}
+	previousLimit := constant.MaxResponseBodyMB
+	constant.MaxResponseBodyMB = 1
+	t.Cleanup(func() { constant.MaxResponseBodyMB = previousLimit })
+	_, oversized := ReadUpstreamBody(strings.NewReader(strings.Repeat("x", 1<<20+1)))
+	require.Error(t, oversized)
 	for _, tc := range []struct {
 		name    string
 		err     *types.NewAPIError
@@ -197,6 +203,8 @@ func TestDecideRelayRetryReasons(t *testing.T) {
 		{name: "always skipped status", err: upstream(http.StatusGatewayTimeout), retries: 1, want: PolicyDecision{Action: "stop", Reason: "system_retry_exclusion", Source: "system"}},
 		{name: "success status never retries", err: upstream(http.StatusOK), retries: 1, want: PolicyDecision{Action: "stop", Reason: "system_retry_exclusion", Source: "system"}},
 		{name: "skip retry error", err: types.NewErrorWithStatusCode(errors.New("local"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry()), retries: 1, want: PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "system"}},
+		{name: "oversized upstream body", err: types.NewOpenAIError(oversized, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError), retries: 1, want: PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "system"}},
+		{name: "oversized upstream body in a new error", err: types.NewErrorWithStatusCode(fmt.Errorf("failed to read response: %w", oversized), types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError), retries: 1, want: PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "system"}},
 		{name: "channel error retries without budget", err: types.NewError(errors.New("no key"), types.ErrorCodeChannelNoAvailableKey), retries: 0, want: PolicyDecision{Action: "retry", Reason: "channel_error", Source: "system"}},
 		{name: "single attempt pin", err: upstream(http.StatusTooManyRequests), retries: 1, setup: func(c *gin.Context) {
 			GetChannelConstraints(c).AddPin(dto.ChannelPin{ChannelId: 1, Source: dto.PinSourceToken, Rank: dto.PinRankToken, RetryMode: dto.PinRetrySingleAttempt})

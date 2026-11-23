@@ -61,6 +61,10 @@ func newAwsInvokeError(requestContext context.Context, err error, operation stri
 	)
 }
 
+// newAwsClient builds a Bedrock client that sends each call once. The SDK's
+// standard retryer would repeat a failed call up to three times inside one
+// channel attempt, hidden from the relay, before new-api's own channel retry
+// runs; new-api's channel retry is the only retry.
 func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.Client, error) {
 	httpClient, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
 	if err != nil {
@@ -77,6 +81,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 			Region:                  region,
 			BearerAuthTokenProvider: bearer.StaticTokenProvider{Token: bearer.Token{Value: apiKey}},
 			HTTPClient:              httpClient,
+			Retryer:                 aws.NopRetryer{},
 		})
 	case 3:
 		ak := awsSecret[0]
@@ -86,6 +91,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 			Region:      region,
 			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(ak, sk, "")),
 			HTTPClient:  httpClient,
+			Retryer:     aws.NopRetryer{},
 		})
 	default:
 		return nil, errors.New("invalid aws secret key")

@@ -12,8 +12,10 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/model_setting"
@@ -93,6 +95,71 @@ func TestPrepareResponsesRequestDeepSeekEffectiveReasoning(t *testing.T) {
 			} else {
 				assert.JSONEq(t, input, gjson.GetBytes(wire, "input").Raw)
 			}
+		})
+	}
+}
+
+// The Responses API stores a response whose request has no store member, so a
+// channel that disables store must send store:false to a native Responses
+// upstream, not leave it out. A request converted to Chat Completions keeps
+// only the store member the client sent, set to false, because a strict
+// compatible upstream rejects a member the client never sent. Compaction
+// requests carry no store member.
+func TestPrepareResponsesRequestDisableStoreSendsFalse(t *testing.T) {
+	settings := model_setting.GetGlobalSettings()
+	previous := settings.PassThroughRequestEnabled
+	t.Cleanup(func() { settings.PassThroughRequestEnabled = previous })
+	settings.PassThroughRequestEnabled = false
+	for _, tc := range []struct {
+		name, raw, wantStore          string
+		disableStore, compact, toChat bool
+	}{
+		{name: "client leaves store out", raw: `{"model":"gpt-5","input":"hi"}`, disableStore: true, wantStore: "false"},
+		{name: "client asks to store", raw: `{"model":"gpt-5","input":"hi","store":true}`, disableStore: true, wantStore: "false"},
+		{name: "setting off keeps the client's choice", raw: `{"model":"gpt-5","input":"hi","store":true}`, wantStore: "true"},
+		{name: "setting off adds nothing", raw: `{"model":"gpt-5","input":"hi"}`},
+		{name: "compaction has no store member", raw: `{"model":"gpt-5","input":"hi"}`, disableStore: true, compact: true},
+		{name: "converted to chat adds nothing", raw: `{"model":"gpt-5","input":"hi"}`, disableStore: true, toChat: true},
+		{name: "converted to chat keeps the client's store as false", raw: `{"model":"gpt-5","input":"hi","store":true}`, disableStore: true, toChat: true, wantStore: "false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := "/v1/responses"
+			if tc.compact {
+				path = "/v1/responses/compact"
+			}
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, path, strings.NewReader(tc.raw))
+			c.Request.Header.Set("Content-Type", "application/json")
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+			common.SetContextKey(c, constant.ContextKeyOriginalModel, "gpt-5")
+			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, "https://api.openai.com")
+			otherSettings := dto.ChannelOtherSettings{DisableStore: tc.disableStore}
+			if tc.toChat {
+				common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeAdvancedCustom)
+				common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, "https://compatible.example")
+				otherSettings.AdvancedCustom = &dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+					IncomingPath: "/v1/responses", UpstreamPath: "/v1/chat/completions", Converter: relayconvert.ConverterOpenAIResponsesToOpenAIChat,
+				}}}
+			}
+			common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, otherSettings)
+			var req dto.OpenAIResponsesRequest
+			require.NoError(t, common.Unmarshal([]byte(tc.raw), &req))
+			info := relaycommon.GenRelayInfoResponses(c, &req)
+			if tc.compact {
+				info.RelayMode = relayconstant.RelayModeResponsesCompact
+			}
+			_, body, closer, apiErr := PrepareResponsesRequest(c, info, &req)
+			require.Nil(t, apiErr)
+			t.Cleanup(func() { require.NoError(t, closer.Close()) })
+			wire, err := io.ReadAll(body)
+			require.NoError(t, err)
+			if tc.toChat {
+				require.True(t, gjson.GetBytes(wire, "messages").IsArray(), string(wire))
+			}
+			assert.Equal(t, tc.wantStore, gjson.GetBytes(wire, "store").Raw, string(wire))
+			// A retry on another channel starts from the client's request.
+			assert.Equal(t, gjson.Get(tc.raw, "store").Raw, string(req.Store))
 		})
 	}
 }

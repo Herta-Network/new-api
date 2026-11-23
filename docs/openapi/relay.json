@@ -4952,7 +4952,7 @@
                     "type": "object"
                 },
                 "store": {
-                    "description": "Whether or not to store the output of this chat completion request for use in our model distillation or evals products.\n是否存储此次请求数据供 OpenAI 用于评估和优化产品\n注意：默认允许透传，可通过 disable_store 禁用；禁用后可能导致 Codex 无法正常使用",
+                    "description": "Whether or not to store the output of this chat completion request for use in our model distillation or evals products.\n是否存储此次请求数据供 OpenAI 用于评估和优化产品\n注意：默认允许透传，渠道设置 disable_store 会把它改写为 false",
                     "type": "object"
                 },
                 "stream": {
@@ -5614,7 +5614,7 @@
                     "type": "object"
                 },
                 "store": {
-                    "description": "Store controls whether upstream may store request/response data.\nThis field is allowed by default and can be disabled via channel setting disable_store.",
+                    "description": "Store controls whether upstream may store request/response data.\nIt is forwarded by default; channel setting disable_store sends false\nto a native Responses upstream even when the client leaves it out,\nbecause the Responses API stores a response whose request has no\nstore member.",
                     "type": "object"
                 },
                 "stream": {

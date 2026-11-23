@@ -11,6 +11,15 @@ var GetMediaTokenNotStream bool
 var UpdateTask bool
 var MaxRequestBodyMB int
 
+// MaxResponseBodyMB bounds an upstream response body the relay reads whole, in
+// MiB; a non-positive value means the default.
+var MaxResponseBodyMB = DefaultMaxResponseBodyMB
+
+// DefaultMaxResponseBodyMB matches the default limits of a request body and of
+// one stream event, and leaves room for a non-stream answer that carries
+// several base64 images.
+const DefaultMaxResponseBodyMB = 128
+
 // PluginMemoryLimitMB is the memory the JavaScript of one plugin hook call may
 // keep, in MiB; 0 means no limit.
 var PluginMemoryLimitMB = 512

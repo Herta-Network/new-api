@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
@@ -131,7 +130,7 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 			cancel()
 			continue
 		}
-		responseBody, err := io.ReadAll(resp.Body)
+		responseBody, err := service.ReadUpstreamBody(resp.Body)
 		if err != nil {
 			logger.LogError(ctx, common.LogText("Get Mjp Task parse body error: %v", err))
 			resp.Body.Close()

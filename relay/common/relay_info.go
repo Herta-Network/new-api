@@ -1213,7 +1213,8 @@ func SetJSONMember(doc *ojson.Doc, parent, key string, value any) error {
 // service_tier: 服务层级字段，可能导致额外计费（OpenAI、Claude、Responses API 支持）
 // inference_geo: Claude 数据驻留推理区域字段（仅 Claude 支持，默认过滤）
 // speed: Claude 推理速度模式字段（仅 Claude 支持，默认过滤）
-// store: 数据存储授权字段，涉及用户隐私（仅 OpenAI、Responses API 支持，默认允许透传，禁用后可能导致 Codex 无法使用）
+// store: 数据存储授权字段，涉及用户隐私（仅 OpenAI、Responses API 支持，默认允许透传）。禁用时改写为 store:false
+// 而不是删除：Responses API 在没有 store 时默认保存。发往原生 Responses 上游的请求即使客户端没带 store 也会写入 false。
 // safety_identifier: 安全标识符，用于向 OpenAI 报告违规用户（仅 OpenAI 支持，涉及用户隐私）
 // stream_options.include_obfuscation: 响应流混淆控制字段（仅 OpenAI Responses API 支持）
 func RemoveDisabledFields(jsonData []byte, channelOtherSettings dto.ChannelOtherSettings, channelPassThroughEnabled bool) ([]byte, error) {
@@ -1247,11 +1248,6 @@ func RemoveDisabledFields(jsonData []byte, channelOtherSettings dto.ChannelOther
 		disabled = append(disabled, "speed")
 	}
 
-	// 默认允许 store 透传，除非明确禁用（禁用可能影响 Codex 使用）
-	if channelOtherSettings.DisableStore {
-		disabled = append(disabled, "store")
-	}
-
 	// 默认移除 safety_identifier，除非明确允许（保护用户隐私，避免向 OpenAI 报告用户信息）
 	if !channelOtherSettings.AllowSafetyIdentifier {
 		disabled = append(disabled, "safety_identifier")
@@ -1271,6 +1267,12 @@ func RemoveDisabledFields(jsonData []byte, channelOtherSettings dto.ChannelOther
 	}
 	if removeObfuscation && len(doc.Get("stream_options").Map()) == 0 {
 		if err := DeleteJSONMember(doc, "stream_options"); err != nil {
+			return nil, err
+		}
+	}
+	// 默认允许 store 透传；禁用时写 false，因为上游缺省 store 时可能默认保存（Responses API）
+	if channelOtherSettings.DisableStore && doc.Get("store").Exists() {
+		if err := SetJSONMember(doc, "", "store", false); err != nil {
 			return nil, err
 		}
 	}

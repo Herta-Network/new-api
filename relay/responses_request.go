@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
@@ -17,6 +18,28 @@ import (
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/gin-gonic/gin"
 )
+
+// disableResponsesStore sends store:false to a native Responses upstream on a
+// channel that disables store: the Responses API stores a response whose
+// request has no store member, so leaving the member out, as a client may,
+// would not keep it from being stored. A request converted to another format
+// keeps only a store member the client sent, which RemoveDisabledFields sets
+// to false, because Chat Completions stores nothing by default and a strict
+// compatible upstream rejects a member the client never sent. A compaction
+// request has no store member.
+func disableResponsesStore(info *relaycommon.RelayInfo, convertedRequest any, jsonData []byte) ([]byte, error) {
+	if !info.ChannelOtherSettings.DisableStore || info.RelayMode == relayconstant.RelayModeResponsesCompact {
+		return jsonData, nil
+	}
+	if format, _ := relaycommon.GuessRelayFormatFromRequest(convertedRequest); format != types.RelayFormatOpenAIResponses {
+		return jsonData, nil
+	}
+	doc := ojson.NewDoc(jsonData)
+	if err := relaycommon.SetJSONMember(doc, "", "store", false); err != nil {
+		return nil, err
+	}
+	return doc.Bytes(), nil
+}
 
 // PrepareResponsesRequest applies the same model, conversion and channel rules
 // for HTTP and WebSocket requests. The caller closes closer after the attempt;
@@ -72,6 +95,10 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
 		return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
 	jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
+	if err != nil {
+		return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+	jsonData, err = disableResponsesStore(info, convertedRequest, jsonData)
 	if err != nil {
 		return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}

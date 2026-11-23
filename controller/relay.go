@@ -24,7 +24,6 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relay/requestplugin"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -298,13 +297,7 @@ func writeRelayStreamError(c *gin.Context, format types.RelayFormat, apiError *t
 		common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, status)
 	}
 	status.MarkFailed(string(apiError.GetErrorCode()), string(apiError.GetErrorType()), apiError.StatusCode)
-	upstreamURLs := common.UpstreamAddresses(c)
-	if format == types.RelayFormatClaude {
-		_ = helper.ClaudeData(c, dto.ClaudeResponse{Type: "error", Error: apiError.ToClaudeError(upstreamURLs...)})
-		return
-	}
-	_ = helper.ObjectData(c, OpenAIErrorResponse{Error: apiError.ToOpenAIError(upstreamURLs...)})
-	helper.Done(c)
+	helper.StreamErrorData(c, format, apiError)
 }
 
 // CountClaudeTokens implements Anthropic's token-counting utility endpoint.

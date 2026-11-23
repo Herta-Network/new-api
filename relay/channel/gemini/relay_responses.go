@@ -3,7 +3,6 @@ package gemini
 import (
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/MoeForge/moego/ojson"
@@ -22,7 +21,7 @@ import (
 func GeminiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := service.ReadUpstreamBody(resp.Body)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
@@ -166,6 +165,16 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 	}
 	if streamErr != nil {
 		return nil, streamErr
+	}
+	// Without a finishReason the turn did not finish: finalizing would send
+	// response.completed. The client gets response.failed instead, and the
+	// output it already received is billed.
+	if helper.UpstreamEndedEarly(info) {
+		if usage != nil {
+			state.SetUsage(usage)
+		}
+		failResponsesStream(helper.ErrUpstreamEndedEarly)
+		return usage, nil
 	}
 	hostedEvents, err := hostedBridge.Finalize(state)
 	if err != nil {

@@ -3,7 +3,6 @@ package relay
 import (
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/QuantumNous/new-api/constant"
@@ -107,7 +106,7 @@ func DeepSeekToolsHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIErr
 		return newAPIError
 	}
 
-	responseBody, err := io.ReadAll(httpResp.Body)
+	responseBody, err := service.ReadUpstreamBody(httpResp.Body)
 	if err != nil {
 		return types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
 	}

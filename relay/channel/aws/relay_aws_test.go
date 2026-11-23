@@ -1028,12 +1028,21 @@ func TestAWSApiKeyTypeInvokesThroughSDKWithBearerToken(t *testing.T) {
 			assert.Nil(t, response)
 			require.NotNil(t, a.AwsClient)
 
+			// The client keeps its own retryer: a 503, which the SDK's standard
+			// retryer repeats, must reach the relay after one attempt so that
+			// only new-api's channel retry decides what happens next.
 			var seen *http.Request
+			attempts := 0
 			capture := func(options *bedrockruntime.Options) {
-				options.Retryer = aws.NopRetryer{}
 				options.HTTPClient = awsHTTPClientFunc(func(request *http.Request) (*http.Response, error) {
 					seen = request
-					return nil, errors.New("captured")
+					attempts++
+					return &http.Response{
+						StatusCode: http.StatusServiceUnavailable,
+						Header:     http.Header{"Content-Type": {"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(`{"message":"busy"}`)),
+						Request:    request,
+					}, nil
 				})
 			}
 			if stream {
@@ -1046,6 +1055,7 @@ func TestAWSApiKeyTypeInvokesThroughSDKWithBearerToken(t *testing.T) {
 				_, _ = a.AwsClient.InvokeModel(context.Background(), input, capture)
 			}
 			require.NotNil(t, seen)
+			assert.Equal(t, 1, attempts)
 			action := "invoke"
 			if stream {
 				action = "invoke-with-response-stream"

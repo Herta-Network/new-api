@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -221,6 +220,12 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		if len(geminiResponse.Candidates) == 0 && geminiResponse.PromptFeedback != nil && geminiResponse.PromptFeedback.BlockReason != nil {
 			info.PerformanceBusinessRejection = true
 			common.SetContextKey(c, constant.ContextKeyAdminRejectReason, fmt.Sprintf("gemini_block_reason=%s", *geminiResponse.PromptFeedback.BlockReason))
+			// A blocked prompt ends the stream with promptFeedback alone. That
+			// frame is the terminal: converted streams end it as content
+			// filtered, as for a candidate stopped for safety. The callback of
+			// a native Gemini stream forwards the upstream bytes unchanged.
+			safety := "SAFETY"
+			geminiResponse.Candidates = []dto.GeminiChatCandidate{{FinishReason: &safety}}
 		}
 		info.ObserveResponseModel(ojson.Get(data, "modelVersion").Str)
 		for _, candidate := range geminiResponse.Candidates {
@@ -396,6 +401,15 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 	if err != nil {
 		return usage, err
 	}
+	// A Claude client reads message_stop as a finished turn, so a stream cut
+	// before Gemini's finishReason ends with an error event instead of a
+	// synthesized message_stop. The output already sent is billed.
+	if info.RelayFormat == types.RelayFormatClaude && helper.UpstreamEndedEarly(info) {
+		endedEarly := types.NewOpenAIError(helper.ErrUpstreamEndedEarly, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+		endedEarly.SetMessage(common.MessageWithRequestId(endedEarly.Error(), c.GetString(common.RequestIdKey)))
+		helper.StreamErrorData(c, info.RelayFormat, endedEarly)
+		return usage, nil
+	}
 
 	response := helper.GenerateFinalUsageResponse(id, createAt, info.UpstreamModelName, *usage)
 	if info.RelayFormat == types.RelayFormatClaude && info.ClaudeConvertInfo != nil && !info.ClaudeConvertInfo.Done {
@@ -410,7 +424,7 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 }
 
 func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := service.ReadUpstreamBody(resp.Body)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
@@ -496,7 +510,7 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
-	responseBody, readErr := io.ReadAll(resp.Body)
+	responseBody, readErr := service.ReadUpstreamBody(resp.Body)
 	if readErr != nil {
 		return nil, types.NewOpenAIError(readErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
@@ -545,7 +559,7 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 }
 
 func GeminiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
-	responseBody, readErr := io.ReadAll(resp.Body)
+	responseBody, readErr := service.ReadUpstreamBody(resp.Body)
 	if readErr != nil {
 		return nil, types.NewOpenAIError(readErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
@@ -635,13 +649,13 @@ func FetchGeminiModels(baseURL, apiKey string, setting dto.ChannelSettings) ([]s
 		}
 
 		if response.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(response.Body)
+			body, _ := service.ReadUpstreamBody(response.Body)
 			response.Body.Close()
 			cancel()
 			return nil, fmt.Errorf("server returned error %d: %s", response.StatusCode, string(body))
 		}
 
-		body, err := io.ReadAll(response.Body)
+		body, err := service.ReadUpstreamBody(response.Body)
 		response.Body.Close()
 		cancel()
 		if err != nil {

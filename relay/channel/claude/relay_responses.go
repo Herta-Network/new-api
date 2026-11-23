@@ -158,6 +158,7 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 			}
 		}
 	})
+	info.StreamStatus.RequireTerminal()
 	if streamErr != nil {
 		return nil, streamErr
 	}
@@ -168,6 +169,13 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 	HandleStreamFinalResponse(c, info, claudeInfo)
 	openAIUsage := buildOpenAIStyleUsageFromClaudeUsage(claudeInfo.Usage)
 	state.SetUsage(&openAIUsage)
+	// Without message_stop the turn did not finish: finalizing would send
+	// response.completed. The client gets response.failed instead, and the
+	// output it already received is billed.
+	if helper.UpstreamEndedEarly(info) {
+		failResponsesStream(helper.ErrUpstreamEndedEarly)
+		return claudeInfo.Usage, nil
+	}
 	finalResults, err := service.FinalizeStreamResponse(c, info, state)
 	if err != nil {
 		if failResponsesStream(err) {

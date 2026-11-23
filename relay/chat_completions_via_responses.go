@@ -149,6 +149,10 @@ func relayResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, adaptor 
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
+	jsonData, err = disableResponsesStore(info, convertedRequest, jsonData)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
 	if !outboundApplied {
 		var apiErr *types.NewAPIError
 		if jsonData, apiErr = requestplugin.Outbound(c, info, jsonData); apiErr != nil {

@@ -70,7 +70,7 @@ type GeneralOpenAIRequest struct {
 	SafetyIdentifier json.RawMessage `json:"safety_identifier,omitempty"`
 	// Whether or not to store the output of this chat completion request for use in our model distillation or evals products.
 	// 是否存储此次请求数据供 OpenAI 用于评估和优化产品
-	// 注意：默认允许透传，可通过 disable_store 禁用；禁用后可能导致 Codex 无法正常使用
+	// 注意：默认允许透传，渠道设置 disable_store 会把它改写为 false
 	Store json.RawMessage `json:"store,omitempty"`
 	// Used by OpenAI to cache responses for similar requests to optimize your cache hit rates. Replaces the user field
 	PromptCacheKey       string          `json:"prompt_cache_key,omitempty"`
@@ -1094,7 +1094,10 @@ type OpenAIResponsesRequest struct {
 	// This field is filtered by default and can be enabled via channel setting allow_service_tier.
 	ServiceTier string `json:"service_tier,omitempty"`
 	// Store controls whether upstream may store request/response data.
-	// This field is allowed by default and can be disabled via channel setting disable_store.
+	// It is forwarded by default; channel setting disable_store sends false
+	// to a native Responses upstream even when the client leaves it out,
+	// because the Responses API stores a response whose request has no
+	// store member.
 	Store                json.RawMessage `json:"store,omitempty"`
 	PromptCacheKey       json.RawMessage `json:"prompt_cache_key,omitempty"`
 	PromptCacheOptions   json.RawMessage `json:"prompt_cache_options,omitempty"`

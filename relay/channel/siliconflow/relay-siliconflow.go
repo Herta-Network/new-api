@@ -2,7 +2,6 @@ package siliconflow
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -14,7 +13,7 @@ import (
 )
 
 func siliconflowRerankHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := service.ReadUpstreamBody(resp.Body)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
 	}

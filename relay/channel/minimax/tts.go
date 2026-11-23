@@ -3,9 +3,7 @@ package minimax
 import (
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -106,7 +104,7 @@ func getContentTypeByFormat(format string) string {
 }
 
 func handleTTSResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
-	body, readErr := io.ReadAll(resp.Body)
+	body, readErr := service.ReadUpstreamBody(resp.Body)
 	if readErr != nil {
 		return nil, types.NewErrorWithStatusCode(
 			fmt.Errorf("failed to read minimax response: %w", readErr),
@@ -173,10 +171,10 @@ func handleTTSResponse(c *gin.Context, resp *http.Response, info *relaycommon.Re
 }
 
 func handleChatCompletionResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
-	body, readErr := io.ReadAll(resp.Body)
+	body, readErr := service.ReadUpstreamBody(resp.Body)
 	if readErr != nil {
 		return nil, types.NewErrorWithStatusCode(
-			errors.New("failed to read minimax response"),
+			fmt.Errorf("failed to read minimax response: %w", readErr),
 			types.ErrorCodeReadResponseBodyFailed,
 			http.StatusInternalServerError,
 		)

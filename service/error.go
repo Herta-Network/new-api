@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"strconv"
@@ -87,11 +86,18 @@ func ClaudeErrorWrapperLocal(err error, code string, statusCode int) *dto.Claude
 func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFail bool) (newApiErr *types.NewAPIError) {
 	newApiErr = types.InitOpenAIError(types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
 
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := ReadUpstreamErrorBody(resp.Body)
+	CloseResponseBodyGracefully(resp)
 	if err != nil {
+		// Other read errors may quote the upstream address, so only the
+		// size limit reaches the client. The limit is not wrapped: reading
+		// stopped at 1 MiB, so the upstream status alone decides a retry.
+		var tooLarge *UpstreamBodyTooLargeError
+		if errors.As(err, &tooLarge) {
+			newApiErr.Err = fmt.Errorf("bad response status code %d: %v", resp.StatusCode, err)
+		}
 		return
 	}
-	CloseResponseBodyGracefully(resp)
 	var errResponse dto.GeneralErrorResponse
 	responseBodyText := string(responseBody)
 	responseBodyPreview := common.LocalLogPreview(responseBodyText)

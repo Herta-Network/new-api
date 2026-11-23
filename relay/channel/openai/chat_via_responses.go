@@ -3,7 +3,6 @@ package openai
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -28,7 +27,7 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	defer service.CloseResponseBodyGracefully(resp)
 
 	var responsesResp dto.OpenAIResponsesResponse
-	body, err := io.ReadAll(resp.Body)
+	body, err := service.ReadUpstreamBody(resp.Body)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
 	}
@@ -279,6 +278,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		if streamResp.Response != nil {
 			info.ObserveResponseModel(streamResp.Response.Model)
 		}
+		service.ObserveResponsesOutcome(info, &streamResp)
 		if streamResp.Type == "response.error" || streamResp.Type == "response.failed" {
 			upstreamFailed = true
 			if streamResp.Response != nil {
@@ -307,6 +307,16 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			}
 		}
 	})
+	info.StreamStatus.RequireTerminal()
+	// Without a Responses terminal event the upstream did not finish:
+	// finalizing would end the client's stream as a finished turn (a stop
+	// finish_reason, or message_stop for a Claude client). It is handled as
+	// an upstream failure instead. The client already has the start of the
+	// response, so another channel must not answer it again.
+	if streamErr == nil && helper.UpstreamEndedEarly(info) {
+		upstreamFailed = true
+		streamErr = types.NewOpenAIError(helper.ErrUpstreamEndedEarly, types.ErrorCodeBadResponse, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
+	}
 
 	if streamErr != nil {
 		if !upstreamFailed || state.UsageText() == "" {
@@ -314,8 +324,9 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		}
 		// The upstream failed after output reached the client: bill the
 		// delivered output (upstream usage when reported, otherwise the
-		// estimate) and send the client the same error the failed request
-		// path writes. stream_status already records the failure.
+		// estimate) and end the client's stream with the error event the
+		// failed request path writes once a stream has started.
+		// stream_status already records the failure.
 		usage := relayconvert.UsageFromResponsesUsage(failedUsage)
 		if usage.TotalTokens == 0 {
 			usage = state.Usage()
@@ -340,11 +351,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		}
 		logger.LogError(c, common.LogText("responses stream failed after output was delivered, billing the delivered output: %s", streamErr.Error()))
 		streamErr.SetMessage(common.MessageWithRequestId(streamErr.Error(), c.GetString(common.RequestIdKey)))
-		if info.RelayFormat == types.RelayFormatClaude {
-			c.JSON(streamErr.StatusCode, gin.H{"type": "error", "error": streamErr.ToClaudeError(common.UpstreamAddresses(c)...)})
-		} else {
-			c.JSON(streamErr.StatusCode, gin.H{"error": streamErr.ToOpenAIError(common.UpstreamAddresses(c)...)})
-		}
+		helper.StreamErrorData(c, info.RelayFormat, streamErr)
 		return usage, nil
 	}
 
