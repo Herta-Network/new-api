@@ -216,13 +216,14 @@ func CreateModelMeta(c *gin.Context) {
 
 // UpdateModelMeta 更新模型
 //
-//	@Summary	更新模型元数据
-//	@Tags		模型
-//	@Param		status_only	query		bool		false	"为 true 时只更新 status（0 或 1）"
-//	@Param		body		body		model.Model	true	"模型元数据；按 id 更新"
-//	@Success	200			{object}	common.ApiResponse{data=model.Model}
-//	@Security	AdminAuth
-//	@Router		/api/models/ [put]
+//	@Summary		更新模型元数据
+//	@Description	渠道和价格按模型名引用模型。精确名称的模型仍在渠道（含已禁用的渠道）的模型列表里，或这个名称有价格时，不能改名，返回的 message_key 说明原因。
+//	@Tags			模型
+//	@Param			status_only	query		bool		false	"为 true 时只更新 status（0 或 1）"
+//	@Param			body		body		model.Model	true	"模型元数据；按 id 更新"
+//	@Success		200			{object}	common.ApiResponse{data=model.Model}
+//	@Security		AdminAuth
+//	@Router			/api/models/ [put]
 func UpdateModelMeta(c *gin.Context) {
 	statusOnly := c.Query("status_only") == "true"
 

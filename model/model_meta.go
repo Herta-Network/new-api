@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -298,10 +299,40 @@ func IsModelNameDuplicated(id int, name string) (bool, error) {
 	return cnt > 0, err
 }
 
+// Update saves a metadata record. Channels and prices refer to a model by
+// name, so an exact record keeps its name while either uses it: a rename
+// would leave them on a second, channel-only row of the catalog, and the
+// renamed record without channels, groups or price.
 func (mi *Model) Update() error {
 	return metadataTransaction(func(tx *gorm.DB) error {
 		if err := validateModelVendor(tx, mi.VendorID); err != nil {
 			return err
+		}
+		var current Model
+		if err := tx.Select("model_name", "name_rule").First(&current, mi.Id).Error; err != nil {
+			return err
+		}
+		if current.NameRule == NameRuleExact && current.ModelName != mi.ModelName {
+			var channels []Channel
+			if err := tx.Select("id", "models").Find(&channels).Error; err != nil {
+				return err
+			}
+			listing := 0
+			for _, channel := range channels {
+				if slices.Contains(normalizeLookupValues(channel.GetModels()), current.ModelName) {
+					listing++
+				}
+			}
+			if listing > 0 {
+				return common.NewMessage("{{name}} is still in {{count}} channels. Channels and prices stay with the model name, so change the name in those channels and clear its price before renaming it", map[string]any{"name": current.ModelName, "count": listing})
+			}
+			values, _, _, err := readModelPricingMaps(tx)
+			if err != nil {
+				return err
+			}
+			if len(modelPricingValues(values, current.ModelName)) > 0 {
+				return common.NewMessage("{{name}} still has a price, and prices stay with the model name. Clear its price before renaming it", map[string]any{"name": current.ModelName})
+			}
 		}
 		mi.UpdatedTime = common.GetTimestamp()
 		return tx.Model(&Model{}).Where("id = ?", mi.Id).

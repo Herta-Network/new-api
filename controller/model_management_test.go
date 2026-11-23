@@ -88,6 +88,15 @@ func modelManagementRequest(t *testing.T, handler gin.HandlerFunc, method, path 
 	return recorder
 }
 
+// modelRenameRefusal is the console message of a refused rename.
+type modelRenameRefusal struct {
+	Success       bool           `json:"success"`
+	MessageKey    string         `json:"message_key"`
+	MessageParams map[string]any `json:"message_params"`
+}
+
+const modelPricedRenameKey = "{{name}} still has a price, and prices stay with the model name. Clear its price before renaming it"
+
 func TestModelPricingConversionDatabaseMatrix(t *testing.T) {
 	previousQuota := common.QuotaPerUnit
 	common.QuotaPerUnit = 500000
@@ -962,17 +971,20 @@ export function parseTaskResult() { return {}; }
 		require.NoError(t, model.UpdateModelPricing([]model.ModelPricingChange{{ModelName: exact.ModelName, ExpectedVersion: priceBefore.Entries[0].Version, Pricing: model.PricingValues{"ModelPrice": float64(0)}}}))
 		exact.ModelName = "matrix-renamed"
 		exact.Endpoints = `{"openai":{"path":"/v1/chat/completions","method":"POST"}}`
+		var refused modelRenameRefusal
+		modelManagementRequest(t, UpdateModelMeta, http.MethodPut, "/api/models/", exact, &refused)
+		assert.Equal(t, modelRenameRefusal{MessageKey: modelPricedRenameKey, MessageParams: map[string]any{"name": "matrix-hidden-unpriced"}}, refused)
+		exact.ModelName = "matrix-hidden-unpriced"
 		response := modelManagementRequest(t, UpdateModelMeta, http.MethodPut, "/api/models/", exact, nil)
 		assert.Contains(t, response.Body.String(), `"success":true`)
 		var reloaded model.Model
 		require.NoError(t, db.First(&reloaded, exact.Id).Error)
 		enrichModels([]*model.Model{&reloaded})
 		assert.Equal(t, exact.Endpoints, reloaded.Endpoints)
-		assert.Empty(t, reloaded.BoundChannels)
-		prices, err := model.GetModelPricingSnapshot([]string{"matrix-hidden-unpriced", "matrix-renamed"})
+		assert.Equal(t, []model.BoundChannel{{Name: "Active route", Type: 1}}, reloaded.BoundChannels)
+		prices, err := model.GetModelPricingSnapshot([]string{"matrix-hidden-unpriced"})
 		require.NoError(t, err)
 		assert.Equal(t, float64(0), prices.Entries[0].Configured["ModelPrice"])
-		assert.Empty(t, prices.Entries[1].Configured)
 		require.NoError(t, reloaded.Delete())
 		require.NoError(t, model.UpdateModelPricing([]model.ModelPricingChange{{ModelName: "matrix-hidden-unpriced", ExpectedVersion: prices.Entries[0].Version, Reset: true}}))
 		prices, err = model.GetModelPricingSnapshot([]string{"matrix-hidden-unpriced"})
@@ -1487,6 +1499,103 @@ func TestVendorManagementDatabaseMatrix(t *testing.T) {
 			require.NoError(t, err)
 		}
 	})
+}
+
+// TestModelRenameDatabaseMatrix keeps a name that channels or prices use on
+// its record, and merges the records an earlier rename split.
+func TestModelRenameDatabaseMatrix(t *testing.T) {
+	db := modelManagementDB(t)
+	vendor := &model.Vendor{Name: "Rename vendor", Status: 1}
+	require.NoError(t, vendor.Insert())
+	channels := []model.Channel{
+		{Name: "Rename enabled", Type: 1, Key: "fixture-key", Models: "rename-routed,split-back-old,split-delete-old", Group: "default", Status: common.ChannelStatusEnabled},
+		{Name: "Rename disabled", Type: 1, Key: "fixture-key", Models: "rename-routed", Group: "default", Status: common.ChannelStatusManuallyDisabled},
+	}
+	for i := range channels {
+		require.NoError(t, db.Create(&channels[i]).Error)
+		require.NoError(t, channels[i].UpdateAbilities(db))
+	}
+	priced := []string{"rename-routed", "rename-priced", "split-back-old", "split-delete-old"}
+	snapshot, err := model.GetModelPricingSnapshot(priced)
+	require.NoError(t, err)
+	changes := make([]model.ModelPricingChange, 0, len(priced))
+	for _, entry := range snapshot.Entries {
+		changes = append(changes, model.ModelPricingChange{ModelName: entry.ModelName, ExpectedVersion: entry.Version, Pricing: model.PricingValues{"ModelRatio": float64(2)}})
+	}
+	require.NoError(t, model.UpdateModelPricing(changes))
+	catalog := func(keyword string) []*model.Model {
+		var page struct {
+			Success bool
+			Data    modelMetaPage
+		}
+		modelManagementRequest(t, SearchModelsMeta, http.MethodGet, "/api/models/search?include_channel_models=true&p=1&page_size=100&keyword="+keyword, nil, &page)
+		require.True(t, page.Success)
+		return page.Data.Items
+	}
+
+	// Disabled channels count: the catalog lists their names too.
+	for _, tc := range []struct {
+		name    string
+		refusal modelRenameRefusal
+	}{
+		{"rename-routed", modelRenameRefusal{MessageKey: "{{name}} is still in {{count}} channels. Channels and prices stay with the model name, so change the name in those channels and clear its price before renaming it", MessageParams: map[string]any{"name": "rename-routed", "count": float64(2)}}},
+		{"rename-priced", modelRenameRefusal{MessageKey: modelPricedRenameKey, MessageParams: map[string]any{"name": "rename-priced"}}},
+	} {
+		record := &model.Model{ModelName: tc.name, VendorID: vendor.Id, Status: 1}
+		require.NoError(t, record.Insert())
+		request := *record
+		request.ModelName += "-v2"
+		var refused modelRenameRefusal
+		modelManagementRequest(t, UpdateModelMeta, http.MethodPut, "/api/models/", &request, &refused)
+		assert.Equal(t, tc.refusal, refused, tc.name)
+		rows := catalog(tc.name)
+		require.Len(t, rows, 1, tc.name)
+		assert.Equal(t, record.Id, rows[0].Id, tc.name)
+		assert.Equal(t, tc.name, rows[0].ModelName)
+	}
+
+	// Records split by a rename before the check: the renamed record kept
+	// the metadata, the channels and the price kept the old name. Renaming
+	// it back, or deleting it and adding metadata to the old name, leaves
+	// one record with all three.
+	for _, cleanup := range []string{"back", "delete"} {
+		old, renamed := "split-"+cleanup+"-old", &model.Model{ModelName: "split-" + cleanup + "-new", VendorID: vendor.Id, Status: 1, Description: "Kept"}
+		require.NoError(t, renamed.Insert())
+		rows := catalog("split-" + cleanup)
+		require.Len(t, rows, 2, cleanup)
+		assert.Equal(t, []string{renamed.ModelName, old}, []string{rows[0].ModelName, rows[1].ModelName})
+		assert.Empty(t, rows[0].EnableGroups)
+		assert.False(t, rows[1].HasMetadata)
+		assert.Equal(t, []string{"default"}, rows[1].EnableGroups)
+
+		if cleanup == "back" {
+			request := *renamed
+			request.ModelName = old
+			response := modelManagementRequest(t, UpdateModelMeta, http.MethodPut, "/api/models/", &request, nil)
+			require.Contains(t, response.Body.String(), `"success":true`)
+		} else {
+			var deleted struct {
+				Success bool
+				Data    model.ModelDeleteResult
+			}
+			modelManagementRequest(t, BatchDeleteModelMeta, http.MethodPost, "/api/models/delete", batchDeleteModelMetaRequest{ModelIDs: []int{renamed.Id}}, &deleted)
+			require.True(t, deleted.Success)
+			assert.Equal(t, model.ModelDeleteResult{DeletedCount: 1}, deleted.Data)
+			renamed = &model.Model{ModelName: old, VendorID: vendor.Id, Status: 1, Description: "Kept"}
+			require.NoError(t, renamed.Insert())
+		}
+		rows = catalog("split-" + cleanup)
+		require.Len(t, rows, 1, cleanup)
+		assert.Equal(t, renamed.Id, rows[0].Id)
+		assert.Equal(t, old, rows[0].ModelName)
+		assert.Equal(t, vendor.Id, rows[0].VendorID)
+		assert.Equal(t, "Kept", rows[0].Description)
+		assert.Equal(t, []string{"default"}, rows[0].EnableGroups)
+		assert.Equal(t, model.ModelSquareVisible, rows[0].SquareState)
+		prices, err := model.GetModelPricingSnapshot([]string{old})
+		require.NoError(t, err)
+		assert.Equal(t, float64(2), prices.Entries[0].Configured["ModelRatio"], cleanup)
+	}
 }
 
 func TestModelDeletionDatabaseMatrix(t *testing.T) {
