@@ -1,0 +1,47 @@
+{
+ "client": {
+  "model": "mistral-large-4-0",
+  "stream": true,
+  "temperature": 0.7,
+  "top_p": 0.95,
+  "max_tokens": 1024,
+  "reasoning_effort": "low",
+  "messages": [
+   {
+    "role": "user",
+    "content": "Write a title for: café 中文 <b>&amp; \"quotes\" \\ 😀   "
+   }
+  ]
+ },
+ "sdk": {
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "headers": [
+   [
+    "Accept-Encoding",
+    "gzip, deflate, br"
+   ],
+   [
+    "Connection",
+    "keep-alive"
+   ],
+   [
+    "Accept",
+    "text/event-stream"
+   ],
+   [
+    "user-agent",
+    "mistral-client-python/Mistral-Vibe/3.1.4"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ],
+   [
+    "x-affinity",
+    "11111111-2222-3333-4444-555555555555"
+   ]
+  ],
+  "body": "{\"model\":\"mistral-large-4-0\",\"messages\":[{\"content\":\"Write a title for: caf\\u00e9 \\u4e2d\\u6587 <b>&amp; \\\"quotes\\\" \\\\ \\ud83d\\ude00 \\u2028 \\u007f\",\"role\":\"user\"}],\"temperature\":0.7,\"top_p\":0.95,\"max_tokens\":1024,\"stream\":true,\"reasoning_effort\":\"low\"}"
+ }
+}

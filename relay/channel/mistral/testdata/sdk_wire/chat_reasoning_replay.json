@@ -1,0 +1,96 @@
+{
+ "client": {
+  "model": "mistral-vibe-cli-latest",
+  "stream": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": "What is 2+2?"
+   },
+   {
+    "role": "assistant",
+    "reasoning_content": "Simple arithmetic.",
+    "content": "Let me check.",
+    "tool_calls": [
+     {
+      "id": "Ab3dE6gH9",
+      "type": "function",
+      "function": {
+       "name": "bash",
+       "arguments": "{\"command\":\"echo 4\"}"
+      }
+     }
+    ]
+   },
+   {
+    "role": "tool",
+    "tool_call_id": "Ab3dE6gH9",
+    "content": "4"
+   },
+   {
+    "role": "assistant",
+    "reasoning_content": "The tool said 4.",
+    "content": ""
+   },
+   {
+    "role": "user",
+    "content": "And 3+3?"
+   }
+  ],
+  "tools": [
+   {
+    "type": "function",
+    "function": {
+     "name": "bash",
+     "description": "Run a shell command.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "command": {
+        "type": "string"
+       },
+       "timeout": {
+        "type": "number",
+        "default": 30.0
+       }
+      },
+      "required": [
+       "command"
+      ]
+     }
+    }
+   }
+  ]
+ },
+ "sdk": {
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "headers": [
+   [
+    "Accept-Encoding",
+    "gzip, deflate, br"
+   ],
+   [
+    "Connection",
+    "keep-alive"
+   ],
+   [
+    "Accept",
+    "text/event-stream"
+   ],
+   [
+    "user-agent",
+    "mistral-client-python/Mistral-Vibe/3.1.4"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ],
+   [
+    "x-affinity",
+    "11111111-2222-3333-4444-555555555555"
+   ]
+  ],
+  "body": "{\"model\":\"mistral-vibe-cli-latest\",\"messages\":[{\"content\":\"What is 2+2?\",\"role\":\"user\"},{\"role\":\"assistant\",\"content\":[{\"thinking\":[{\"text\":\"Simple arithmetic.\",\"type\":\"text\"}],\"type\":\"thinking\"},{\"text\":\"Let me check.\",\"type\":\"text\"}],\"tool_calls\":[{\"function\":{\"name\":\"bash\",\"arguments\":\"{\\\"command\\\":\\\"echo 4\\\"}\"},\"id\":\"Ab3dE6gH9\",\"type\":\"function\",\"index\":0}],\"prefix\":false},{\"content\":\"4\",\"role\":\"tool\",\"tool_call_id\":\"Ab3dE6gH9\",\"name\":\"bash\"},{\"role\":\"assistant\",\"content\":[{\"thinking\":[{\"text\":\"The tool said 4.\",\"type\":\"text\"}],\"type\":\"thinking\"}],\"prefix\":false},{\"content\":\"And 3+3?\",\"role\":\"user\"}],\"temperature\":1.0,\"stream\":true,\"tools\":[{\"function\":{\"name\":\"bash\",\"parameters\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"},\"timeout\":{\"type\":\"number\",\"default\":30.0}},\"required\":[\"command\"]},\"description\":\"Run a shell command.\"},\"type\":\"function\"}],\"parallel_tool_calls\":true,\"reasoning_effort\":\"high\"}"
+ }
+}

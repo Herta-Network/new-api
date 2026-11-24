@@ -33,6 +33,11 @@ const (
 	// (vibe/app_server/_billing.py), which set none of their own and send
 	// httpx2's default; uv.lock pins httpx2 2.16.0.
 	billingUserAgent = "python-httpx2/2.16.0"
+	// acceptEncoding is the Accept-Encoding httpx2 2.16.0 sends in Vibe, the
+	// codings it can decode (ACCEPT_ENCODING in httpx2/_client.py): Vibe's
+	// CPython 3.12 builds have brotli, a dependency in its pyproject.toml, and
+	// no zstd. The channel decodes the answers itself (decodeContent).
+	acceptEncoding = "gzip, deflate, br"
 	// affinityHeader carries the conversation a request belongs to, which
 	// Mistral routes on to reuse its prompt cache: request_headers in
 	// harness/.../vibe/_runtime_config.py.

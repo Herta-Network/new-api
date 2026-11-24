@@ -1,0 +1,36 @@
+{
+ "client": {
+  "model": "codestral-embed",
+  "input": "one text",
+  "dimensions": 256,
+  "output_dtype": "int8",
+  "encoding_format": "float"
+ },
+ "sdk": {
+  "method": "POST",
+  "path": "/v1/embeddings",
+  "headers": [
+   [
+    "Accept-Encoding",
+    "gzip, deflate, br"
+   ],
+   [
+    "Connection",
+    "keep-alive"
+   ],
+   [
+    "Accept",
+    "application/json"
+   ],
+   [
+    "user-agent",
+    "mistral-client-python/Mistral-Vibe/3.1.4"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ]
+  ],
+  "body": "{\"model\":\"codestral-embed\",\"input\":\"one text\",\"output_dimension\":256,\"output_dtype\":\"int8\",\"encoding_format\":\"float\"}"
+ }
+}

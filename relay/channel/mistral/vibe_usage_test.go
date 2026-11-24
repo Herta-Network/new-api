@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/andybalholm/brotli"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -111,17 +112,23 @@ func TestFetchVibeUsage(t *testing.T) {
 				// The headers Vibe 3.1.4's own billing reads carry.
 				assert.Equal(t, "python-httpx2/2.16.0", r.Header.Get("User-Agent"))
 				assert.Equal(t, "*/*", r.Header.Get("Accept"))
+				assert.Equal(t, "gzip, deflate, br", r.Header.Get("Accept-Encoding"))
+				assert.Equal(t, "keep-alive", r.Header.Get("Connection"))
+				status, body := http.StatusNotFound, ""
 				switch r.URL.Path {
 				case "/v1/billing/subscription":
-					w.WriteHeader(tt.subscriptionStatus)
-					_, _ = w.Write([]byte(tt.subscription))
+					status, body = tt.subscriptionStatus, tt.subscription
 				case "/v1/billing/budget":
-					w.WriteHeader(tt.budgetStatus)
-					_, _ = w.Write([]byte(tt.budget))
+					status, body = tt.budgetStatus, tt.budget
 				default:
 					t.Errorf("unexpected request: %s", r.URL.Path)
-					w.WriteHeader(http.StatusNotFound)
 				}
+				// Answered in br, which the client asked for.
+				w.Header().Set("Content-Encoding", "br")
+				w.WriteHeader(status)
+				coded := brotli.NewWriter(w)
+				_, _ = coded.Write([]byte(body))
+				require.NoError(t, coded.Close())
 			}))
 			defer upstream.Close()
 

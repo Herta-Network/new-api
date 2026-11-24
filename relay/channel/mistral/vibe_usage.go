@@ -160,11 +160,14 @@ func readVibeBilling(ctx context.Context, client *http.Client, requestURL string
 	}
 	request.Header.Set("Authorization", "Bearer "+apiKey)
 	request.Header.Set("Accept", "*/*")
+	request.Header.Set("Accept-Encoding", acceptEncoding)
+	request.Header.Set("Connection", "keep-alive")
 	request.Header.Set("User-Agent", billingUserAgent)
 	response, err := client.Do(request)
 	if err != nil {
 		return 0, err
 	}
+	decodeContent(response)
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		return response.StatusCode, nil

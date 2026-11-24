@@ -2,10 +2,18 @@ package mistral
 
 import (
 	"bytes"
+	"compress/flate"
+	"compress/gzip"
+	"compress/zlib"
 	"errors"
+	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,9 +21,11 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/andybalholm/brotli"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -75,7 +85,15 @@ func relayToMistral(t *testing.T, endpoint, clientBody string, clientHeader map[
 		} else {
 			w.Header().Set("Content-Type", "application/json")
 		}
-		_, _ = io.WriteString(w, reply)
+		// The fake compresses its answer when asked, as servers may.
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			_, _ = io.WriteString(w, reply)
+			return
+		}
+		w.Header().Set("Content-Encoding", "gzip")
+		coded := gzip.NewWriter(w)
+		_, _ = io.WriteString(coded, reply)
+		require.NoError(t, coded.Close())
 	}))
 	t.Cleanup(upstream.Close)
 
@@ -201,7 +219,7 @@ func TestRelayToMistral(t *testing.T) {
 				"messages.0":            `{"role":"system","content":"Be brief."}`,
 				"messages.1.content":    `[{"type":"text","text":"Weather?"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA","detail":"high"}}]`,
 				"messages.2.content":    `[{"type":"thinking","thinking":[{"type":"text","text":"Need a tool."}]}]`,
-				"messages.2.tool_calls": `[{"id":"call_abc123","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]`,
+				"messages.2.tool_calls": `[{"id":"call_abc123","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"},"index":0}]`,
 				"messages.3":            `{"role":"tool","content":"Sunny","tool_call_id":"call_abc123","name":"get_weather"}`,
 				"tools":                 `[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string"}}}}}]`,
 			},
@@ -381,6 +399,135 @@ func TestRelayToMistral(t *testing.T) {
 			}
 			assert.ElementsMatch(t, tt.wantDiagnostics, diagnosed)
 		})
+	}
+}
+
+// TestMistralWireMatchesVibeSDK relays the conversations of testdata/sdk_wire
+// and compares what reaches Mistral with what the SDK Mistral Vibe 3.1.4 runs
+// wrote for the same conversation (capture.py there records it): the body
+// byte for byte, and every header but Host, Content-Length and the key, with
+// the affinity a UUID of the gateway's own.
+func TestMistralWireMatchesVibeSDK(t *testing.T) {
+	files, err := filepath.Glob("testdata/sdk_wire/*.json")
+	require.NoError(t, err)
+	require.NotEmpty(t, files)
+	for _, file := range files {
+		t.Run(strings.TrimSuffix(filepath.Base(file), ".json"), func(t *testing.T) {
+			data, err := os.ReadFile(file)
+			require.NoError(t, err)
+			client, sdk := gjson.GetBytes(data, "client"), gjson.GetBytes(data, "sdk")
+			reply := `{"id":"c9","object":"chat.completion","created":1764000000,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`
+			switch {
+			case sdk.Get("path").Str == "/v1/embeddings":
+				reply = `{"id":"e1","object":"list","data":[{"object":"embedding","embedding":[0.1],"index":0}],"model":"m","usage":{"prompt_tokens":1,"total_tokens":1}}`
+			case client.Get("stream").Bool():
+				reply = mistralStream
+			}
+
+			result := relayToMistral(t, sdk.Get("path").Str, client.Raw, nil, dto.ChannelOtherSettings{}, nil, reply)
+			require.NoError(t, result.convertErr)
+			require.Len(t, result.calls, 1)
+			call := result.calls[0]
+			assert.Equal(t, sdk.Get("path").Str, call.path)
+			assert.Equal(t, sdk.Get("body").Str, string(call.body))
+
+			sdkHeaders := []string{"Authorization", "Content-Length"}
+			for _, header := range sdk.Get("headers").Array() {
+				name, value := header.Get("0").Str, header.Get("1").Str
+				sdkHeaders = append(sdkHeaders, http.CanonicalHeaderKey(name))
+				if strings.EqualFold(name, affinityHeader) {
+					_, err := uuid.Parse(call.header.Get(name))
+					assert.NoError(t, err, "the affinity is a UUID")
+					continue
+				}
+				assert.Equal(t, value, call.header.Get(name), name)
+			}
+			assert.ElementsMatch(t, sdkHeaders, slices.Collect(maps.Keys(call.header)))
+			assert.Equal(t, "Bearer mistral-key", call.header.Get("Authorization"))
+		})
+	}
+}
+
+// TestPythonJSON covers what the fixtures do not: each want is what Python's
+// json.dumps(json.loads(input), separators=(",", ":")) writes.
+func TestPythonJSON(t *testing.T) {
+	tests := []struct{ input, want string }{
+		{`{"a": 1e16, "b": 1e-5, "c": 0.0001, "d": -0.0, "e": -0, "f": 1E+2, "g": 123456789012345678901234567890, "h": 9999999999999998.0, "i": 2.5e-300, "j": 1.50}`,
+			`{"a":1e+16,"b":1e-05,"c":0.0001,"d":-0.0,"e":0,"f":100.0,"g":123456789012345678901234567890,"h":9999999999999998.0,"i":2.5e-300,"j":1.5}`},
+		{`["\u00e9 \ud83d\ude00 \/ \b\f\n\r\t \u0001 \u007f \u2028 \u003c&\u003e \ud800", "é😀"]`,
+			`["\u00e9 \ud83d\ude00 / \b\f\n\r\t \u0001 \u007f \u2028 <&> \ud800","\u00e9\ud83d\ude00"]`},
+		{`[ true , false , null , { "k" : [ ] } ]`, `[true,false,null,{"k":[]}]`},
+		{`not json`, `not json`},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, string(pythonJSON([]byte(tt.input))), tt.input)
+	}
+}
+
+// TestMistralDecodesCodedAnswers: the channel asks for gzip, deflate and br
+// as httpx2 does, so it decodes them itself, deflate zlib-wrapped or raw.
+func TestMistralDecodesCodedAnswers(t *testing.T) {
+	const answer = `{"id":"c1","object":"chat.completion"}`
+	code := func(coding string) []byte {
+		var coded bytes.Buffer
+		var writer io.WriteCloser
+		switch coding {
+		case "gzip":
+			writer = gzip.NewWriter(&coded)
+		case "deflate":
+			writer = zlib.NewWriter(&coded)
+		case "raw deflate":
+			writer, _ = flate.NewWriter(&coded, flate.DefaultCompression)
+		case "br":
+			writer = brotli.NewWriter(&coded)
+		}
+		_, _ = io.WriteString(writer, answer)
+		require.NoError(t, writer.Close())
+		return coded.Bytes()
+	}
+	for _, coding := range []string{"gzip", "deflate", "raw deflate", "br"} {
+		t.Run(coding, func(t *testing.T) {
+			body := code(coding)
+			resp := &http.Response{Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(body)), ContentLength: int64(len(body))}
+			resp.Header.Set("Content-Encoding", strings.TrimPrefix(coding, "raw "))
+			resp.Header.Set("Content-Length", fmt.Sprint(len(body)))
+			decodeContent(resp)
+			decoded, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			assert.Equal(t, answer, string(decoded))
+			assert.Empty(t, resp.Header.Get("Content-Encoding"))
+			assert.Empty(t, resp.Header.Get("Content-Length"))
+			assert.EqualValues(t, -1, resp.ContentLength)
+		})
+	}
+}
+
+// TestMistralPassThroughKeepsClientBytes: a body passed through goes out as
+// the client wrote it, any other as the SDK would write it.
+func TestMistralPassThroughKeepsClientBytes(t *testing.T) {
+	const body = `{"model": "mistral-small-latest", "temperature": 1, "messages": [{"role": "user", "content": "hi"}]}`
+	for _, passThrough := range []bool{false, true} {
+		var sent []byte
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			sent, _ = io.ReadAll(r.Body)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{}`)
+		}))
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		info := &relaycommon.RelayInfo{RelayMode: relayconstant.RelayModeChatCompletions, ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: constant.ChannelTypeMistral, ChannelBaseUrl: upstream.URL, ApiKey: "mistral-key",
+			ChannelSetting: dto.ChannelSettings{PassThroughBodyEnabled: passThrough},
+		}}
+		resp, err := (&Adaptor{}).DoRequest(c, info, strings.NewReader(body))
+		require.NoError(t, err)
+		require.NoError(t, resp.(*http.Response).Body.Close())
+		upstream.Close()
+		want := `{"model":"mistral-small-latest","temperature":1,"messages":[{"role":"user","content":"hi"}]}`
+		if passThrough {
+			want = body
+		}
+		assert.Equal(t, want, string(sent), "pass-through %v", passThrough)
 	}
 }
 

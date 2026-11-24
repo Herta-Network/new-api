@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -44,8 +45,9 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 }
 
 // SetupRequestHeader sets the headers Vibe's Mistral requests carry: its
-// User-Agent, the conversation's affinity, and the content types the Mistral
-// SDK sends. The channel's header override applies after them.
+// User-Agent, the conversation's affinity, the content types the Mistral SDK
+// sends, and the codings and connection httpx2 asks for. The channel's header
+// override applies after them.
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	req.Set("Authorization", "Bearer "+info.ApiKey)
 	req.Set("Content-Type", "application/json")
@@ -53,6 +55,8 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	if info.IsStream {
 		req.Set("Accept", "text/event-stream")
 	}
+	req.Set("Accept-Encoding", acceptEncoding)
+	req.Set("Connection", "keep-alive")
 	req.Set("User-Agent", UserAgent)
 	if info.RelayMode != relayconstant.RelayModeEmbeddings {
 		req.Set(affinityHeader, affinityID(c, info))
@@ -185,8 +189,24 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	return nil, errors.New("not implemented")
 }
 
+// DoRequest sends the body as the Mistral SDK writes it (pythonJSON), after
+// the request plugins and the channel's param override had their turn, and
+// decodes the answer's content coding. A passed-through body goes out as the
+// client wrote it.
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
-	return channel.DoApiRequest(a, c, info, requestBody)
+	if !model_setting.GetGlobalSettings().PassThroughRequestEnabled && !info.ChannelSetting.PassThroughBodyEnabled {
+		body, err := io.ReadAll(requestBody)
+		if err != nil {
+			return nil, err
+		}
+		requestBody = bytes.NewReader(pythonJSON(body))
+	}
+	resp, err := channel.DoApiRequest(a, c, info, requestBody)
+	if err != nil {
+		return nil, err
+	}
+	decodeContent(resp)
+	return resp, nil
 }
 
 // DoResponse reads Mistral's chat answer, normalized to the OpenAI shape, with

@@ -1,0 +1,43 @@
+{
+ "client": {
+  "model": "mistral-large-2512",
+  "stream": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": "Hello there"
+   }
+  ]
+ },
+ "sdk": {
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "headers": [
+   [
+    "Accept-Encoding",
+    "gzip, deflate, br"
+   ],
+   [
+    "Connection",
+    "keep-alive"
+   ],
+   [
+    "Accept",
+    "text/event-stream"
+   ],
+   [
+    "user-agent",
+    "mistral-client-python/Mistral-Vibe/3.1.4"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ],
+   [
+    "x-affinity",
+    "11111111-2222-3333-4444-555555555555"
+   ]
+  ],
+  "body": "{\"model\":\"mistral-large-2512\",\"messages\":[{\"content\":\"Hello there\",\"role\":\"user\"}],\"temperature\":1.0,\"stream\":true}"
+ }
+}

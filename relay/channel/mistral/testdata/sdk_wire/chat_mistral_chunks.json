@@ -1,0 +1,110 @@
+{
+ "client": {
+  "model": "mistral-small-latest",
+  "stream": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "text",
+      "text": "Summarize these."
+     },
+     {
+      "type": "image_url",
+      "image_url": {
+       "detail": "high",
+       "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+      }
+     },
+     {
+      "document_name": "spec.pdf",
+      "type": "document_url",
+      "document_url": "https://example.com/spec.pdf"
+     },
+     {
+      "type": "file",
+      "file": {
+       "file_id": "file-1"
+      }
+     },
+     {
+      "type": "input_audio",
+      "input_audio": {
+       "data": "UklGRgAAAAA=",
+       "format": "wav"
+      }
+     }
+    ]
+   },
+   {
+    "role": "assistant",
+    "content": [
+     {
+      "closed": true,
+      "signature": "sig-1",
+      "type": "thinking",
+      "thinking": [
+       {
+        "text": "Reading.",
+        "type": "text"
+       },
+       {
+        "reference_ids": [
+         1,
+         2
+        ],
+        "type": "reference"
+       }
+      ]
+     },
+     {
+      "type": "text",
+      "text": "Done."
+     },
+     {
+      "reference_ids": [
+       3
+      ],
+      "type": "reference"
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": "More detail."
+   }
+  ]
+ },
+ "sdk": {
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "headers": [
+   [
+    "Accept-Encoding",
+    "gzip, deflate, br"
+   ],
+   [
+    "Connection",
+    "keep-alive"
+   ],
+   [
+    "Accept",
+    "text/event-stream"
+   ],
+   [
+    "user-agent",
+    "mistral-client-python/Mistral-Vibe/3.1.4"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ],
+   [
+    "x-affinity",
+    "11111111-2222-3333-4444-555555555555"
+   ]
+  ],
+  "body": "{\"model\":\"mistral-small-latest\",\"messages\":[{\"content\":[{\"text\":\"Summarize these.\",\"type\":\"text\"},{\"image_url\":{\"url\":\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==\",\"detail\":\"high\"},\"type\":\"image_url\"},{\"document_url\":\"https://example.com/spec.pdf\",\"type\":\"document_url\",\"document_name\":\"spec.pdf\"},{\"file_id\":\"file-1\",\"type\":\"file\"},{\"input_audio\":\"UklGRgAAAAA=\",\"type\":\"input_audio\"}],\"role\":\"user\"},{\"role\":\"assistant\",\"content\":[{\"thinking\":[{\"text\":\"Reading.\",\"type\":\"text\"},{\"reference_ids\":[1,2],\"type\":\"reference\"}],\"type\":\"thinking\",\"signature\":\"sig-1\",\"closed\":true},{\"text\":\"Done.\",\"type\":\"text\"},{\"reference_ids\":[3],\"type\":\"reference\"}],\"prefix\":false},{\"content\":\"More detail.\",\"role\":\"user\"}],\"temperature\":1.0,\"stream\":true}"
+ }
+}

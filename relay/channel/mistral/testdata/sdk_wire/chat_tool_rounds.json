@@ -1,0 +1,149 @@
+{
+ "client": {
+  "model": "mistral-large-2512",
+  "stream": true,
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are Mistral Vibe."
+   },
+   {
+    "role": "user",
+    "content": "Read a.txt and b.txt"
+   },
+   {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+     {
+      "id": "Ab3dE6gH9",
+      "type": "function",
+      "function": {
+       "name": "read_file",
+       "arguments": "{\"path\":\"a.txt\"}"
+      }
+     },
+     {
+      "id": "Zx8yW7vU6",
+      "type": "function",
+      "function": {
+       "name": "read_file",
+       "arguments": "{\"path\":\"b.txt\"}"
+      }
+     }
+    ]
+   },
+   {
+    "role": "tool",
+    "tool_call_id": "Ab3dE6gH9",
+    "content": "alpha"
+   },
+   {
+    "role": "tool",
+    "tool_call_id": "Zx8yW7vU6",
+    "content": "beta"
+   },
+   {
+    "role": "assistant",
+    "content": "Both files read.",
+    "tool_calls": [
+     {
+      "id": "Qr5sT4uV3",
+      "type": "function",
+      "function": {
+       "name": "bash",
+       "arguments": "{\"command\":\"ls\"}"
+      }
+     }
+    ]
+   },
+   {
+    "role": "tool",
+    "tool_call_id": "Qr5sT4uV3",
+    "content": "a.txt\nb.txt"
+   },
+   {
+    "role": "user",
+    "content": "Thanks"
+   }
+  ],
+  "tools": [
+   {
+    "type": "function",
+    "function": {
+     "name": "read_file",
+     "description": "Read a file from the workspace.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string",
+        "description": "File path"
+       },
+       "limit": {
+        "type": "integer",
+        "minimum": 1
+       }
+      },
+      "required": [
+       "path"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "bash",
+     "description": "Run a shell command.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "command": {
+        "type": "string"
+       },
+       "timeout": {
+        "type": "number",
+        "default": 30.0
+       }
+      },
+      "required": [
+       "command"
+      ]
+     }
+    }
+   }
+  ]
+ },
+ "sdk": {
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "headers": [
+   [
+    "Accept-Encoding",
+    "gzip, deflate, br"
+   ],
+   [
+    "Connection",
+    "keep-alive"
+   ],
+   [
+    "Accept",
+    "text/event-stream"
+   ],
+   [
+    "user-agent",
+    "mistral-client-python/Mistral-Vibe/3.1.4"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ],
+   [
+    "x-affinity",
+    "11111111-2222-3333-4444-555555555555"
+   ]
+  ],
+  "body": "{\"model\":\"mistral-large-2512\",\"messages\":[{\"content\":\"You are Mistral Vibe.\",\"role\":\"system\"},{\"content\":\"Read a.txt and b.txt\",\"role\":\"user\"},{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\"}\"},\"id\":\"Ab3dE6gH9\",\"type\":\"function\",\"index\":0},{\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"b.txt\\\"}\"},\"id\":\"Zx8yW7vU6\",\"type\":\"function\",\"index\":0}],\"prefix\":false},{\"content\":\"alpha\",\"role\":\"tool\",\"tool_call_id\":\"Ab3dE6gH9\",\"name\":\"read_file\"},{\"content\":\"beta\",\"role\":\"tool\",\"tool_call_id\":\"Zx8yW7vU6\",\"name\":\"read_file\"},{\"role\":\"assistant\",\"content\":\"Both files read.\",\"tool_calls\":[{\"function\":{\"name\":\"bash\",\"arguments\":\"{\\\"command\\\":\\\"ls\\\"}\"},\"id\":\"Qr5sT4uV3\",\"type\":\"function\",\"index\":0}],\"prefix\":false},{\"content\":\"a.txt\\nb.txt\",\"role\":\"tool\",\"tool_call_id\":\"Qr5sT4uV3\",\"name\":\"bash\"},{\"content\":\"Thanks\",\"role\":\"user\"}],\"temperature\":1.0,\"stream\":true,\"tools\":[{\"function\":{\"name\":\"read_file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\",\"description\":\"File path\"},\"limit\":{\"type\":\"integer\",\"minimum\":1}},\"required\":[\"path\"]},\"description\":\"Read a file from the workspace.\"},\"type\":\"function\"},{\"function\":{\"name\":\"bash\",\"parameters\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"},\"timeout\":{\"type\":\"number\",\"default\":30.0}},\"required\":[\"command\"]},\"description\":\"Run a shell command.\"},\"type\":\"function\"}],\"parallel_tool_calls\":true}"
+ }
+}

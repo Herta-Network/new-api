@@ -1,0 +1,48 @@
+{
+ "client": {
+  "model": "mistral-large-2512",
+  "stream": true,
+  "temperature": 0.2,
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are Mistral Vibe, a coding agent."
+   },
+   {
+    "role": "user",
+    "content": "List the files."
+   }
+  ]
+ },
+ "sdk": {
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "headers": [
+   [
+    "Accept-Encoding",
+    "gzip, deflate, br"
+   ],
+   [
+    "Connection",
+    "keep-alive"
+   ],
+   [
+    "Accept",
+    "text/event-stream"
+   ],
+   [
+    "user-agent",
+    "mistral-client-python/Mistral-Vibe/3.1.4"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ],
+   [
+    "x-affinity",
+    "11111111-2222-3333-4444-555555555555"
+   ]
+  ],
+  "body": "{\"model\":\"mistral-large-2512\",\"messages\":[{\"content\":\"You are Mistral Vibe, a coding agent.\",\"role\":\"system\"},{\"content\":\"List the files.\",\"role\":\"user\"}],\"temperature\":0.2,\"stream\":true}"
+ }
+}

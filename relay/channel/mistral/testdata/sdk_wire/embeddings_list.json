@@ -1,0 +1,36 @@
+{
+ "client": {
+  "model": "mistral-embed",
+  "input": [
+   "first text",
+   "second text"
+  ]
+ },
+ "sdk": {
+  "method": "POST",
+  "path": "/v1/embeddings",
+  "headers": [
+   [
+    "Accept-Encoding",
+    "gzip, deflate, br"
+   ],
+   [
+    "Connection",
+    "keep-alive"
+   ],
+   [
+    "Accept",
+    "application/json"
+   ],
+   [
+    "user-agent",
+    "mistral-client-python/Mistral-Vibe/3.1.4"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ]
+  ],
+  "body": "{\"model\":\"mistral-embed\",\"input\":[\"first text\",\"second text\"]}"
+ }
+}

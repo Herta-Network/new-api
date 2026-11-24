@@ -1,0 +1,102 @@
+{
+ "client": {
+  "model": "mistral-small-latest",
+  "stream": true,
+  "temperature": 0,
+  "top_p": 1,
+  "stop": [
+   "END"
+  ],
+  "seed": 7,
+  "metadata": {
+   "trace": "t-1"
+  },
+  "response_format": {
+   "type": "json_schema",
+   "json_schema": {
+    "strict": true,
+    "schema": {
+     "type": "object"
+    },
+    "name": "answer"
+   }
+  },
+  "tools": [
+   {
+    "type": "function",
+    "function": {
+     "name": "read_file",
+     "description": "Read a file from the workspace.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string",
+        "description": "File path"
+       },
+       "limit": {
+        "type": "integer",
+        "minimum": 1
+       }
+      },
+      "required": [
+       "path"
+      ]
+     }
+    }
+   }
+  ],
+  "tool_choice": {
+   "type": "function",
+   "function": {
+    "name": "read_file"
+   }
+  },
+  "presence_penalty": 0,
+  "frequency_penalty": 0.5,
+  "n": 2,
+  "prediction": {
+   "content": "{}"
+  },
+  "parallel_tool_calls": false,
+  "prompt_cache_key": "pk-1",
+  "safe_prompt": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": "Return JSON."
+   }
+  ]
+ },
+ "sdk": {
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "headers": [
+   [
+    "Accept-Encoding",
+    "gzip, deflate, br"
+   ],
+   [
+    "Connection",
+    "keep-alive"
+   ],
+   [
+    "Accept",
+    "text/event-stream"
+   ],
+   [
+    "user-agent",
+    "mistral-client-python/Mistral-Vibe/3.1.4"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ],
+   [
+    "x-affinity",
+    "11111111-2222-3333-4444-555555555555"
+   ]
+  ],
+  "body": "{\"model\":\"mistral-small-latest\",\"messages\":[{\"content\":\"Return JSON.\",\"role\":\"user\"}],\"temperature\":0.0,\"top_p\":1.0,\"stream\":true,\"stop\":[\"END\"],\"random_seed\":7,\"metadata\":{\"trace\":\"t-1\"},\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"answer\",\"schema\":{\"type\":\"object\"},\"strict\":true}},\"tools\":[{\"function\":{\"name\":\"read_file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\",\"description\":\"File path\"},\"limit\":{\"type\":\"integer\",\"minimum\":1}},\"required\":[\"path\"]},\"description\":\"Read a file from the workspace.\"},\"type\":\"function\"}],\"tool_choice\":{\"function\":{\"name\":\"read_file\"},\"type\":\"function\"},\"presence_penalty\":0.0,\"frequency_penalty\":0.5,\"n\":2,\"prediction\":{\"type\":\"content\",\"content\":\"{}\"},\"parallel_tool_calls\":false,\"prompt_cache_key\":\"pk-1\",\"safe_prompt\":true}"
+ }
+}

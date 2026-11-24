@@ -1,0 +1,97 @@
+{
+ "client": {
+  "model": "mistral-vibe-cli-latest",
+  "stream": true,
+  "stream_options": {
+   "include_usage": true
+  },
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are Mistral Vibe."
+   },
+   {
+    "role": "user",
+    "content": "Read a.txt"
+   }
+  ],
+  "tools": [
+   {
+    "type": "function",
+    "function": {
+     "name": "read_file",
+     "description": "Read a file from the workspace.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string",
+        "description": "File path"
+       },
+       "limit": {
+        "type": "integer",
+        "minimum": 1
+       }
+      },
+      "required": [
+       "path"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "bash",
+     "description": "Run a shell command.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "command": {
+        "type": "string"
+       },
+       "timeout": {
+        "type": "number",
+        "default": 30.0
+       }
+      },
+      "required": [
+       "command"
+      ]
+     }
+    }
+   }
+  ]
+ },
+ "sdk": {
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "headers": [
+   [
+    "Accept-Encoding",
+    "gzip, deflate, br"
+   ],
+   [
+    "Connection",
+    "keep-alive"
+   ],
+   [
+    "Accept",
+    "text/event-stream"
+   ],
+   [
+    "user-agent",
+    "mistral-client-python/Mistral-Vibe/3.1.4"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ],
+   [
+    "x-affinity",
+    "11111111-2222-3333-4444-555555555555"
+   ]
+  ],
+  "body": "{\"model\":\"mistral-vibe-cli-latest\",\"messages\":[{\"content\":\"You are Mistral Vibe.\",\"role\":\"system\"},{\"content\":\"Read a.txt\",\"role\":\"user\"}],\"temperature\":1.0,\"stream\":true,\"tools\":[{\"function\":{\"name\":\"read_file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\",\"description\":\"File path\"},\"limit\":{\"type\":\"integer\",\"minimum\":1}},\"required\":[\"path\"]},\"description\":\"Read a file from the workspace.\"},\"type\":\"function\"},{\"function\":{\"name\":\"bash\",\"parameters\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"},\"timeout\":{\"type\":\"number\",\"default\":30.0}},\"required\":[\"command\"]},\"description\":\"Run a shell command.\"},\"type\":\"function\"}],\"parallel_tool_calls\":true,\"reasoning_effort\":\"high\"}"
+ }
+}

@@ -20,54 +20,85 @@ import (
 
 // chatRequest is the body of Mistral's POST /v1/chat/completions, with its
 // members in the order the Mistral SDK Vibe uses writes them (mistralai 3.5.0,
-// ChatCompletionStreamRequest). Mistral refuses members it does not know, so
-// nothing else is sent.
+// ChatCompletionStreamRequest and ChatCompletionRequest). Mistral refuses
+// members it does not know, so nothing else is sent. The types below follow
+// the SDK's models member by member, and DoRequest finishes the body as the
+// SDK's JSON encoder writes it (pythonJSON).
 type chatRequest struct {
-	Model             string              `json:"model"`
-	Messages          []chatMessage       `json:"messages"`
-	Temperature       *float64            `json:"temperature,omitempty"`
-	TopP              *float64            `json:"top_p,omitempty"`
-	MaxTokens         *uint               `json:"max_tokens,omitempty"`
-	Stream            bool                `json:"stream"`
-	Stop              any                 `json:"stop,omitempty"`
-	RandomSeed        json.RawMessage     `json:"random_seed,omitempty"`
-	Metadata          json.RawMessage     `json:"metadata,omitempty"`
-	ResponseFormat    *dto.ResponseFormat `json:"response_format,omitempty"`
-	Tools             []chatTool          `json:"tools,omitempty"`
-	ToolChoice        any                 `json:"tool_choice,omitempty"`
-	PresencePenalty   *float64            `json:"presence_penalty,omitempty"`
-	FrequencyPenalty  *float64            `json:"frequency_penalty,omitempty"`
-	MinTokens         *uint               `json:"min_tokens,omitempty"`
-	RepetitionPenalty json.RawMessage     `json:"repetition_penalty,omitempty"`
-	TopK              *int                `json:"top_k,omitempty"`
-	LogProbs          *bool               `json:"logprobs,omitempty"`
-	TopLogProbs       *int                `json:"top_logprobs,omitempty"`
-	N                 *int                `json:"n,omitempty"`
-	Prediction        json.RawMessage     `json:"prediction,omitempty"`
-	ParallelToolCalls *bool               `json:"parallel_tool_calls,omitempty"`
-	ReasoningEffort   string              `json:"reasoning_effort,omitempty"`
-	PromptMode        json.RawMessage     `json:"prompt_mode,omitempty"`
-	Guardrails        json.RawMessage     `json:"guardrails,omitempty"`
-	PromptCacheKey    string              `json:"prompt_cache_key,omitempty"`
-	ServiceTier       json.RawMessage     `json:"service_tier,omitempty"`
-	SafePrompt        json.RawMessage     `json:"safe_prompt,omitempty"`
+	Model             string          `json:"model"`
+	Messages          []chatMessage   `json:"messages"`
+	Temperature       *sdkFloat       `json:"temperature,omitempty"`
+	TopP              *sdkFloat       `json:"top_p,omitempty"`
+	MaxTokens         *uint           `json:"max_tokens,omitempty"`
+	Stream            bool            `json:"stream"`
+	Stop              any             `json:"stop,omitempty"`
+	RandomSeed        json.RawMessage `json:"random_seed,omitempty"`
+	Metadata          json.RawMessage `json:"metadata,omitempty"`
+	ResponseFormat    *responseFormat `json:"response_format,omitempty"`
+	Tools             []chatTool      `json:"tools,omitempty"`
+	ToolChoice        any             `json:"tool_choice,omitempty"`
+	PresencePenalty   *sdkFloat       `json:"presence_penalty,omitempty"`
+	FrequencyPenalty  *sdkFloat       `json:"frequency_penalty,omitempty"`
+	MinTokens         *uint           `json:"min_tokens,omitempty"`
+	RepetitionPenalty any             `json:"repetition_penalty,omitempty"`
+	TopK              *int            `json:"top_k,omitempty"`
+	LogProbs          *bool           `json:"logprobs,omitempty"`
+	TopLogProbs       *int            `json:"top_logprobs,omitempty"`
+	N                 *int            `json:"n,omitempty"`
+	Prediction        any             `json:"prediction,omitempty"`
+	ParallelToolCalls *bool           `json:"parallel_tool_calls,omitempty"`
+	ReasoningEffort   string          `json:"reasoning_effort,omitempty"`
+	PromptMode        json.RawMessage `json:"prompt_mode,omitempty"`
+	Guardrails        json.RawMessage `json:"guardrails,omitempty"`
+	PromptCacheKey    string          `json:"prompt_cache_key,omitempty"`
+	ServiceTier       json.RawMessage `json:"service_tier,omitempty"`
+	SafePrompt        json.RawMessage `json:"safe_prompt,omitempty"`
 }
 
 // chatMessage is one Mistral message. Content is a string, a list of chunks,
 // or null for an assistant turn that only calls tools.
 type chatMessage struct {
-	Role       string     `json:"role"`
-	Content    any        `json:"content"`
-	ToolCalls  []toolCall `json:"tool_calls,omitempty"`
-	Prefix     *bool      `json:"prefix,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	Name       string     `json:"name,omitempty"`
+	Role       string
+	Content    any
+	ToolCalls  []toolCall
+	Prefix     bool
+	ToolCallID string
+	Name       string
 }
 
+// MarshalJSON writes a message's members in the order the SDK's model of its
+// role has them: content before the role but on an assistant turn, which
+// always carries prefix.
+func (m chatMessage) MarshalJSON() ([]byte, error) {
+	switch m.Role {
+	case "assistant":
+		return common.Marshal(struct {
+			Role      string     `json:"role"`
+			Content   any        `json:"content"`
+			ToolCalls []toolCall `json:"tool_calls,omitempty"`
+			Prefix    bool       `json:"prefix"`
+		}{m.Role, m.Content, m.ToolCalls, m.Prefix})
+	case "tool":
+		return common.Marshal(struct {
+			Content    any    `json:"content"`
+			Role       string `json:"role"`
+			ToolCallID string `json:"tool_call_id,omitempty"`
+			Name       string `json:"name,omitempty"`
+		}{m.Content, m.Role, m.ToolCallID, m.Name})
+	}
+	return common.Marshal(struct {
+		Content any    `json:"content"`
+		Role    string `json:"role"`
+	}{m.Content, m.Role})
+}
+
+// toolCall is a call of an assistant turn. Index is the SDK's default, 0:
+// Vibe sets none, so every call goes out with it.
 type toolCall struct {
+	Function toolCallFunction `json:"function"`
 	ID       string           `json:"id"`
 	Type     string           `json:"type"`
-	Function toolCallFunction `json:"function"`
+	Index    int              `json:"index"`
 }
 
 type toolCallFunction struct {
@@ -76,16 +107,82 @@ type toolCallFunction struct {
 }
 
 type chatTool struct {
-	Type     string       `json:"type"`
 	Function chatFunction `json:"function"`
+	Type     string       `json:"type"`
 }
 
 type chatFunction struct {
 	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters"`
+	Description string          `json:"description,omitempty"`
 	Strict      *bool           `json:"strict,omitempty"`
 }
+
+// toolChoice names the one function the model must call.
+type toolChoice struct {
+	Function functionName `json:"function"`
+	Type     string       `json:"type"`
+}
+
+type functionName struct {
+	Name string `json:"name"`
+}
+
+type responseFormat struct {
+	Type       string      `json:"type,omitempty"`
+	JSONSchema *jsonSchema `json:"json_schema,omitempty"`
+}
+
+type jsonSchema struct {
+	Name        string          `json:"name"`
+	Schema      json.RawMessage `json:"schema,omitempty"`
+	Description *string         `json:"description,omitempty"`
+	Strict      *bool           `json:"strict,omitempty"`
+}
+
+type prediction struct {
+	Type    string `json:"type"`
+	Content string `json:"content"`
+}
+
+// The chunks of a message's content.
+type (
+	textChunk struct {
+		Text string `json:"text"`
+		Type string `json:"type"`
+	}
+	imageURLChunk struct {
+		ImageURL imageURL `json:"image_url"`
+		Type     string   `json:"type"`
+	}
+	imageURL struct {
+		URL    string `json:"url"`
+		Detail string `json:"detail,omitempty"`
+	}
+	audioChunk struct {
+		InputAudio string `json:"input_audio"`
+		Type       string `json:"type"`
+	}
+	fileChunk struct {
+		FileID string `json:"file_id"`
+		Type   string `json:"type"`
+	}
+	documentURLChunk struct {
+		DocumentURL  string `json:"document_url"`
+		Type         string `json:"type"`
+		DocumentName string `json:"document_name,omitempty"`
+	}
+	thinkChunk struct {
+		Thinking  []any   `json:"thinking"`
+		Type      string  `json:"type"`
+		Signature *string `json:"signature,omitempty"`
+		Closed    *bool   `json:"closed,omitempty"`
+	}
+	referenceChunk struct {
+		ReferenceIDs json.RawMessage `json:"reference_ids"`
+		Type         string          `json:"type"`
+	}
+)
 
 // chatMembers are the members of a chat request that reach Mistral, under
 // their own name or Mistral's.
@@ -137,24 +234,46 @@ func convertChatRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dt
 	model := request.Model
 	out := &chatRequest{
 		Model:             model,
-		Temperature:       request.Temperature,
-		TopP:              request.TopP,
+		Temperature:       sdkFloatOf(request.Temperature),
+		TopP:              sdkFloatOf(request.TopP),
 		Stream:            request.Stream != nil && *request.Stream,
 		Stop:              request.Stop,
 		Metadata:          request.Metadata,
-		ResponseFormat:    request.ResponseFormat,
-		PresencePenalty:   request.PresencePenalty,
-		FrequencyPenalty:  request.FrequencyPenalty,
+		PresencePenalty:   sdkFloatOf(request.PresencePenalty),
+		FrequencyPenalty:  sdkFloatOf(request.FrequencyPenalty),
 		MinTokens:         request.MinTokens,
-		RepetitionPenalty: request.RepetitionPenalty,
 		TopK:              request.TopK,
 		LogProbs:          request.LogProbs,
 		TopLogProbs:       request.TopLogProbs,
 		N:                 request.N,
-		Prediction:        request.Prediction,
 		ParallelToolCalls: request.ParallelTooCalls,
 		PromptCacheKey:    request.PromptCacheKey,
 		ServiceTier:       request.ServiceTier,
+	}
+	if penalty := gjson.ParseBytes(request.RepetitionPenalty); penalty.Type == gjson.Number {
+		out.RepetitionPenalty = sdkFloat(penalty.Float())
+	} else if len(request.RepetitionPenalty) > 0 {
+		out.RepetitionPenalty = request.RepetitionPenalty
+	}
+	// The SDK writes a JSON schema format's members in its own order, and a
+	// prediction with its type, which defaults to content.
+	if format := request.ResponseFormat; format != nil {
+		out.ResponseFormat = &responseFormat{Type: format.Type}
+		if schema := gjson.ParseBytes(format.JsonSchema); schema.IsObject() {
+			out.ResponseFormat.JSONSchema = &jsonSchema{Name: schema.Get("name").Str, Schema: json.RawMessage(schema.Get("schema").Raw)}
+			if description := schema.Get("description"); description.Type == gjson.String {
+				out.ResponseFormat.JSONSchema.Description = &description.Str
+			}
+			if strict := schema.Get("strict"); strict.IsBool() {
+				value := strict.Bool()
+				out.ResponseFormat.JSONSchema.Strict = &value
+			}
+		}
+	}
+	if predicted := gjson.ParseBytes(request.Prediction); predicted.IsObject() && (!predicted.Get("content").Exists() || predicted.Get("content").Type == gjson.String) {
+		out.Prediction = prediction{Type: cmp.Or(predicted.Get("type").Str, "content"), Content: predicted.Get("content").Str}
+	} else if len(request.Prediction) > 0 {
+		out.Prediction = request.Prediction
 	}
 	// Members of Mistral's own chat API come from the body of a client that
 	// speaks it, such as Vibe or the Mistral SDK pointed at the gateway; the
@@ -173,7 +292,7 @@ func convertChatRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dt
 		return nil, clientError("Mistral does not support the requested n %d: it returns 1 to %d choices", *out.N, maxChoices)
 	}
 	if out.Temperature == nil {
-		temperature := defaultTemperature
+		temperature := sdkFloat(defaultTemperature)
 		out.Temperature = &temperature
 	}
 	if request.MaxTokens != nil || request.MaxCompletionTokens != nil {
@@ -251,7 +370,7 @@ func convertMessages(messages []dto.Message, replayReasoning bool, loss *lossRep
 			converted.Role = "system"
 		case "assistant":
 			// Only an assistant message can be the prefix of the answer.
-			converted.Prefix = message.Prefix
+			converted.Prefix = message.Prefix != nil && *message.Prefix
 			unanswered = nil
 			for j, call := range message.ParseToolCalls() {
 				// Mistral takes the client's ids as they are; a call without
@@ -268,7 +387,7 @@ func convertMessages(messages []dto.Message, replayReasoning bool, loss *lossRep
 					arguments = "{}"
 				}
 				converted.ToolCalls = append(converted.ToolCalls, toolCall{
-					ID: id, Type: "function", Function: toolCallFunction{Name: call.Function.Name, Arguments: arguments},
+					Function: toolCallFunction{Name: call.Function.Name, Arguments: arguments}, ID: id, Type: "function",
 				})
 			}
 			reasoning := ""
@@ -278,11 +397,11 @@ func convertMessages(messages []dto.Message, replayReasoning bool, loss *lossRep
 				reasoning = *message.Reasoning
 			}
 			if replayReasoning && reasoning != "" {
-				chunks := []any{map[string]any{"type": "thinking", "thinking": []any{map[string]any{"type": "text", "text": reasoning}}}}
+				chunks := []any{thinkChunk{Thinking: []any{textChunk{Text: reasoning, Type: "text"}}, Type: "thinking"}}
 				switch content := content.(type) {
 				case string:
 					if content != "" {
-						chunks = append(chunks, map[string]any{"type": "text", "text": content})
+						chunks = append(chunks, textChunk{Text: content, Type: "text"})
 					}
 				case []any:
 					chunks = append(chunks, content...)
@@ -316,7 +435,7 @@ func convertMessages(messages []dto.Message, replayReasoning bool, loss *lossRep
 // alone as one string, its parts joined by a blank line as Vibe joins them;
 // otherwise a list of chunks, with images as image_url objects, audio as its
 // base64 data, files as Mistral file or document chunks, and Mistral's own
-// chunks (thinking, document_url, reference) as they came.
+// chunks (thinking, document_url, reference) with the members the SDK has.
 func convertContent(content any, path string, loss *lossReport) any {
 	switch content := content.(type) {
 	case nil:
@@ -341,42 +460,60 @@ func convertContent(content any, path string, loss *lossReport) any {
 		case dto.ContentTypeText:
 			text := part.Get("text").Str
 			texts = append(texts, text)
-			chunks = append(chunks, map[string]any{"type": "text", "text": text})
+			chunks = append(chunks, textChunk{Text: text, Type: "text"})
 			continue
 		case dto.ContentTypeImageURL:
 			image := part.Get("image_url")
-			imageURL := map[string]any{"url": image.Get("url").Str}
+			url := image.Get("url").Str
 			if image.Type == gjson.String {
-				imageURL["url"] = image.Str
+				url = image.Str
 			}
-			if detail := image.Get("detail").Str; detail != "" {
-				imageURL["detail"] = detail
-			}
-			chunks = append(chunks, map[string]any{"type": "image_url", "image_url": imageURL})
+			chunks = append(chunks, imageURLChunk{ImageURL: imageURL{URL: url, Detail: image.Get("detail").Str}, Type: "image_url"})
 		case dto.ContentTypeInputAudio:
 			audio := part.Get("input_audio")
 			data := audio.Get("data").Str
 			if audio.Type == gjson.String {
 				data = audio.Str
 			}
-			chunks = append(chunks, map[string]any{"type": "input_audio", "input_audio": data})
+			chunks = append(chunks, audioChunk{InputAudio: data, Type: "input_audio"})
 		case dto.ContentTypeFile:
 			file := part.Get("file")
 			switch fileID := cmp.Or(file.Get("file_id").Str, part.Get("file_id").Str); {
 			case fileID != "":
-				chunks = append(chunks, map[string]any{"type": "file", "file_id": fileID})
+				chunks = append(chunks, fileChunk{FileID: fileID, Type: "file"})
 			case file.Get("file_data").Str != "":
-				document := map[string]any{"type": "document_url", "document_url": file.Get("file_data").Str}
-				if name := file.Get("filename").Str; name != "" {
-					document["document_name"] = name
-				}
-				chunks = append(chunks, document)
+				chunks = append(chunks, documentURLChunk{DocumentURL: file.Get("file_data").Str, Type: "document_url", DocumentName: file.Get("filename").Str})
 			default:
 				loss.add("unsupported_media_source", path, "a file part without file_id or file_data was left out", types.ConversionDiagnosticWarning)
 				continue
 			}
-		case "thinking", "document_url", "reference":
-			chunks = append(chunks, json.RawMessage(part.Raw))
+		case "document_url":
+			chunks = append(chunks, documentURLChunk{DocumentURL: part.Get("document_url").Str, Type: kind, DocumentName: part.Get("document_name").Str})
+		case "reference":
+			chunks = append(chunks, referenceChunk{ReferenceIDs: json.RawMessage(cmp.Or(part.Get("reference_ids").Raw, "[]")), Type: kind})
+		case "thinking":
+			// Mistral's reasoning of an earlier turn: text and reference
+			// chunks, with the signature and closed flag it came with.
+			thinking := thinkChunk{Thinking: []any{}, Type: kind}
+			for _, item := range part.Get("thinking").Array() {
+				if item.Get("type").Str == "reference" {
+					thinking.Thinking = append(thinking.Thinking, referenceChunk{ReferenceIDs: json.RawMessage(cmp.Or(item.Get("reference_ids").Raw, "[]")), Type: "reference"})
+					continue
+				}
+				text := item.Get("text").Str
+				if item.Type == gjson.String {
+					text = item.Str
+				}
+				thinking.Thinking = append(thinking.Thinking, textChunk{Text: text, Type: "text"})
+			}
+			if signature := part.Get("signature"); signature.Type == gjson.String {
+				thinking.Signature = &signature.Str
+			}
+			if closed := part.Get("closed"); closed.IsBool() {
+				value := closed.Bool()
+				thinking.Closed = &value
+			}
+			chunks = append(chunks, thinking)
 		default:
 			loss.add("unsupported_media_type", path, "Mistral takes no "+kind+" content; the part was left out", types.ConversionDiagnosticWarning)
 			continue
@@ -400,15 +537,14 @@ func keepRecentImages(messages []chatMessage, loss *lossReport) {
 			continue
 		}
 		for j := len(chunks) - 1; j >= 0; j-- {
-			chunk, ok := chunks[j].(map[string]any)
-			if !ok || chunk["type"] != "image_url" {
+			if _, image := chunks[j].(imageURLChunk); !image {
 				continue
 			}
 			if kept < maxRequestImages {
 				kept++
 				continue
 			}
-			chunks[j] = map[string]any{"type": "text", "text": droppedImageText}
+			chunks[j] = textChunk{Text: droppedImageText, Type: "text"}
 			loss.add("image_limit", fmt.Sprintf("messages.%d.content.%d", i, j), droppedImageText, types.ConversionDiagnosticWarning)
 		}
 	}
@@ -445,9 +581,9 @@ func convertTools(request *dto.GeneralOpenAIRequest, out *chatRequest, loss *los
 		if len(parameters) == 0 {
 			parameters = json.RawMessage(`{"type":"object","properties":{}}`)
 		}
-		out.Tools = append(out.Tools, chatTool{Type: "function", Function: chatFunction{
-			Name: tool.Function.Name, Description: tool.Function.Description, Parameters: parameters, Strict: tool.Function.Strict,
-		}})
+		out.Tools = append(out.Tools, chatTool{Function: chatFunction{
+			Name: tool.Function.Name, Parameters: parameters, Description: tool.Function.Description, Strict: tool.Function.Strict,
+		}, Type: "function"})
 	}
 	if choice == nil {
 		return
@@ -461,7 +597,7 @@ func convertTools(request *dto.GeneralOpenAIRequest, out *chatRequest, loss *los
 	case parsed.Type == gjson.String:
 		out.ToolChoice = parsed.Str
 	case parsed.Get("type").Str == "function" && parsed.Get("function.name").Str != "":
-		out.ToolChoice = map[string]any{"type": "function", "function": map[string]any{"name": parsed.Get("function.name").Str}}
+		out.ToolChoice = toolChoice{Function: functionName{Name: parsed.Get("function.name").Str}, Type: "function"}
 	default:
 		loss.add("unsupported_tool_choice", "tool_choice", "Mistral takes auto, none, any, required or one function as the tool choice; it was left out", types.ConversionDiagnosticError)
 	}
