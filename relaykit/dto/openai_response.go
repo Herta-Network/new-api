@@ -231,13 +231,15 @@ type CompletionsStreamResponse struct {
 }
 
 type Usage struct {
-	PromptTokens         int           `json:"prompt_tokens"`
-	CompletionTokens     int           `json:"completion_tokens"`
-	TotalTokens          int           `json:"total_tokens"`
-	PromptCacheHitTokens int           `json:"prompt_cache_hit_tokens,omitempty"`
-	UsageSemantic        string        `json:"usage_semantic,omitempty"`
-	UsageSource          string        `json:"usage_source,omitempty"`
-	BillingUsage         *BillingUsage `json:"billing_usage,omitempty"`
+	PromptTokens         int `json:"prompt_tokens"`
+	CompletionTokens     int `json:"completion_tokens"`
+	TotalTokens          int `json:"total_tokens"`
+	PromptCacheHitTokens int `json:"prompt_cache_hit_tokens,omitempty"`
+	// The gateway's own accounting: it travels with the value in memory and is
+	// never written to a client or read from an upstream.
+	UsageSemantic string        `json:"-"`
+	UsageSource   string        `json:"-"`
+	BillingUsage  *BillingUsage `json:"-"`
 
 	PromptTokensDetails    InputTokenDetails   `json:"prompt_tokens_details"`
 	CompletionTokenDetails OutputTokenDetails  `json:"completion_tokens_details"`
@@ -246,9 +248,9 @@ type Usage struct {
 	InputTokensDetails     *InputTokenDetails  `json:"input_tokens_details"`
 	OutputTokensDetails    *OutputTokenDetails `json:"output_tokens_details,omitempty"`
 
-	// claude cache 1h
-	ClaudeCacheCreation5mTokens int `json:"claude_cache_creation_5_m_tokens"`
-	ClaudeCacheCreation1hTokens int `json:"claude_cache_creation_1_h_tokens"`
+	// claude cache 1h, the gateway's split of Claude's cache_creation
+	ClaudeCacheCreation5mTokens int `json:"-"`
+	ClaudeCacheCreation1hTokens int `json:"-"`
 
 	// OpenRouter Params
 	Cost any `json:"cost,omitempty"`

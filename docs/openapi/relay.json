@@ -3785,29 +3785,6 @@
                 }
             }
         },
-        "dto.BillingUsage": {
-            "type": "object",
-            "properties": {
-                "claude_usage": {
-                    "$ref": "#/definitions/dto.ClaudeUsage"
-                },
-                "estimated": {
-                    "type": "boolean"
-                },
-                "gemini_usage_metadata": {
-                    "$ref": "#/definitions/dto.GeminiUsageMetadata"
-                },
-                "openai_usage": {
-                    "$ref": "#/definitions/dto.Usage"
-                },
-                "semantic": {
-                    "type": "string"
-                },
-                "source": {
-                    "type": "string"
-                }
-            }
-        },
         "dto.CacheWriteTokenDetails": {
             "type": "object",
             "properties": {
@@ -4101,9 +4078,6 @@
         "dto.ClaudeUsage": {
             "type": "object",
             "properties": {
-                "billing_usage": {
-                    "$ref": "#/definitions/dto.BillingUsage"
-                },
                 "cache_creation": {
                     "$ref": "#/definitions/dto.ClaudeCacheCreationUsage"
                 },
@@ -4111,13 +4085,6 @@
                     "type": "integer"
                 },
                 "cache_read_input_tokens": {
-                    "type": "integer"
-                },
-                "claude_cache_creation_1_h_tokens": {
-                    "type": "integer"
-                },
-                "claude_cache_creation_5_m_tokens": {
-                    "description": "claude cache 1h",
                     "type": "integer"
                 },
                 "input_tokens": {
@@ -4721,9 +4688,6 @@
         "dto.GeminiUsageMetadata": {
             "type": "object",
             "properties": {
-                "billing_usage": {
-                    "$ref": "#/definitions/dto.BillingUsage"
-                },
                 "cachedContentTokenCount": {
                     "type": "integer"
                 },
@@ -6316,16 +6280,6 @@
         "dto.Usage": {
             "type": "object",
             "properties": {
-                "billing_usage": {
-                    "$ref": "#/definitions/dto.BillingUsage"
-                },
-                "claude_cache_creation_1_h_tokens": {
-                    "type": "integer"
-                },
-                "claude_cache_creation_5_m_tokens": {
-                    "description": "claude cache 1h",
-                    "type": "integer"
-                },
                 "completion_tokens": {
                     "type": "integer"
                 },
@@ -6358,12 +6312,6 @@
                 },
                 "total_tokens": {
                     "type": "integer"
-                },
-                "usage_semantic": {
-                    "type": "string"
-                },
-                "usage_source": {
-                    "type": "string"
                 }
             }
         },

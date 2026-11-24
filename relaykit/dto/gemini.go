@@ -605,7 +605,9 @@ type GeminiUsageMetadata struct {
 	PromptTokensDetails        []GeminiPromptTokensDetails `json:"promptTokensDetails"`
 	ToolUsePromptTokensDetails []GeminiPromptTokensDetails `json:"toolUsePromptTokensDetails"`
 	CandidatesTokensDetails    []GeminiPromptTokensDetails `json:"candidatesTokensDetails"`
-	BillingUsage               *BillingUsage               `json:"billing_usage,omitempty"`
+	// BillingUsage is the gateway's own accounting, never written to a client
+	// or read from an upstream.
+	BillingUsage *BillingUsage `json:"-"`
 }
 
 type GeminiPromptTokensDetails struct {

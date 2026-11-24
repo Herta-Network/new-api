@@ -22,23 +22,6 @@
     "input_tokens": 10,
     "cache_creation_input_tokens": 0,
     "cache_read_input_tokens": 0,
-    "output_tokens": 7,
-    "claude_cache_creation_5_m_tokens": 0,
-    "claude_cache_creation_1_h_tokens": 0,
-    "billing_usage": {
-      "source": "gemini_chat",
-      "semantic": "gemini",
-      "gemini_usage_metadata": {
-        "promptTokenCount": 10,
-        "toolUsePromptTokenCount": 0,
-        "candidatesTokenCount": 5,
-        "totalTokenCount": 15,
-        "thoughtsTokenCount": 2,
-        "cachedContentTokenCount": 0,
-        "promptTokensDetails": [],
-        "toolUsePromptTokensDetails": [],
-        "candidatesTokensDetails": []
-      }
-    }
+    "output_tokens": 7
   }
 }

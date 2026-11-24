@@ -693,11 +693,12 @@ type ClaudeUsage struct {
 	CacheReadInputTokens     int                       `json:"cache_read_input_tokens"`
 	OutputTokens             int                       `json:"output_tokens"`
 	CacheCreation            *ClaudeCacheCreationUsage `json:"cache_creation,omitempty"`
-	// claude cache 1h
-	ClaudeCacheCreation5mTokens int                  `json:"claude_cache_creation_5_m_tokens"`
-	ClaudeCacheCreation1hTokens int                  `json:"claude_cache_creation_1_h_tokens"`
+	// claude cache 1h: the gateway's split of cache_creation, which, like
+	// BillingUsage, is never written to a client or read from an upstream.
+	ClaudeCacheCreation5mTokens int                  `json:"-"`
+	ClaudeCacheCreation1hTokens int                  `json:"-"`
 	ServerToolUse               *ClaudeServerToolUse `json:"server_tool_use,omitempty"`
-	BillingUsage                *BillingUsage        `json:"billing_usage,omitempty"`
+	BillingUsage                *BillingUsage        `json:"-"`
 }
 
 type ClaudeCacheCreationUsage struct {

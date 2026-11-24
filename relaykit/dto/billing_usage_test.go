@@ -177,3 +177,41 @@ func TestBillingUsageJSONUsesProtocolNamedFields(t *testing.T) {
 	assert.Nil(t, clone.ClaudeUsage.BillingUsage)
 	assert.Nil(t, clone.GeminiUsageMetadata.BillingUsage)
 }
+
+// The gateway's accounting travels with usage in memory only: no response
+// shape writes it for a client, and an upstream cannot set it.
+func TestUsageJSONLeavesOutGatewayAccounting(t *testing.T) {
+	billing := NewClaudeMessagesBillingUsage(&ClaudeUsage{InputTokens: 10, OutputTokens: 5})
+	usage := Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15, UsageSemantic: BillingUsageSemanticAnthropic,
+		UsageSource: BillingUsageSourceClaudeMessages, BillingUsage: billing, ClaudeCacheCreation5mTokens: 3, ClaudeCacheCreation1hTokens: 4}
+	claude := &ClaudeUsage{InputTokens: 10, OutputTokens: 5, CacheCreation: &ClaudeCacheCreationUsage{Ephemeral5mInputTokens: 3, Ephemeral1hInputTokens: 4},
+		ClaudeCacheCreation5mTokens: 3, ClaudeCacheCreation1hTokens: 4, BillingUsage: billing}
+	responses := map[string]any{
+		"chat":       OpenAITextResponse{Usage: usage},
+		"chat chunk": ChatCompletionsStreamResponse{Usage: &usage},
+		"claude":     ClaudeResponse{Usage: claude},
+		"gemini":     GeminiChatResponse{UsageMetadata: GeminiUsageMetadata{PromptTokenCount: 10, BillingUsage: billing}},
+	}
+	for name, response := range responses {
+		data, err := kitutil.Marshal(response)
+		require.NoError(t, err, name)
+		for _, key := range []string{"usage_semantic", "usage_source", "billing_usage", "claude_cache_creation_5_m_tokens", "claude_cache_creation_1_h_tokens"} {
+			assert.NotContains(t, string(data), `"`+key+`"`, name)
+		}
+	}
+	chat, err := kitutil.Marshal(responses["chat"])
+	require.NoError(t, err)
+	assert.Contains(t, string(chat), `"prompt_tokens":10`)
+	claudeJSON, err := kitutil.Marshal(responses["claude"])
+	require.NoError(t, err)
+	assert.Contains(t, string(claudeJSON), `"ephemeral_1h_input_tokens":4`)
+
+	var parsed Usage
+	require.NoError(t, kitutil.Unmarshal([]byte(`{"prompt_tokens":10,"usage_semantic":"anthropic","usage_source":"claude_messages",`+
+		`"billing_usage":{"source":"claude_messages","claude_usage":{"input_tokens":1}},"claude_cache_creation_5_m_tokens":9}`), &parsed))
+	assert.Equal(t, 10, parsed.PromptTokens)
+	assert.Empty(t, parsed.UsageSemantic)
+	assert.Empty(t, parsed.UsageSource)
+	assert.Nil(t, parsed.BillingUsage)
+	assert.Zero(t, parsed.ClaudeCacheCreation5mTokens)
+}

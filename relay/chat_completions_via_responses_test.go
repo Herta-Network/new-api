@@ -173,6 +173,10 @@ func TestConvertedStreamsReportUpstreamEndingEarly(t *testing.T) {
 				assert.Contains(t, got, tc.finished)
 				assert.NotContains(t, got, tc.failed)
 				assert.False(t, info.StreamStatus.HasErrors())
+				// The gateway's accounting stays out of the usage the client reads.
+				for _, key := range []string{"billing_usage", "usage_semantic", "usage_source", "claude_cache_creation"} {
+					assert.NotContains(t, got, key)
+				}
 			})
 		}
 	}

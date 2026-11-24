@@ -127,20 +127,15 @@ func TestGeminiChatStreamHandlerClaudeFirstFrameUsesUpstreamUsage(t *testing.T) 
 
 	require.NotNil(t, startUsage)
 	require.Equal(t, 3868, startUsage.InputTokens)
-	require.NotNil(t, startUsage.BillingUsage)
-	require.Equal(t, dto.BillingUsageSourceGeminiChat, startUsage.BillingUsage.Source)
-	require.Equal(t, dto.BillingUsageSemanticGemini, startUsage.BillingUsage.Semantic)
-	require.NotNil(t, startUsage.BillingUsage.GeminiUsageMetadata)
-	require.Equal(t, 3868, startUsage.BillingUsage.GeminiUsageMetadata.PromptTokenCount)
-	require.False(t, startUsage.BillingUsage.Estimated)
-
 	require.NotNil(t, deltaUsage)
 	require.Equal(t, 3868, deltaUsage.InputTokens)
-	require.NotNil(t, deltaUsage.BillingUsage)
-	require.Equal(t, dto.BillingUsageSourceGeminiChat, deltaUsage.BillingUsage.Source)
-	require.Equal(t, dto.BillingUsageSemanticGemini, deltaUsage.BillingUsage.Semantic)
-	require.NotNil(t, deltaUsage.BillingUsage.GeminiUsageMetadata)
-	require.Equal(t, 3868, deltaUsage.BillingUsage.GeminiUsageMetadata.PromptTokenCount)
+	// Settlement keeps Gemini's own usage; the client's frames never carry it.
+	assert.NotContains(t, recorder.Body.String(), "billing_usage")
+	require.NotNil(t, usage.BillingUsage)
+	require.Equal(t, dto.BillingUsageSourceGeminiChat, usage.BillingUsage.Source)
+	require.Equal(t, dto.BillingUsageSemanticGemini, usage.BillingUsage.Semantic)
+	require.NotNil(t, usage.BillingUsage.GeminiUsageMetadata)
+	require.Equal(t, 3868, usage.BillingUsage.GeminiUsageMetadata.PromptTokenCount)
 }
 
 func TestGeminiChatHandlerCompletionTokensExcludeToolUsePromptTokens(t *testing.T) {
