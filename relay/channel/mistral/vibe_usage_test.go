@@ -108,6 +108,9 @@ func TestFetchVibeUsage(t *testing.T) {
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, http.MethodGet, r.Method)
 				assert.Equal(t, "Bearer mistral-key", r.Header.Get("Authorization"))
+				// The headers Vibe 3.1.4's own billing reads carry.
+				assert.Equal(t, "python-httpx2/2.16.0", r.Header.Get("User-Agent"))
+				assert.Equal(t, "*/*", r.Header.Get("Accept"))
 				switch r.URL.Path {
 				case "/v1/billing/subscription":
 					w.WriteHeader(tt.subscriptionStatus)

@@ -150,16 +150,17 @@ func FetchVibeUsage(ctx context.Context, client *http.Client, baseURL string, ap
 	return usage, nil
 }
 
-// readVibeBilling sends an authenticated GET to a Mistral billing route and
-// decodes a 200 response into target. It returns the response status.
+// readVibeBilling sends an authenticated GET to a Mistral billing route, with
+// the headers Vibe's own reads carry, and decodes a 200 response into target.
+// It returns the response status.
 func readVibeBilling(ctx context.Context, client *http.Client, requestURL string, apiKey string, target any) (int, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return 0, err
 	}
 	request.Header.Set("Authorization", "Bearer "+apiKey)
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("User-Agent", "new-api/"+common.Version)
+	request.Header.Set("Accept", "*/*")
+	request.Header.Set("User-Agent", billingUserAgent)
 	response, err := client.Do(request)
 	if err != nil {
 		return 0, err
