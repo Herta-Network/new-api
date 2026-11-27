@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/internal/module/currency"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/advancedcustom"
+	"github.com/QuantumNous/new-api/relay/channel/codingplan"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -86,21 +87,6 @@ type AIProxyUserOverviewResponse struct {
 	} `json:"data"`
 }
 
-type API2GPTUsageResponse struct {
-	Object         string  `json:"object"`
-	TotalGranted   float64 `json:"total_granted"`
-	TotalUsed      float64 `json:"total_used"`
-	TotalRemaining float64 `json:"total_remaining"`
-}
-
-type APGC2DGPTUsageResponse struct {
-	//Grants         interface{} `json:"grants"`
-	Object         string  `json:"object"`
-	TotalAvailable float64 `json:"total_available"`
-	TotalGranted   float64 `json:"total_granted"`
-	TotalUsed      float64 `json:"total_used"`
-}
-
 type SiliconFlowUsageResponse struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
@@ -131,13 +117,6 @@ type DeepSeekUsageResponse struct {
 	} `json:"balance_infos"`
 }
 
-type OpenRouterCreditResponse struct {
-	Data struct {
-		TotalCredits float64 `json:"total_credits"`
-		TotalUsage   float64 `json:"total_usage"`
-	} `json:"data"`
-}
-
 // GetAuthHeader get auth header
 func GetAuthHeader(token string) http.Header {
 	h := http.Header{}
@@ -153,6 +132,10 @@ func GetClaudeAuthHeader(token string) http.Header {
 	return h
 }
 
+// GetResponseBody sends a balance query through the channel's proxy and
+// returns the body of its 200 answer. No answer, or another status, is a
+// console message that quotes the reason a JSON answer states, without the
+// channel key.
 func GetResponseBody(method, url string, channel *model.Channel, headers http.Header) ([]byte, error) {
 	req, err := http.NewRequest(method, url, nil)
 	if err != nil {
@@ -168,20 +151,77 @@ func GetResponseBody(method, url string, channel *model.Channel, headers http.He
 	}
 	res, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		// Without the request URL, which net/http puts in the error.
+		reason := upstreamText(sanitizeFetchModelsError(err, channel.Key).Error(), channel.Key)
+		return nil, common.NewMessage("Could not reach the upstream: {{reason}}", map[string]any{"reason": reason})
 	}
+	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status code: %d", res.StatusCode)
+		body, _ := service.ReadUpstreamErrorBody(res.Body)
+		if reason := upstreamReason(body, channel.Key); reason != "" {
+			return nil, common.NewMessage("Upstream returned status {{status}}: {{reason}}", map[string]any{"status": res.StatusCode, "reason": reason})
+		}
+		return nil, common.NewMessage("Upstream returned status {{status}}", map[string]any{"status": res.StatusCode})
 	}
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return nil, err
+	return service.ReadUpstreamBody(res.Body)
+}
+
+// maxUpstreamReasonRunes bounds the upstream reason a balance failure quotes.
+const maxUpstreamReasonRunes = 200
+
+// upstreamReason is the error an upstream answer states in its JSON object,
+// error.message or error, message or msg as text, made fit to show by
+// upstreamText; "" for any other answer. Plain-text answers and pages are
+// never quoted: the base URL is the administrator's to choose, and could name
+// a service whose content must not reach the console.
+func upstreamReason(body []byte, key string) string {
+	var document map[string]json.RawMessage
+	if common.GetJsonType(body) != "object" || common.Unmarshal(body, &document) != nil {
+		return ""
 	}
-	err = res.Body.Close()
-	if err != nil {
-		return nil, err
+	var nested struct {
+		Message string `json:"message"`
 	}
-	return body, nil
+	if common.Unmarshal(document["error"], &nested) == nil && strings.TrimSpace(nested.Message) != "" {
+		return upstreamText(nested.Message, key)
+	}
+	for _, name := range []string{"error", "message", "msg"} {
+		var reason string
+		if common.Unmarshal(document[name], &reason) == nil && strings.TrimSpace(reason) != "" {
+			return upstreamText(reason, key)
+		}
+	}
+	return ""
+}
+
+// upstreamText makes text from an upstream fit for the web console: one line,
+// every spelling of the channel key redacted, then at most
+// maxUpstreamReasonRunes long. Every reason a balance failure quotes passes
+// through it.
+func upstreamText(text string, key string) string {
+	text = common.RedactSecret(strings.Join(strings.Fields(text), " "), key)
+	if runes := []rune(text); len(runes) > maxUpstreamReasonRunes {
+		text = string(runes[:maxUpstreamReasonRunes]) + "…"
+	}
+	return text
+}
+
+// upstreamReportedError is the console message for an answer that names its
+// own failure, or one that has no balance at all.
+func upstreamReportedError(reason string, key string) error {
+	if reason = upstreamText(reason, key); reason == "" {
+		return common.NewMessage("The upstream's answer has no balance")
+	}
+	return common.NewMessage("The upstream reported an error: {{reason}}", map[string]any{"reason": reason})
+}
+
+// decodeBalanceResponse decodes a balance answer, which must be a JSON
+// object.
+func decodeBalanceResponse(body []byte, target any) error {
+	if common.GetJsonType(body) != "object" || common.Unmarshal(body, target) != nil {
+		return common.NewMessage("The upstream's balance answer could not be read")
+	}
+	return nil
 }
 
 func updateChannelCloseAIBalance(channel *model.Channel) (float64, error) {
@@ -231,12 +271,11 @@ func updateChannelAIProxyBalance(channel *model.Channel) (float64, error) {
 		return 0, err
 	}
 	response := AIProxyUserOverviewResponse{}
-	err = common.Unmarshal(body, &response)
-	if err != nil {
+	if err := decodeBalanceResponse(body, &response); err != nil {
 		return 0, err
 	}
 	if !response.Success {
-		return 0, fmt.Errorf("code: %d, message: %s", response.ErrorCode, response.Message)
+		return 0, upstreamReportedError(fmt.Sprintf("%s (code %d)", response.Message, response.ErrorCode), channel.Key)
 	}
 	channel.UpdateBalance(response.Data.TotalPoints)
 	return response.Data.TotalPoints, nil
@@ -249,13 +288,18 @@ func updateChannelAPI2GPTBalance(channel *model.Channel) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	response := API2GPTUsageResponse{}
-	err = common.Unmarshal(body, &response)
-	if err != nil {
+	var response struct {
+		TotalRemaining *float64 `json:"total_remaining"`
+	}
+	if err := decodeBalanceResponse(body, &response); err != nil {
 		return 0, err
 	}
-	channel.UpdateBalance(response.TotalRemaining)
-	return response.TotalRemaining, nil
+	// A 200 answer without the field is a failure, not an empty balance.
+	if response.TotalRemaining == nil {
+		return 0, upstreamReportedError(upstreamReason(body, channel.Key), channel.Key)
+	}
+	channel.UpdateBalance(*response.TotalRemaining)
+	return *response.TotalRemaining, nil
 }
 
 // updateChannelSiliconFlowBalance reads the balance /v1/user/info reports at
@@ -277,12 +321,11 @@ func updateChannelSiliconFlowBalance(channel *model.Channel) (float64, error) {
 		return 0, err
 	}
 	response := SiliconFlowUsageResponse{}
-	err = common.Unmarshal(body, &response)
-	if err != nil {
+	if err := decodeBalanceResponse(body, &response); err != nil {
 		return 0, err
 	}
 	if response.Code != 20000 {
-		return 0, fmt.Errorf("code: %d, message: %s", response.Code, response.Message)
+		return 0, upstreamReportedError(fmt.Sprintf("%s (code %d)", response.Message, response.Code), channel.Key)
 	}
 	balance, err := strconv.ParseFloat(response.Data.TotalBalance, 64)
 	if err != nil {
@@ -374,8 +417,7 @@ func updateChannelDeepSeekBalance(channel *model.Channel) (float64, error) {
 		return 0, err
 	}
 	response := DeepSeekUsageResponse{}
-	err = common.Unmarshal(body, &response)
-	if err != nil {
+	if err := decodeBalanceResponse(body, &response); err != nil {
 		return 0, err
 	}
 	balance, err := getDeepSeekBalanceUSD(context.Background(), response)
@@ -392,34 +434,71 @@ func updateChannelAIGC2DBalance(channel *model.Channel) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	response := APGC2DGPTUsageResponse{}
-	err = common.Unmarshal(body, &response)
-	if err != nil {
+	var response struct {
+		TotalAvailable *float64 `json:"total_available"`
+	}
+	if err := decodeBalanceResponse(body, &response); err != nil {
 		return 0, err
 	}
-	channel.UpdateBalance(response.TotalAvailable)
-	return response.TotalAvailable, nil
+	if response.TotalAvailable == nil {
+		return 0, upstreamReportedError(upstreamReason(body, channel.Key), channel.Key)
+	}
+	channel.UpdateBalance(*response.TotalAvailable)
+	return *response.TotalAvailable, nil
 }
 
+// updateChannelOpenRouterBalance reads what the channel key may still spend,
+// in USD, from GET {base_url}/v1/key (base_url https://openrouter.ai/api): the
+// remaining amount of the budget that blocks the key first, else of the key's
+// credit limit. The account's credits (GET /api/v1/credits) are answered only
+// to management keys, which cannot relay requests
+// (https://openrouter.ai/docs/api-reference/limits).
 func updateChannelOpenRouterBalance(channel *model.Channel) (float64, error) {
-	url := "https://openrouter.ai/api/v1/credits"
-	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
+	endpoint := strings.TrimRight(channel.GetBaseURL(), "/") + "/v1/key"
+	body, err := GetResponseBody("GET", endpoint, channel, GetAuthHeader(channel.Key))
 	if err != nil {
 		return 0, err
 	}
-	response := OpenRouterCreditResponse{}
-	err = common.Unmarshal(body, &response)
-	if err != nil {
+	var response struct {
+		Data *struct {
+			LimitRemaining  *float64 `json:"limit_remaining"`
+			EffectiveBudget *struct {
+				RemainingUSD *float64 `json:"remaining_usd"`
+			} `json:"effective_budget"`
+		} `json:"data"`
+	}
+	if err := decodeBalanceResponse(body, &response); err != nil {
 		return 0, err
 	}
-	balance := response.Data.TotalCredits - response.Data.TotalUsage
-	channel.UpdateBalance(balance)
-	return balance, nil
+	if response.Data == nil {
+		return 0, upstreamReportedError(upstreamReason(body, channel.Key), channel.Key)
+	}
+	remaining := response.Data.LimitRemaining
+	if budget := response.Data.EffectiveBudget; budget != nil && budget.RemainingUSD != nil {
+		remaining = budget.RemainingUSD
+	}
+	if remaining == nil {
+		return 0, common.NewMessage("This OpenRouter key has no credit limit, so OpenRouter does not report what it can spend. Check the account's credits in the OpenRouter dashboard.")
+	}
+	channel.UpdateBalance(*remaining)
+	return *remaining, nil
 }
 
+// updateChannelMoonshotBalance reads the available balance of a Kimi Open
+// Platform account at GET {base_url}/v1/users/me/balance: in USD on the
+// international site (api.moonshot.ai), in CNY on the China site
+// (api.moonshot.cn) and any other base URL
+// (https://platform.kimi.ai/docs/api/balance,
+// https://platform.kimi.com/docs/api/balance). The two sites' keys are
+// separate, so each key is asked at its own site.
 func updateChannelMoonshotBalance(channel *model.Channel) (float64, error) {
-	url := "https://api.moonshot.cn/v1/users/me/balance"
-	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
+	baseURL := strings.TrimRight(channel.GetBaseURL(), "/")
+	international := false
+	if parsed, err := url.Parse(baseURL); err == nil {
+		host := strings.ToLower(parsed.Hostname())
+		international = host == "moonshot.ai" || strings.HasSuffix(host, ".moonshot.ai")
+	}
+	body, err := GetResponseBody("GET", baseURL+"/v1/users/me/balance", channel, GetAuthHeader(channel.Key))
 	if err != nil {
 		return 0, err
 	}
@@ -438,12 +517,17 @@ func updateChannelMoonshotBalance(channel *model.Channel) (float64, error) {
 	}
 
 	response := MoonshotBalanceResponse{}
-	err = common.Unmarshal(body, &response)
-	if err != nil {
+	if err := decodeBalanceResponse(body, &response); err != nil {
 		return 0, err
 	}
 	if !response.Status || response.Code != 0 {
-		return 0, fmt.Errorf("failed to update moonshot balance, status: %v, code: %d, scode: %s", response.Status, response.Code, response.Scode)
+		return 0, upstreamReportedError(fmt.Sprintf("status %v, code %d, scode %s", response.Status, response.Code, response.Scode), channel.Key)
+	}
+	// A negative cash balance leaves the available balance at or below 0,
+	// which blocks inference; it is stored as it is.
+	if international {
+		channel.UpdateBalance(response.Data.AvailableBalance)
+		return response.Data.AvailableBalance, nil
 	}
 	availableBalanceUsd, err := cnyBalanceToUSD(context.Background(), response.Data.AvailableBalance)
 	if err != nil {
@@ -475,7 +559,7 @@ func updateChannelSub2APIBalance(channel *model.Channel) (float64, error) {
 		} `json:"subscription"`
 	}
 	usage := sub2apiUsageResponse{}
-	if err := common.Unmarshal(body, &usage); err != nil {
+	if err := decodeBalanceResponse(body, &usage); err != nil {
 		return 0, err
 	}
 	if usage.IsValid != nil && !*usage.IsValid {
@@ -523,11 +607,11 @@ func updateChannelNewAPIBalance(channel *model.Channel) (float64, error) {
 			} `json:"user_quota"`
 		} `json:"data"`
 	}
-	if err := common.Unmarshal(body, &usage); err != nil {
+	if err := decodeBalanceResponse(body, &usage); err != nil {
 		return 0, err
 	}
 	if !usage.Code {
-		return 0, fmt.Errorf("New API usage query failed: %s", usage.Message)
+		return 0, upstreamReportedError(upstreamReason(body, channel.Key), channel.Key)
 	}
 	remaining := usage.Data.TotalAvailable
 	if usage.Data.UnlimitedQuota {
@@ -549,7 +633,7 @@ func updateChannelNewAPIBalance(channel *model.Channel) (float64, error) {
 			QuotaPerUnit float64 `json:"quota_per_unit"`
 		} `json:"data"`
 	}
-	if err := common.Unmarshal(body, &status); err != nil {
+	if err := decodeBalanceResponse(body, &status); err != nil {
 		return 0, err
 	}
 	if status.Data.QuotaPerUnit <= 0 {
@@ -667,13 +751,21 @@ func updateStandardChannelBalance(channel *model.Channel) (float64, error) {
 	if channel.GetBaseURL() == "" {
 		channel.BaseURL = &baseURL
 	}
+	// A coding plan meters its key in usage windows, which its usage route
+	// reports.
+	if _, ok := codingplan.Detect(channel.Type, channel.GetBaseURL()); ok {
+		return 0, common.NewMessage("This channel is on a coding plan, which reports its usage instead of a balance")
+	}
 	switch channel.Type {
 	case constant.ChannelTypeOpenAI:
-		if channel.GetBaseURL() != "" {
-			baseURL = channel.GetBaseURL()
+		baseURL = strings.TrimRight(channel.GetBaseURL(), "/")
+		// OpenAI refuses /v1/dashboard/billing/* to API keys ("must be made
+		// with a session key"); OpenAI-compatible relays still serve them.
+		if parsed, err := url.Parse(baseURL); err == nil && strings.EqualFold(parsed.Hostname(), "api.openai.com") {
+			return 0, common.NewMessage("OpenAI answers balance queries only in its web dashboard, not to API keys. Check the balance in the OpenAI dashboard.")
 		}
 	case constant.ChannelTypeCustom:
-		baseURL = channel.GetBaseURL()
+		baseURL = strings.TrimRight(channel.GetBaseURL(), "/")
 	//case common.ChannelTypeOpenAISB:
 	//	return updateChannelOpenAISBBalance(channel)
 	case constant.ChannelTypeAIProxy:
@@ -705,10 +797,17 @@ func updateStandardChannelBalance(channel *model.Channel) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	subscription := OpenAISubscriptionResponse{}
-	err = common.Unmarshal(body, &subscription)
-	if err != nil {
+	// A relay that fails answers 200 with an OpenAI error body, as new-api
+	// does, so a missing amount is a failure rather than an empty balance.
+	var subscription struct {
+		HasPaymentMethod bool     `json:"has_payment_method"`
+		HardLimitUSD     *float64 `json:"hard_limit_usd"`
+	}
+	if err := decodeBalanceResponse(body, &subscription); err != nil {
 		return 0, err
+	}
+	if subscription.HardLimitUSD == nil {
+		return 0, upstreamReportedError(upstreamReason(body, channel.Key), channel.Key)
 	}
 	now := time.Now()
 	startDate := fmt.Sprintf("%s-01", now.Format("2006-01"))
@@ -721,12 +820,17 @@ func updateStandardChannelBalance(channel *model.Channel) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	usage := OpenAIUsageResponse{}
-	err = common.Unmarshal(body, &usage)
-	if err != nil {
+	var usage struct {
+		// TotalUsage is in hundredths of the subscription's unit.
+		TotalUsage *float64 `json:"total_usage"`
+	}
+	if err := decodeBalanceResponse(body, &usage); err != nil {
 		return 0, err
 	}
-	balance := subscription.HardLimitUSD - usage.TotalUsage/100
+	if usage.TotalUsage == nil {
+		return 0, upstreamReportedError(upstreamReason(body, channel.Key), channel.Key)
+	}
+	balance := *subscription.HardLimitUSD - *usage.TotalUsage/100
 	channel.UpdateBalance(balance)
 	return balance, nil
 }
@@ -746,7 +850,7 @@ type channelBalanceResponse struct {
 }
 
 // @Summary		更新渠道余额
-// @Description	需要 channel.operate 权限。向上游查询余额并保存。高级自定义渠道返回 raw_response（上游原始响应），其他渠道返回 balance（美元）和 balance_detail。任务插件渠道只在插件报告余额时支持；多密钥渠道不支持；没有能用渠道密钥查询的余额接口的渠道类型（如 Azure、Mistral）返回不支持查询余额。
+// @Description	需要 channel.operate 权限。向上游查询余额并保存。高级自定义渠道返回 raw_response（上游原始响应），其他渠道返回 balance（美元）和 balance_detail。任务插件渠道只在插件报告余额时支持；多密钥渠道不支持；没有能用渠道密钥查询的余额接口的渠道类型（如 Azure、Mistral、智谱）、OpenAI 官方地址（只在网页控制台显示余额）和编程套餐渠道（看用量）返回不支持查询余额的消息，不请求上游。OpenRouter 返回密钥额度或预算的剩余金额；Moonshot 按 base_url 区分国际站（美元）和国内站（人民币）。查询失败时 message 带上游的状态码和原因（不含密钥），原余额不变。
 // @Tags			渠道
 // @Param			id	path		int	true	"渠道 ID"
 // @Success		200	{object}	channelBalanceResponse
@@ -831,8 +935,10 @@ type channelBalanceTask struct {
 
 // updateAllChannelsBalance queries the balance of every enabled channel,
 // balanceUpdateConcurrency channels at once, and reports how many of them it
-// has queried. Once ctx ends, as when the run loses its task lease, it starts
-// no more queries and returns ctx's error.
+// has queried. With automatic enabling on, it also queries each single-key
+// channel it disabled for its balance, which updateBalanceInRun enables again
+// once the balance is back. Once ctx ends, as when the run loses its task
+// lease, it starts no more queries and returns ctx's error.
 func updateAllChannelsBalance(ctx context.Context, report func(processed, total int)) (channelBalanceSummary, error) {
 	channels, err := model.GetAllChannels(0, 0, true, false)
 	if err != nil {
@@ -840,7 +946,11 @@ func updateAllChannelsBalance(ctx context.Context, report func(processed, total 
 	}
 	enabled := make([]*model.Channel, 0, len(channels))
 	for _, channel := range channels {
-		if channel.Status == common.ChannelStatusEnabled {
+		awaitingBalance := common.AutomaticEnableChannelEnabled &&
+			channel.Status == common.ChannelStatusAutoDisabled &&
+			!channel.ChannelInfo.IsMultiKey &&
+			channel.GetOtherInfo()["status_reason"] == insufficientBalanceReason
+		if channel.Status == common.ChannelStatusEnabled || awaitingBalance {
 			enabled = append(enabled, channel)
 		}
 	}
@@ -886,7 +996,7 @@ func updateAllChannelsBalance(ctx context.Context, report func(processed, total 
 // running, it answers with that one, and started is false.
 //
 // @Summary		更新所有渠道余额
-// @Description	需要 channel.operate 权限。在后台以系统任务查询所有已启用渠道的余额（多个渠道并发），立即返回任务 ID；已有同类任务排队或运行时返回那个任务，started 为 false。进度用 /api/channel/update_balance/task/{task_id} 查询。余额不大于 0 的渠道会被自动禁用。
+// @Description	需要 channel.operate 权限。在后台以系统任务查询所有已启用渠道的余额（多个渠道并发），立即返回任务 ID；已有同类任务排队或运行时返回那个任务，started 为 false。进度用 /api/channel/update_balance/task/{task_id} 查询。余额不大于 0 的渠道会被自动禁用（渠道开启了自动禁用时）；开启自动启用时，也查询因余额不足被这项更新禁用的单密钥渠道，余额恢复后重新启用。查询失败不改变渠道状态。
 // @Tags			渠道
 // @Success		200	{object}	common.ApiResponse{data=channelBalanceUpdate}
 // @Security		AdminAuth

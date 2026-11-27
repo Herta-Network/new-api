@@ -13,8 +13,17 @@ const channelBalanceDetailKey = "balance_detail"
 // multi-key plugin channel the result of each key by its 0-based index.
 type ChannelBalanceDetail struct {
 	jsplugin.BalanceResult
-	Error string                          `json:"error,omitempty"`
-	Keys  map[string]ChannelBalanceDetail `json:"keys,omitempty"`
+	BalanceFailure
+	Keys map[string]ChannelBalanceDetail `json:"keys,omitempty"`
+}
+
+// BalanceFailure is why a balance query failed: the English text, and when
+// the failure is a console message its key and parameters, which the console
+// translates. A detail stored before the key was kept has the text only.
+type BalanceFailure struct {
+	Error       string         `json:"error,omitempty"`
+	ErrorKey    string         `json:"error_key,omitempty"`
+	ErrorParams map[string]any `json:"error_params,omitempty"`
 }
 
 // GetBalanceDetail returns the channel's last balance query, nil before the

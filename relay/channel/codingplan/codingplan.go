@@ -69,13 +69,15 @@ type Plan struct {
 
 // Detect recognises a coding plan channel by its type and base URL:
 //
-//	Kimi For Coding      Moonshot or Anthropic, kimi.com or kimi.ai under /coding,
-//	                     or the kimi-coding-plan base
+//	Kimi For Coding      Moonshot or Anthropic, kimi.com or kimi.ai under /coding
 //	GLM Coding Plan      Zhipu or Anthropic, bigmodel.cn or z.ai under /api/coding
-//	                     or /api/anthropic, or a glm-coding-plan base
+//	                     or /api/anthropic
 //	MiniMax Coding Plan  MiniMax or Anthropic, any MiniMax host; plan keys use
 //	                     the ordinary API endpoints
 //
+// The plan presets (kimi-coding-plan, glm-coding-plan,
+// glm-coding-plan-international) count on the Moonshot and Zhipu types, whose
+// adaptors resolve them; the Anthropic adaptor sends a preset name as it is.
 // An empty base URL stands for the channel type's default.
 func Detect(channelType int, baseURL string) (Plan, bool) {
 	baseURL = strings.TrimSpace(baseURL)
@@ -83,6 +85,18 @@ func Detect(channelType int, baseURL string) (Plan, bool) {
 		baseURL = constant.GetChannelBaseURL(channelType)
 	}
 	if special, ok := constant.ChannelSpecialBases[baseURL]; ok {
+		if channelType != constant.ChannelTypeMoonshot && channelType != constant.ChannelTypeZhipu_v4 {
+			return Plan{}, false
+		}
+		// Recognise the preset's plan whichever of the two types carries it.
+		switch baseURL {
+		case "kimi-coding-plan":
+			channelType = constant.ChannelTypeMoonshot
+		case "glm-coding-plan", "glm-coding-plan-international":
+			channelType = constant.ChannelTypeZhipu_v4
+		default:
+			return Plan{}, false
+		}
 		baseURL = special.ClaudeBaseURL
 	}
 	parsed, err := url.Parse(baseURL)
@@ -90,7 +104,6 @@ func Detect(channelType int, baseURL string) (Plan, bool) {
 		return Plan{}, false
 	}
 	host := strings.ToLower(parsed.Hostname())
-	origin := parsed.Scheme + "://" + parsed.Host
 	path := strings.TrimRight(parsed.Path, "/")
 	underPath := func(prefix string) bool {
 		return path == prefix || strings.HasPrefix(path, prefix+"/")
@@ -105,18 +118,42 @@ func Detect(channelType int, baseURL string) (Plan, bool) {
 	switch {
 	case (channelType == constant.ChannelTypeMoonshot || viaAnthropic) &&
 		onDomain("kimi.com", "kimi.ai") && underPath("/coding"):
-		return Plan{Provider: ProviderKimi, UsageURL: origin + "/coding/v1/usages"}, true
+		// The usage routes below are all on the providers' own hosts, so they
+		// are asked over https whatever scheme the base URL names: the key
+		// travels in a header.
+		return Plan{Provider: ProviderKimi, UsageURL: "https://" + host + "/coding/v1/usages"}, true
 	case (channelType == constant.ChannelTypeZhipu_v4 || viaAnthropic) &&
 		onDomain("bigmodel.cn", "z.ai") && (underPath("/api/coding") || underPath("/api/anthropic")):
-		return Plan{Provider: ProviderGLM, UsageURL: origin + "/api/monitor/usage/quota/limit"}, true
-	case channelType == constant.ChannelTypeMiniMax || viaAnthropic:
-		// The usage route is published only on these two API hosts; the CN
-		// inference hosts share keys with api.minimaxi.com.
+		// Zhipu's usage plugin asks the API host it is configured with,
+		// open.bigmodel.cn, dev.bigmodel.cn or api.z.ai
+		// (github.com/zai-org/zai-coding-plugins, glm-plan-usage); another host
+		// of either site asks that site's API host.
+		apiHost := host
 		switch {
+		case host == "open.bigmodel.cn" || host == "dev.bigmodel.cn" || host == "api.z.ai":
+		case onDomain("bigmodel.cn"):
+			apiHost = "open.bigmodel.cn"
+		default:
+			apiHost = "api.z.ai"
+		}
+		return Plan{Provider: ProviderGLM, UsageURL: "https://" + apiHost + "/api/monitor/usage/quota/limit"}, true
+	case channelType == constant.ChannelTypeMiniMax || viaAnthropic:
+		// MiniMax's CLI reads the plan at /v1/token_plan/remains on the base
+		// URL's host (github.com/MiniMax-AI/cli, src/client/endpoints.ts). Its
+		// regions are api.minimax.io and the China site's api.minimax.cn,
+		// which was api.minimaxi.com until 2026-09-28 and still counts as China
+		// (src/config/schema.ts, src/errors/api.ts), so api.minimaxi.com is
+		// that site under its earlier name rather than a third one. A channel
+		// on one of these API hosts asks its own host; the older inference
+		// hosts share keys with their region's.
+		const route = "/v1/token_plan/remains"
+		switch {
+		case host == "api.minimax.io" || host == "api.minimax.cn" || host == "api.minimaxi.com":
+			return Plan{Provider: ProviderMiniMax, UsageURL: "https://" + host + route}, true
 		case onDomain("minimax.io"):
-			return Plan{Provider: ProviderMiniMax, UsageURL: "https://api.minimax.io/v1/api/openplatform/coding_plan/remains"}, true
-		case onDomain("minimaxi.com", "minimax.cn", "minimax.chat"):
-			return Plan{Provider: ProviderMiniMax, UsageURL: "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains"}, true
+			return Plan{Provider: ProviderMiniMax, UsageURL: "https://api.minimax.io" + route}, true
+		case onDomain("minimaxi.com", "minimax.cn", "minimax.chat", "minimaxi.chat"):
+			return Plan{Provider: ProviderMiniMax, UsageURL: "https://api.minimax.cn" + route}, true
 		}
 	}
 	return Plan{}, false
@@ -182,9 +219,9 @@ func (plan Plan) FetchUsage(ctx context.Context, client *http.Client, apiKey str
 	case ProviderKimi:
 		err = decodeKimi(document, usage, now)
 	case ProviderGLM:
-		err = decodeGLM(document, usage, now)
+		err = decodeGLM(document, usage, now, apiKey)
 	case ProviderMiniMax:
-		err = decodeMiniMax(document, usage, now)
+		err = decodeMiniMax(document, usage, now, apiKey)
 	default:
 		err = fmt.Errorf("unknown coding plan provider %q", plan.Provider)
 	}
@@ -199,46 +236,81 @@ func (plan Plan) FetchUsage(ctx context.Context, client *http.Client, apiKey str
 	return usage, nil
 }
 
-// providerError is a refusal a provider reports inside a 200 response.
-func providerError(provider Provider, rejectedKey bool, reason string) *common.Message {
+// providerError is a refusal a provider reports inside a 200 response. The
+// reason is shown without the key and without text that may carry an email.
+func providerError(provider Provider, rejectedKey bool, reason string, apiKey string) *common.Message {
 	if rejectedKey {
 		return common.NewMessage("{{provider}} rejected the API key", map[string]any{"provider": provider.Name()})
 	}
-	reason = sanitizeLabel(reason, 120)
+	reason = sanitizeLabel(common.RedactSecret(strings.Join(strings.Fields(reason), " "), apiKey), 120)
 	if reason == "" {
 		return common.NewMessage("{{provider}} reported an error", map[string]any{"provider": provider.Name()})
 	}
 	return common.NewMessage("{{provider}} reported an error: {{reason}}", map[string]any{"provider": provider.Name(), "reason": reason})
 }
 
-// decodeKimi reads GET /coding/v1/usages:
+// decodeKimi reads GET /coding/v1/usages as Kimi Code CLI's /usage command
+// does (github.com/MoonshotAI/kimi-cli, src/kimi_cli/ui/shell/usage.py):
 //
-//	{"limits":[{"detail":{"limit","remaining","resetTime"}}],
-//	 "usage":{"limit","remaining","resetTime"}}
+//	{"limits":[{"window":{"duration":300,"timeUnit":"TIME_UNIT_MINUTE"},
+//	            "detail":{"limit","used" or "remaining","resetTime"}}],
+//	 "usage":{"limit","used" or "remaining","resetTime"}}
 //
-// limits[] is the rolling 5-hour window; usage is the weekly allowance.
+// limits[] are the rolling windows, each sized by its window, and usage is
+// the weekly allowance. The 5-hour window is the entry whose window lasts 5
+// hours, else the first one.
 func decodeKimi(document map[string]json.RawMessage, usage *Usage, now time.Time) error {
 	window := func(fields map[string]json.RawMessage, seconds int64) *opencodego.UsageWindow {
 		limit, ok := flexibleNumber(fields["limit"])
 		if !ok || limit <= 0 {
 			return nil
 		}
-		remaining, ok := flexibleNumber(fields["remaining"])
+		used, ok := flexibleNumber(fields["used"])
 		if !ok {
-			return nil
+			remaining, ok := flexibleNumber(fields["remaining"])
+			if !ok {
+				return nil
+			}
+			used = limit - remaining
 		}
-		return newWindow(math.Max(limit-remaining, 0)/limit*100, seconds, flexibleTime(fields["resetTime"]), now)
+		return newWindow(math.Max(used, 0)/limit*100, seconds, flexibleTime(fields["resetTime"]), now)
 	}
 	if raw, ok := document["limits"]; ok && jsonKind(raw) == '[' {
 		var limits []struct {
-			Detail map[string]json.RawMessage `json:"detail"`
+			Window   map[string]json.RawMessage `json:"window"`
+			Duration json.RawMessage            `json:"duration"`
+			TimeUnit string                     `json:"timeUnit"`
+			Detail   map[string]json.RawMessage `json:"detail"`
 		}
 		if err := common.Unmarshal(raw, &limits); err != nil {
 			return fmt.Errorf("invalid Kimi For Coding limits: %w", err)
 		}
 		for _, item := range limits {
-			if usage.FiveHour = window(item.Detail, fiveHourSeconds); usage.FiveHour != nil {
-				break
+			duration, unit := item.Window["duration"], ""
+			_ = common.Unmarshal(item.Window["timeUnit"], &unit)
+			if duration == nil {
+				duration, unit = item.Duration, item.TimeUnit
+			}
+			seconds := fiveHourSeconds
+			if amount, ok := flexibleNumber(duration); ok && amount > 0 {
+				// The CLI reads a duration without a known unit as seconds.
+				switch unit = strings.ToUpper(unit); {
+				case strings.Contains(unit, "MINUTE"):
+					seconds = int64(amount * 60)
+				case strings.Contains(unit, "HOUR"):
+					seconds = int64(amount * 3600)
+				case strings.Contains(unit, "DAY"):
+					seconds = int64(amount * 86400)
+				default:
+					seconds = int64(amount)
+				}
+			}
+			current := window(item.Detail, seconds)
+			if current == nil {
+				continue
+			}
+			if usage.FiveHour == nil || (usage.FiveHour.LimitWindowSeconds != fiveHourSeconds && seconds == fiveHourSeconds) {
+				usage.FiveHour = current
 			}
 		}
 	}
@@ -254,14 +326,19 @@ func decodeKimi(document map[string]json.RawMessage, usage *Usage, now time.Time
 
 // decodeGLM reads GET /api/monitor/usage/quota/limit:
 //
-//	{"success":true,"data":{"level":"pro","limits":[
-//	   {"type":"TOKENS_LIMIT","percentage":12,"nextResetTime":<ms>,"unit":3,"number":5},
-//	   {"type":"TOKENS_LIMIT","percentage":40,"nextResetTime":<ms>,"unit":6,"number":7}]}}
+//	{"code":200,"success":true,"data":{"level":"lite","limits":[
+//	   {"type":"CREDIT_LIMIT","unit":3,"number":5,"usage":2000,"currentValue":15,
+//	    "remaining":1984,"percentage":1,"nextResetTime":<ms>},
+//	   {"type":"CREDIT_LIMIT","unit":6,"number":1,"usage":10000,"currentValue":873,
+//	    "remaining":9126,"percentage":8,"nextResetTime":<ms>}]}}
 //
-// unit 3 is the 5-hour window and unit 6 the weekly one. Entries without a
-// recognised unit fill the empty slots in reset order: no reset first, then
-// the earliest.
-func decodeGLM(document map[string]json.RawMessage, usage *Usage, now time.Time) error {
+// percentage is the used share. Credit plans report CREDIT_LIMIT and older
+// plans TOKENS_LIMIT; TIME_LIMIT is the monthly tool allowance. unit 3
+// (hours) is the 5-hour window and unit 6 (weeks) the weekly one, whose number
+// is 1 or 7. Entries without a recognised unit fill the empty slots in reset
+// order: no reset first, then the earliest. A key whose account has no plan
+// answers success false with code 500.
+func decodeGLM(document map[string]json.RawMessage, usage *Usage, now time.Time, apiKey string) error {
 	var success bool
 	if raw, ok := document["success"]; ok && common.Unmarshal(raw, &success) == nil && !success {
 		var code int
@@ -270,7 +347,7 @@ func decodeGLM(document map[string]json.RawMessage, usage *Usage, now time.Time)
 		_ = common.Unmarshal(document["msg"], &message)
 		// 1000 to 1004 are Zhipu's authentication failures.
 		rejected := code == http.StatusUnauthorized || (code >= 1000 && code <= 1004)
-		return providerError(ProviderGLM, rejected, message)
+		return providerError(ProviderGLM, rejected, message, apiKey)
 	}
 	raw, ok := document["data"]
 	if !ok || jsonKind(raw) != '{' {
@@ -340,15 +417,26 @@ func decodeGLM(document map[string]json.RawMessage, usage *Usage, now time.Time)
 	return nil
 }
 
-// decodeMiniMax reads GET /v1/api/openplatform/coding_plan/remains:
+// decodeMiniMax reads GET /v1/token_plan/remains, typed and rendered by
+// MiniMax's CLI (github.com/MiniMax-AI/cli, src/types/api.ts and
+// src/output/quota-table.ts):
 //
 //	{"base_resp":{"status_code":0},"model_remains":[{"model_name":"general",
-//	  "current_interval_remaining_percent":80,"end_time":<ms>,
-//	  "current_weekly_status":1,"current_weekly_remaining_percent":55,"weekly_end_time":<ms>}]}
+//	  "start_time":<ms>,"end_time":<ms>,"current_interval_status":1,
+//	  "current_interval_remaining_percent":80,"current_interval_total_count":0,
+//	  "weekly_start_time":<ms>,"weekly_end_time":<ms>,"current_weekly_status":1,
+//	  "current_weekly_remaining_percent":55,"current_weekly_total_count":0}]}
 //
-// Only the "general" (coding) entry counts; the weekly window exists only
-// while current_weekly_status is 1.
-func decodeMiniMax(document map[string]json.RawMessage, usage *Usage, now time.Time) error {
+// Only the "general" (text) entry counts. The statuses are the CLI's enum
+// (src/types/api.ts since commit 83dd37f449): 1 a normal, limited window
+// read from its remaining percent, 2 an exhausted one whatever its percent
+// says, 3 an unlimited one; both windows at 3 with no totals is a model
+// outside the plan. A weekly window exists only under one of these statuses,
+// as it did when only 1 was read: a plan without a weekly limit reports
+// none. The 5-hour window, which older answers sent without a status, is
+// read from its percent when the status is absent. The remaining percents
+// are authoritative; the counts are ambiguous between used and remaining.
+func decodeMiniMax(document map[string]json.RawMessage, usage *Usage, now time.Time, apiKey string) error {
 	if raw, ok := document["base_resp"]; ok && jsonKind(raw) == '{' {
 		var base struct {
 			StatusCode *int64 `json:"status_code"`
@@ -357,7 +445,7 @@ func decodeMiniMax(document map[string]json.RawMessage, usage *Usage, now time.T
 		if common.Unmarshal(raw, &base) == nil && base.StatusCode != nil && *base.StatusCode != 0 {
 			// 1004 is a failed login and 2049 an invalid API key.
 			rejected := *base.StatusCode == 1004 || *base.StatusCode == 2049
-			return providerError(ProviderMiniMax, rejected, fmt.Sprintf("%s (code %d)", base.StatusMsg, *base.StatusCode))
+			return providerError(ProviderMiniMax, rejected, fmt.Sprintf("%s (code %d)", base.StatusMsg, *base.StatusCode), apiKey)
 		}
 	}
 	raw, ok := document["model_remains"]
@@ -365,26 +453,59 @@ func decodeMiniMax(document map[string]json.RawMessage, usage *Usage, now time.T
 		return nil
 	}
 	var remains []struct {
-		ModelName      string          `json:"model_name"`
-		IntervalRemain json.RawMessage `json:"current_interval_remaining_percent"`
-		EndTime        json.RawMessage `json:"end_time"`
-		WeeklyStatus   *int64          `json:"current_weekly_status"`
-		WeeklyRemain   json.RawMessage `json:"current_weekly_remaining_percent"`
-		WeeklyEndTime  json.RawMessage `json:"weekly_end_time"`
+		ModelName       string          `json:"model_name"`
+		StartTime       json.RawMessage `json:"start_time"`
+		EndTime         json.RawMessage `json:"end_time"`
+		IntervalStatus  *int64          `json:"current_interval_status"`
+		IntervalRemain  json.RawMessage `json:"current_interval_remaining_percent"`
+		IntervalTotal   json.RawMessage `json:"current_interval_total_count"`
+		WeeklyStartTime json.RawMessage `json:"weekly_start_time"`
+		WeeklyEndTime   json.RawMessage `json:"weekly_end_time"`
+		WeeklyStatus    *int64          `json:"current_weekly_status"`
+		WeeklyRemain    json.RawMessage `json:"current_weekly_remaining_percent"`
+		WeeklyTotal     json.RawMessage `json:"current_weekly_total_count"`
 	}
 	if err := common.Unmarshal(raw, &remains); err != nil {
 		return fmt.Errorf("invalid MiniMax Coding Plan usage: %w", err)
+	}
+	const (
+		statusNormal    int64 = 1
+		statusExhausted int64 = 2
+		statusUnlimited int64 = 3
+	)
+	window := func(status *int64, remainRaw, startRaw, endRaw json.RawMessage, seconds int64) *opencodego.UsageWindow {
+		start, end := flexibleTime(startRaw), flexibleTime(endRaw)
+		if start != nil && end != nil && end.After(*start) {
+			seconds = int64(end.Sub(*start).Seconds())
+		}
+		switch {
+		case status == nil || *status == statusNormal:
+			remain, ok := flexibleNumber(remainRaw)
+			if !ok {
+				return nil
+			}
+			return newWindow(100-remain, seconds, end, now)
+		case *status == statusExhausted:
+			return newWindow(100, seconds, end, now)
+		case *status == statusUnlimited:
+			return &opencodego.UsageWindow{Status: opencodego.UsageStatusUnlimited, LimitWindowSeconds: seconds}
+		default:
+			return nil
+		}
 	}
 	for _, item := range remains {
 		if !strings.EqualFold(strings.TrimSpace(item.ModelName), "general") {
 			continue
 		}
-		if remain, ok := flexibleNumber(item.IntervalRemain); ok {
-			usage.FiveHour = newWindow(100-remain, fiveHourSeconds, flexibleTime(item.EndTime), now)
-		}
-		if item.WeeklyStatus != nil && *item.WeeklyStatus == 1 {
-			if remain, ok := flexibleNumber(item.WeeklyRemain); ok {
-				usage.Weekly = newWindow(100-remain, weeklySeconds, flexibleTime(item.WeeklyEndTime), now)
+		intervalTotal, _ := flexibleNumber(item.IntervalTotal)
+		weeklyTotal, _ := flexibleNumber(item.WeeklyTotal)
+		outsidePlan := item.IntervalStatus != nil && *item.IntervalStatus == statusUnlimited &&
+			item.WeeklyStatus != nil && *item.WeeklyStatus == statusUnlimited &&
+			intervalTotal == 0 && weeklyTotal == 0
+		if !outsidePlan {
+			usage.FiveHour = window(item.IntervalStatus, item.IntervalRemain, item.StartTime, item.EndTime, fiveHourSeconds)
+			if item.WeeklyStatus != nil {
+				usage.Weekly = window(item.WeeklyStatus, item.WeeklyRemain, item.WeeklyStartTime, item.WeeklyEndTime, weeklySeconds)
 			}
 		}
 		break

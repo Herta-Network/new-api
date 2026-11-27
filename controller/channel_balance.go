@@ -2,10 +2,10 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -42,6 +42,17 @@ func emptyBalance(result jsplugin.BalanceResult) bool {
 	return result.Amount != nil && !result.Unlimited && !math.IsNaN(*result.Amount) && !math.IsInf(*result.Amount, 0) && *result.Amount <= 0
 }
 
+// positiveBalance reports a balance that can be spent again: unlimited, or a
+// finite amount above 0.
+func positiveBalance(result jsplugin.BalanceResult) bool {
+	return result.Unlimited || (result.Amount != nil && !math.IsInf(*result.Amount, 0) && *result.Amount > 0)
+}
+
+// insufficientBalanceReason is the status reason of a channel or key an
+// update of all balances disabled. The update queries such a single-key
+// channel again and enables it once its balance is back.
+const insufficientBalanceReason = "Insufficient balance"
+
 // recordBuiltinBalance stores the detail of a built-in balance query, whose
 // function already wrote the USD balance: the amount in USD, or the failure
 // once the channel has a detail. A channel type without a balance query thus
@@ -58,7 +69,7 @@ func recordBuiltinBalance(channel *model.Channel, result channelBalanceResult, e
 		if stored == nil {
 			return nil, nil
 		}
-		stored.Error = balanceErrorText(err, channel.Key)
+		stored.BalanceFailure = balanceFailure(err, channel.Key)
 		return stored, nil
 	})
 	if updateErr != nil {
@@ -102,7 +113,13 @@ func updatePluginChannelBalance(channel *model.Channel, plugin *jsplugin.LoadedP
 		result, err := queryPluginKeyBalance(ctx, channel, plugin, index, key)
 		cancel()
 		if err != nil {
-			err = fmt.Errorf("%s", balanceErrorText(err, key))
+			// The failure reaches the console and the detail without the key
+			// line's secrets, as a console message when it is one.
+			failure := balanceFailure(err, key)
+			err = errors.New(failure.Error)
+			if failure.ErrorKey != "" {
+				err = common.NewMessage(failure.ErrorKey, failure.ErrorParams)
+			}
 		}
 		balances = append(balances, pluginKeyBalance{index: index, key: key, result: result, err: err})
 	}
@@ -122,7 +139,7 @@ func updatePluginChannelBalance(channel *model.Channel, plugin *jsplugin.LoadedP
 	for _, balance := range balances {
 		record := model.ChannelBalanceDetail{BalanceResult: balance.result}
 		if balance.err != nil {
-			record.Error = balance.err.Error()
+			record.BalanceFailure = balanceFailure(balance.err, balance.key)
 		}
 		records[balance.index] = record
 	}
@@ -164,11 +181,39 @@ func queryPluginKeyBalance(ctx context.Context, channel *model.Channel, plugin *
 	})
 }
 
+// balanceFailure is a failed balance query as a balance detail keeps it: its
+// text, and when it is a console message the message's key and parameters,
+// each text without the key line's secrets (see redactBalanceText).
+func balanceFailure(err error, key string) model.BalanceFailure {
+	failure := model.BalanceFailure{Error: balanceErrorText(err, key)}
+	var message *common.Message
+	if !errors.As(err, &message) {
+		return failure
+	}
+	failure.ErrorKey = message.Key
+	if len(message.Params) > 0 {
+		failure.ErrorParams = make(map[string]any, len(message.Params))
+		for name, value := range message.Params {
+			if text, ok := value.(string); ok {
+				value = redactBalanceText(text, key)
+			}
+			failure.ErrorParams[name] = value
+		}
+	}
+	return failure
+}
+
 // balanceErrorText is the failure message a balance detail keeps: without
-// the request URL, the key line, and a credential line's header and query
-// values, and bounded in length.
+// the request URL and the key line's secrets, and bounded in length.
 func balanceErrorText(err error, key string) string {
-	message := sanitizeFetchModelsError(err, key).Error()
+	return redactBalanceText(sanitizeFetchModelsError(err, key).Error(), key)
+}
+
+// redactBalanceText is text about a key line's balance without the key line,
+// a credential line's header and query values in any spelling, and at most
+// maxBalanceErrorRunes long.
+func redactBalanceText(message string, key string) string {
+	message = common.RedactSecret(message, key)
 	if credential, ok := jsplugin.ParseCredential(key); ok {
 		secrets := make([]string, 0, len(credential.Headers)+len(credential.Query))
 		for _, value := range credential.Headers {
@@ -178,11 +223,7 @@ func balanceErrorText(err error, key string) string {
 			secrets = append(secrets, value)
 		}
 		for _, secret := range secrets {
-			if strings.TrimSpace(secret) == "" {
-				continue
-			}
-			message = strings.ReplaceAll(message, secret, "[REDACTED]")
-			message = strings.ReplaceAll(message, url.QueryEscape(secret), "[REDACTED]")
+			message = common.RedactSecret(message, secret)
 		}
 	}
 	if runes := []rune(message); len(runes) > maxBalanceErrorRunes {
@@ -191,10 +232,20 @@ func balanceErrorText(err error, key string) string {
 	return message
 }
 
-// updateBalanceInRun queries one enabled channel in an update of all
-// balances and disables what has none left, when the channel's automatic
-// disabling is on: the channel, or a multi-key plugin channel's empty keys.
+// updateBalanceInRun queries one channel in an update of all balances. It
+// disables what has no balance left when the channel's automatic disabling
+// is on: the channel, or a multi-key plugin channel's empty keys. A
+// single-key channel the update disabled for its balance is enabled again
+// once a query finds a balance, when automatic enabling is on, as a passing
+// channel test enables an automatically disabled channel
+// (service.ShouldEnableChannel). A failed query changes neither.
 func updateBalanceInRun(channel *model.Channel) {
+	awaitingBalance := channel.Status == common.ChannelStatusAutoDisabled
+	restore := func() {
+		if awaitingBalance && service.ShouldEnableChannel(nil, channel.Status) {
+			service.EnableChannel(channel.Id, "", channel.Name)
+		}
+	}
 	if channel.Type == constant.ChannelTypeTaskPlugin {
 		plugin, ok := service.PluginOfChannel(channel)
 		if !ok || !pluginReportsBalance(plugin) {
@@ -202,14 +253,21 @@ func updateBalanceInRun(channel *model.Channel) {
 		}
 		balances, _, _ := updatePluginChannelBalance(channel, plugin, true)
 		for _, balance := range balances {
-			if balance.err != nil || !emptyBalance(balance.result) {
+			if balance.err != nil {
+				continue
+			}
+			if positiveBalance(balance.result) && !channel.ChannelInfo.IsMultiKey {
+				restore()
+				continue
+			}
+			if awaitingBalance || !emptyBalance(balance.result) {
 				continue
 			}
 			usingKey := ""
 			if channel.ChannelInfo.IsMultiKey {
 				usingKey = balance.key
 			}
-			service.DisableChannel(*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, usingKey, channel.GetAutoBan()), "Insufficient balance")
+			service.DisableChannel(*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, usingKey, channel.GetAutoBan()), insufficientBalanceReason)
 		}
 		return
 	}
@@ -219,8 +277,15 @@ func updateBalanceInRun(channel *model.Channel) {
 	result, err := withBalanceTimeout(func() (channelBalanceResult, error) {
 		return updateChannelBalance(channel)
 	})
-	if err == nil && result.RawResponse == "" && emptyBalance(jsplugin.BalanceResult{Amount: &result.Balance}) {
-		service.DisableChannel(*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, "", channel.GetAutoBan()), "Insufficient balance")
+	if err != nil || result.RawResponse != "" {
+		return
+	}
+	balance := jsplugin.BalanceResult{Amount: &result.Balance}
+	switch {
+	case positiveBalance(balance):
+		restore()
+	case emptyBalance(balance) && !awaitingBalance:
+		service.DisableChannel(*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, "", channel.GetAutoBan()), insufficientBalanceReason)
 	}
 }
 

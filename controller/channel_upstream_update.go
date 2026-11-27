@@ -298,14 +298,7 @@ func sanitizeFetchModelsError(err error, key string) error {
 		err = urlErr.Err
 	}
 
-	message := err.Error()
-	key = strings.TrimSpace(key)
-	if key != "" {
-		message = strings.ReplaceAll(message, key, "[REDACTED]")
-		message = strings.ReplaceAll(message, url.QueryEscape(key), "[REDACTED]")
-		message = strings.ReplaceAll(message, url.PathEscape(key), "[REDACTED]")
-	}
-	return errors.New(message)
+	return errors.New(common.RedactSecret(err.Error(), key))
 }
 
 func sanitizeAdvancedCustomRequestError(err error, key string, requestURL string) error {

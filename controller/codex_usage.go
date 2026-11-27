@@ -68,9 +68,12 @@ func ResetCodexChannelUsage(c *gin.Context) {
 // codexWhamResponse is the body of the Codex usage handlers, which pass the
 // upstream status and body through.
 type codexWhamResponse struct {
-	Success        bool   `json:"success"`
-	Message        string `json:"message"`
-	UpstreamStatus int    `json:"upstream_status"`
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	// MessageKey and MessageParams are the console message of a failure.
+	MessageKey     string         `json:"message_key,omitempty"`
+	MessageParams  map[string]any `json:"message_params,omitempty"`
+	UpstreamStatus int            `json:"upstream_status"`
 	// Data is the upstream body: its JSON value, or its text when it is not
 	// JSON.
 	Data any `json:"data"`
@@ -101,16 +104,12 @@ func fetchCodexChannelWhamData(
 		common.ApiError(c, err)
 		return
 	}
-	if ch == nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel not found"})
-		return
-	}
 	if ch.Type != constant.ChannelTypeCodex {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel type is not Codex"})
+		common.ApiErrorT(c, "Channel type is not Codex")
 		return
 	}
 	if ch.ChannelInfo.IsMultiKey {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "multi-key channel is not supported"})
+		common.ApiErrorT(c, "Multi-key channels are not supported")
 		return
 	}
 
@@ -122,12 +121,8 @@ func fetchCodexChannelWhamData(
 	}
 	accessToken := strings.TrimSpace(oauthKey.AccessToken)
 	accountID := strings.TrimSpace(oauthKey.AccountID)
-	if accessToken == "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "codex channel: access_token is required"})
-		return
-	}
-	if accountID == "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "codex channel: account_id is required"})
+	if accessToken == "" || accountID == "" {
+		common.ApiErrorT(c, "The Codex credential needs an access_token and an account_id")
 		return
 	}
 
@@ -194,7 +189,14 @@ func fetchCodexChannelWhamData(
 		Data:           payload,
 	}
 	if !ok {
-		resp.Message = fmt.Sprintf("upstream status: %d", statusCode)
+		// The upstream body stays in data; the message is the console's.
+		message := common.NewMessage("Upstream returned status {{status}}", map[string]any{"status": statusCode})
+		if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
+			message = common.NewMessage("ChatGPT rejected the channel credential (status {{status}})", map[string]any{"status": statusCode})
+		}
+		resp.Message = message.Error()
+		resp.MessageKey = message.Key
+		resp.MessageParams = message.Params
 	}
 	c.JSON(http.StatusOK, resp)
 }

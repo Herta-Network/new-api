@@ -177,9 +177,15 @@ func FetchUsage(ctx context.Context, client *http.Client, baseURL string, apiKey
 	return decodeUsage(body, now)
 }
 
+// UsageStatusUnlimited is the Status of a window without a limit, such as a
+// MiniMax Coding Plan window; its UsedPercent means nothing.
+const UsageStatusUnlimited = "unlimited"
+
 // UsageWindow is one allowance window, named like the Codex usage windows the
 // web console already renders.
 type UsageWindow struct {
+	// Status is the provider's state of the window: OpenCode Go's ok or
+	// rate-limited, or unlimited for a window without a limit.
 	Status             string  `json:"status,omitempty"`
 	UsedPercent        float64 `json:"used_percent"`
 	LimitWindowSeconds int64   `json:"limit_window_seconds"`

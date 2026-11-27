@@ -73,13 +73,13 @@ func UpdatePluginKeyBalances(channel *model.Channel, balances map[int]model.Chan
 		if stored == nil {
 			stored = &model.ChannelBalanceDetail{}
 		}
-		succeeded, failure := false, ""
+		succeeded, failure := false, model.BalanceFailure{}
 		for _, index := range slices.Sorted(maps.Keys(balances)) {
 			result := balances[index]
 			if result.Error == "" {
 				succeeded = true
-			} else if failure == "" {
-				failure = result.Error
+			} else if failure.Error == "" {
+				failure = result.BalanceFailure
 			}
 		}
 		if !channel.ChannelInfo.IsMultiKey {
@@ -88,7 +88,7 @@ func UpdatePluginKeyBalances(channel *model.Channel, balances map[int]model.Chan
 				return nil, nil
 			}
 			if result.Error != "" {
-				stored.Error = result.Error
+				stored.BalanceFailure = result.BalanceFailure
 				return stored, nil
 			}
 			stored = &result
@@ -110,7 +110,7 @@ func UpdatePluginKeyBalances(channel *model.Channel, balances map[int]model.Chan
 					if detail.Windows == nil {
 						detail.Windows = []jsplugin.BalanceWindow{}
 					}
-					detail.Error = result.Error
+					detail.BalanceFailure = result.BalanceFailure
 					keys[key] = detail
 				} else {
 					keys[key] = result
@@ -118,9 +118,9 @@ func UpdatePluginKeyBalances(channel *model.Channel, balances map[int]model.Chan
 			}
 			stored.Keys = keys
 			stored.BalanceResult = sumPluginKeyBalances(keys)
-			stored.Error = ""
+			stored.BalanceFailure = model.BalanceFailure{}
 			if !succeeded {
-				stored.Error = failure
+				stored.BalanceFailure = failure
 			}
 		}
 		if balance, ok := pluginBalanceUSD(stored.BalanceResult, cnyRate); ok && succeeded {

@@ -1789,7 +1789,7 @@
                         "AdminAuth": []
                     }
                 ],
-                "description": "需要 channel.operate 权限。在后台以系统任务查询所有已启用渠道的余额（多个渠道并发），立即返回任务 ID；已有同类任务排队或运行时返回那个任务，started 为 false。进度用 /api/channel/update_balance/task/{task_id} 查询。余额不大于 0 的渠道会被自动禁用。",
+                "description": "需要 channel.operate 权限。在后台以系统任务查询所有已启用渠道的余额（多个渠道并发），立即返回任务 ID；已有同类任务排队或运行时返回那个任务，started 为 false。进度用 /api/channel/update_balance/task/{task_id} 查询。余额不大于 0 的渠道会被自动禁用（渠道开启了自动禁用时）；开启自动启用时，也查询因余额不足被这项更新禁用的单密钥渠道，余额恢复后重新启用。查询失败不改变渠道状态。",
                 "tags": [
                     "渠道"
                 ],
@@ -1866,7 +1866,7 @@
                         "AdminAuth": []
                     }
                 ],
-                "description": "需要 channel.operate 权限。向上游查询余额并保存。高级自定义渠道返回 raw_response（上游原始响应），其他渠道返回 balance（美元）和 balance_detail。任务插件渠道只在插件报告余额时支持；多密钥渠道不支持；没有能用渠道密钥查询的余额接口的渠道类型（如 Azure、Mistral）返回不支持查询余额。",
+                "description": "需要 channel.operate 权限。向上游查询余额并保存。高级自定义渠道返回 raw_response（上游原始响应），其他渠道返回 balance（美元）和 balance_detail。任务插件渠道只在插件报告余额时支持；多密钥渠道不支持；没有能用渠道密钥查询的余额接口的渠道类型（如 Azure、Mistral、智谱）、OpenAI 官方地址（只在网页控制台显示余额）和编程套餐渠道（看用量）返回不支持查询余额的消息，不请求上游。OpenRouter 返回密钥额度或预算的剩余金额；Moonshot 按 base_url 区分国际站（美元）和国内站（人民币）。查询失败时 message 带上游的状态码和原因（不含密钥），原余额不变。",
                 "tags": [
                     "渠道"
                 ],
@@ -17791,6 +17791,14 @@
                 "message": {
                     "type": "string"
                 },
+                "message_key": {
+                    "description": "MessageKey and MessageParams are the console message of a failure.",
+                    "type": "string"
+                },
+                "message_params": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
                 "success": {
                     "type": "boolean"
                 },
@@ -22653,6 +22661,13 @@
                 "error": {
                     "type": "string"
                 },
+                "error_key": {
+                    "type": "string"
+                },
+                "error_params": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
                 "keys": {
                     "type": "object",
                     "additionalProperties": {
@@ -24403,6 +24418,7 @@
                     "type": "integer"
                 },
                 "status": {
+                    "description": "Status is the provider's state of the window: OpenCode Go's ok or\nrate-limited, or unlimited for a window without a limit.",
                     "type": "string"
                 },
                 "used_percent": {
